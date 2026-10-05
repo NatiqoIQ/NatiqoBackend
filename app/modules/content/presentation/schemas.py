@@ -1,0 +1,102 @@
+"""Wire schemas for the public catalogue.
+
+The application layer already withholds the answer key from its read models; this file
+withholds it a second time, from the JSON. Two independent places to get it right is the
+point: a field added to the question aggregate today will not become part of tomorrow's
+public response just because it exists upstream, because these schemas list their fields
+by hand rather than exposing the ORM class.
+
+``from_attributes`` is what lets the routes hand a read model straight to a response
+model. It is worth being precise about what that does *not* do: it copies the named
+attributes, it does not serialise whatever happens to be on the object. Adding
+``correct_index`` to the aggregate therefore cannot leak it, because no schema here
+declares a field for it.
+
+``test_the_response_never_carries_the_answer_key`` pins the field list, so a future
+"harmless" addition — a ``hint`` that turns out to spell out the answer — has to be a
+deliberate edit to this file.
+"""
+
+from __future__ import annotations
+
+import uuid
+
+from pydantic import ConfigDict, Field
+
+from app.core.responses import Page, WireModel
+from app.core.types import QuestionKind, SkillKind
+
+
+class _CatalogueWire(WireModel):
+    """A wire model that also reads attributes off a read model.
+
+    A thin subclass rather than repeating ``model_config`` on each schema, because a schema
+    that sets ``model_config`` to add only ``from_attributes`` would depend on Pydantic
+    merging it with the inherited camelCase settings — a coupling worth being explicit about
+    when getting it wrong silently reverts the naming convention.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class LevelResponse(_CatalogueWire):
+    id: uuid.UUID
+    code: str = Field(description="CEFR code, e.g. 'A1'. Stable public handle.")
+    title: str
+    description: str | None = None
+    position: int
+    unit_count: int = Field(ge=0, description="Published units in this level.")
+
+
+class UnitResponse(_CatalogueWire):
+    id: uuid.UUID
+    level_code: str
+    title: str
+    description: str | None = None
+    position: int
+    lesson_count: int = Field(ge=0, description="Published lessons in this unit.")
+
+
+class QuestionResponse(_CatalogueWire):
+    """A practice item as it appears *before* an attempt.
+
+    No ``correct_index``, no ``accepted_answers``, no ``explanation``. Post-attempt
+    feedback belongs to the attempt engine, which is the next slice.
+    """
+
+    id: uuid.UUID
+    kind: QuestionKind
+    skill: SkillKind
+    prompt: str
+    choices: list[str]
+    points: int = Field(ge=1)
+
+
+class LessonSummaryResponse(_CatalogueWire):
+    id: uuid.UUID
+    unit_id: uuid.UUID
+    title: str
+    summary: str
+    position: int
+    estimated_minutes: int = Field(ge=1)
+    question_count: int = Field(ge=0)
+
+
+class LessonDetailResponse(LessonSummaryResponse):
+    questions: list[QuestionResponse] = Field(default_factory=list)
+
+
+LevelsPage = Page[LevelResponse]
+UnitsPage = Page[UnitResponse]
+LessonsPage = Page[LessonSummaryResponse]
+
+__all__ = [
+    "LessonDetailResponse",
+    "LessonSummaryResponse",
+    "LessonsPage",
+    "LevelResponse",
+    "LevelsPage",
+    "QuestionResponse",
+    "UnitResponse",
+    "UnitsPage",
+]

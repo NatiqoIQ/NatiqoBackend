@@ -1,0 +1,77 @@
+# ---------------------------------------------------------------- app
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# ------------------------------------------------------------- virtualenv
+.venv/
+venv/
+ENV/
+
+# ------------------------------------------------------------------ env
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# ------------------------------------------------------------------ tools
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.hypothesis/
+
+# ------------------------------------------------------------------ types
+.pyright/
+*.tsbuildinfo
+
+# ----------------------------------------------------------------- editors
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.swp
+.DS_Store
+Thumbs.db
+
+# ----------------------------------------------------------------- runtime
+*.log
+logs/
+tmp/
+uploads/
+/media_local/
+
+# Local SQLite databases. These are regenerable, but a committed one carries bcrypt
+# password hashes and non-revoked refresh tokens. A refresh token in a public repo is
+# a live account-takeover credential, and the demo accounts share a published
+# password, so this is a hard exclusion rather than a convenience.
+*.db
+*.sqlite
+*.sqlite3
+*.db-journal
+*.db-wal
+*.db-shm
+
+# ------------------------------------------------------------------- docs
+*.bak
+
+# ------------------------------------------------------------------ postman
+# Newman is installed locally rather than committed: node_modules is large and the
+# pinned version lives in the install step, not in the collection.
+postman/node_modules/
+postman/package-lock.json
+
+# Run artifacts. A reset token is a live account-takeover credential for as long as it
+# exists, and the throwaway database only exists to make a run reproducible.
+postman/reset_token.json
+postman/pm_test.db
+postman/*.pid

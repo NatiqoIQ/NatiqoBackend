@@ -1,0 +1,172 @@
+[project]
+name = "natiqo-backend"
+version = "0.1.0"
+description = "Natiqo — British English learning backend for Iraqi learners (modular monolith, clean architecture)"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "Proprietary" }
+authors = [{ name = "Natiqo Engineering" }]
+
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+    "email-validator>=2.2",
+    "sqlalchemy[asyncio]>=2.0.36",
+    "asyncpg>=0.30",
+    "alembic>=1.14",
+    "greenlet>=3.1",
+    "argon2-cffi>=23.1",
+    "pyjwt>=2.10",
+    "redis>=5.2",
+    "structlog>=24.4",
+    "httpx>=0.28",
+    "boto3>=1.35",
+    "python-multipart>=0.0.17",
+    # Windows and slim containers ship no IANA database, so `zoneinfo` resolves
+    # nothing and every timezone in the app — validation, streak boundaries, daily
+    # goals, quiet hours — silently fails. This is the stdlib's own recommended
+    # fallback and is a no-op where a system database is present.
+    "tzdata>=2024.1",
+]
+
+[project.optional-dependencies]
+# Firebase Admin is imported lazily by the FCM adapter. It is deliberately NOT a
+# hard dependency: a deployment with push notifications disabled should not ship a
+# Firebase SDK, and a missing SDK must never stop the process from booting.
+fcm = ["firebase-admin>=6.6"]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "pytest-cov>=6.0",
+    "anyio>=4.6",
+    "aiosqlite>=0.20",
+    "ruff>=0.8",
+    "pyright>=1.1.379",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "pytest-cov>=6.0",
+    "anyio>=4.6",
+    "aiosqlite>=0.20",
+    "ruff>=0.8",
+    "pyright>=1.1.379",
+]
+
+[tool.uv]
+default-groups = ["dev"]
+
+# ---------------------------------------------------------------- Ruff
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["app", "tests"]
+extend-exclude = ["alembic/versions"]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "B",   # flake8-bugbear
+    "C4",  # comprehensions
+    "UP",  # pyupgrade
+    "ASYNC",
+    "S",   # bandit
+    "BLE", # blind except
+    "A",   # builtin shadowing
+    "N",   # pep8-naming
+    "RUF",
+]
+ignore = [
+    "E501",    # line length handled by the formatter
+    "B008",    # FastAPI Depends() in defaults is the documented idiom
+    "RUF001",  # ambiguous unicode: content is intentionally Arabic/Iraqi dialect
+    "RUF002",
+    "RUF003",
+    "N818",    # exception names may not end in Error (domain vocabulary)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "S105", "S106", "B011", "N802"]
+"scripts/**" = ["S101"]
+"alembic/**" = ["S101"]
+# S106 fires on any string literal passed to a parameter named push_token, which makes
+# it a structural false positive in a file whose entire job is declaring demo push
+# tokens. Scoped to the one data file rather than scripts/**, so the rule keeps
+# guarding a real secret anywhere else in an operational script. The demo password in
+# the same file is suppressed inline instead, on the line itself.
+"scripts/seed_personas.py" = ["S106"]
+# The architecture mandates app/platform as the adapter layer name. It is a
+# subpackage, so `import platform` still resolves to the stdlib module; the
+# warning only matters for code run with app/ as the working directory.
+"app/platform/**" = ["A005"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["app", "scripts", "tests"]
+combine-as-imports = true
+
+[tool.ruff.lint.flake8-tidy-imports]
+ban-relative-imports = "parents"
+
+[tool.ruff.lint.flake8-bugbear]
+extend-immutable-calls = ["fastapi.Depends", "fastapi.Query", "fastapi.Path", "fastapi.Body", "Depends", "Query", "Path", "Body"]
+
+# --------------------------------------------------------------- Pyright
+[tool.pyright]
+pythonVersion = "3.12"
+typeCheckingMode = "basic"
+# alembic/env.py does not exist yet; it is added with the first migration.
+include = ["app", "tests", "scripts"]
+exclude = ["**/__pycache__", "alembic/versions"]
+venvPath = "."
+venv = ".venv"
+reportMissingTypeStubs = false
+reportMissingImports = false
+reportPrivateUsage = false
+reportUnnecessaryIsInstance = false
+reportImplicitOverride = false
+
+# --------------------------------------------------------------- Pytest
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+pythonpath = ["."]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "session"
+addopts = "-q --strict-markers --strict-config"
+markers = [
+    "unit: pure domain/logic tests, no I/O",
+    "integration: touches database, cache or storage adapters",
+    "api: exercises the HTTP surface through the ASGI app",
+    "auth: authorization and authentication behaviour",
+    "slow: slower suites",
+]
+filterwarnings = ["error", "ignore::DeprecationWarning:pkg_resources.*"]
+
+[tool.coverage.run]
+source = ["app"]
+branch = true
+omit = ["app/main.py", "app/workers/main.py", "alembic/*"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "@abstractmethod",
+]
