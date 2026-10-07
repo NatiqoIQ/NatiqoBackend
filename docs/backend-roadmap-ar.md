@@ -44,41 +44,34 @@ endpoint وهمية.**
 
 ---
 
-## المرحلة 0 — جاهزية الإنتاج (لا مزايا، لكنTonightأنهار بسببها)
+## المرحلة 0 — جاهزية الإنتاج (لا مزايا، لكن أنهيار بسببها)
 
-**لماذا أولاً:** هذه ليست ميزة، هي فشل تشغيلي مؤجّل. `forgot-password` يعمل اليوم
-ويُرجع 200 دائماً ثم **يُسقط الرسالة على الأرض** في الإنتاج.
+**لماذا أولاً:** هذه ليست ميزة، هي فشل تشغيلي مؤجّل.
 
-### الفجوة المؤكَّدة
-
-```python
-# app/modules/users/domain/ports.py
-class PasswordResetDeliveryPort(Protocol): ...
-
-# app/modules/users/infrastructure/delivery.py
-class InMemoryPasswordResetDelivery:   # الاختبارات فقط
-class LoggingPasswordResetDelivery:     # يكتب في اللوغ — لا يصل المستخدم
-```
-
-لا يوجد adapter بريد حقيقي. المستخدم يطلب استعادة كلمة المرور، يرى رسالة نجاح،
-ولا يستلم شيئاً. **أسوأ احتمالات UX في القائمة كلها.**
+**تحديث مهم — البريد خرج من الصورة.** كان أكبر بند هنا هو البريد (استعادة كلمة المرور
+وتأكيد العنوان). لم يبق منه شيء: الدخول الآن عبر **Google و Apple** فقط، والسيرفر لا
+يخزّن كلمة مرور ولا يرسل بريداً. حُذفت `password_reset_tokens` و
+`email_verification_tokens`، وحُذفت معها `PasswordResetDeliveryPort` و`delivery.py`
+و`email.py` و endpoints الـ`verify-email` و`change-password`. أي بند بريدي كان في هذه
+المرحلة **ملغى**، و`email_verified_at` يُضبط الآن من تأكيد المزوّد.
 
 ### المطلوب
 
 | # | المطلوب | التفاصيل |
 | --- | --- | --- |
-| 0.1 | `SmtpPasswordResetDelivery` | SMTP عبر `aiosmtplib`؛ يقرأ `SMTP_HOST/PORT/USER/PASSWORD/FROM`. يعيد delivery بدل log |
-| 0.2 | جدول `email_verification_tokens` | + `email_verified_at` على `users`. يفعّل `AUTH_EMAIL_NOT_VERIFIED` المعرّف بلا route |
-| 0.3 | `POST /api/v1/auth/verify-email` | يستقبل token، يفعّل الحساب |
-| 0.4 | `POST /api/v1/auth/resend-verification` | rate-limited (نفس scope auth) |
-| 0.5 | `POST /api/v1/auth/change-password` | يتطلب كلمة المرور الحالية. **مفقود اليوم** — لا يستطيع المستخدم تغيير كلمة مروره إلا بنسيانها |
-| 0.6 | `DELETE /api/v1/me` | حق الحذف (GDPR). `USER_DELETED` معرّف بلا route |
-| 0.7 | `GET /api/v1/me/export` | تصدير كل بياناته. مطلوب لـ GDPR. |
-| 0.8 | `Idempotency-Key` middleware | `IDEMPOTENCY_KEY_REUSED` معرّف بلا route. **إلزامي** لـ: تسجيل، دفع، تسجيل quiz |
-| 0.9 | تفعيل OTEL + Sentry | `otel_enabled` و `sentry_dsn` معرّفان، غير مستخدمين |
-| 0.10 | **تشغيل البوابات على PostgreSQL حقيقي** | كل 353 اختبار تعمل على SQLite. هذا أخطر فجوة |
+| 0.1 | ~~`SmtpPasswordResetDelivery`~~ | **ملغى** — لا بريد في النظام |
+| 0.2 | ~~جدول `email_verification_tokens`~~ | **ملغى** — الحقل يُضبط من المزوّد |
+| 0.3 | ~~`POST /api/v1/auth/verify-email`~~ | **ملغى** |
+| 0.4 | ~~`POST /api/v1/auth/resend-verification`~~ | **ملغى** |
+| 0.5 | ~~`POST /api/v1/auth/change-password`~~ | **ملغى** — لا كلمة مرور تُغيّر |
+| 0.6 | ~~`DELETE /api/v1/me`~~ | **تم** — مُنفّذ، ويُبطل كل الجلسات |
+| 0.7 | ضبط `GOOGLE_CLIENT_IDS` / `APPLE_CLIENT_IDS` | بدونها يُرفض الدخول كلياً: مزوّد بلا client ids يُرجع `401 AUTH_PROVIDER_UNAVAILABLE`، وتوكن لعميل غير مُدرَج يُرفض |
+| 0.8 | ~~`Idempotency-Key` middleware~~ | **تم** — مُنفّذ ومُختبَر |
+| 0.9 | `GET /api/v1/me/export` | تصدير كل بياناته. مطلوب لـ GDPR. |
+| 0.10 | تفعيل OTEL + Sentry | `otel_enabled` و `sentry_dsn` معرّفان، غير مستخدمين |
+| 0.11 | **تشغيل البوابات على PostgreSQL حقيقي** | كل الاختبارات تعمل على SQLite. هذا أخطر فجوة |
 
-### 0.10 هو الأهم
+### 0.11 هو الأهم
 
 الـschema مُختبَر على SQLite فقط. Postgres يُظهر أشياء لا يفعلها SQLite: `JSONB` مقابل
 `JSON`، `TIMESTAMPTZ`، حصر `UUID`، وسلوك `ON CONFLICT`. أي واحد منها يظهر بعد النشر.
@@ -238,15 +231,15 @@ ease = max(1.3, ease + 0.1 − (5−quality)×(0.08 + (5−quality)×0.02))
 
 ### الجداول
 
-```python
+```sql
 review_cards(
     id, user_id, question_id,
     ease_factor, interval_days, repetitions, lapses,
-    due_at, last_reviewed_at, state,     # 'new'|'learning'|'review'|'relearning'
+    due_at, last_reviewed_at, state,     -- 'new'|'learning'|'review'|'relearning'
     UNIQUE(user_id, question_id)
 )
 
-review_logs(                           # analytics + spindle
+review_logs(                           -- analytics + spindle
     id, user_id, card_id, quality, previous_interval, new_interval,
     reviewed_at
 )
@@ -613,6 +606,6 @@ uv run alembic check               # على Postgres
 | التصحيح لا يحتاج migration | `correct_index`, `accepted_answers`, `explanation` في `QuestionModel` |
 | الـAI جاهز ينتظر route | `platform/ai/providers.py` + `AiUsageRecord` + `ai_*` settings |
 | الدفع لم يُبنَ | `payment_provider`, `currency=IQD`, 5 payment error codes |
-| البريد معطّل | adapter واحد فقط `LoggingPasswordResetDelivery` |
+| البريد خارج النظام | لا كلمة مرور ولا بريد: الدخول بـ ID token من Google/Apple، و`delivery.py` و`email.py` حُذفا |
 | Postgres لم يُختبر | كل الاختبارات SQLite |
 |Observability معطّلة | `otel_enabled`, `sentry_dsn` غير مستخدمين |

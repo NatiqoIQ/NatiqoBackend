@@ -48,7 +48,7 @@ from app.core.config import Settings, get_settings
 from app.core.database import dispose_engine, get_session_factory
 from app.core.errors import AppError
 from app.core.logging import get_logger
-from app.core.types import CEFRLevel, ContentId, ContentState, QuestionKind, SkillKind
+from app.core.types import ContentId, ContentState
 from app.modules.content.domain.entities import Lesson, Level, Question, Unit
 from app.modules.content.infrastructure.models import (
     LessonModel,
@@ -56,6 +56,7 @@ from app.modules.content.infrastructure.models import (
     QuestionModel,
     UnitModel,
 )
+from scripts.seed_curriculum import CURRICULUM, SeedLesson, SeedLevel, SeedUnit
 
 logger = get_logger("scripts.seed_content")
 
@@ -72,48 +73,10 @@ class SeedRefused(RuntimeError):
     """
 
 
-@dataclass(frozen=True)
-class SeedQuestion:
-    slug: str
-    kind: QuestionKind
-    skill: SkillKind
-    prompt: str
-    choices: tuple[str, ...] = ()
-    accepted_answers: tuple[str, ...] = ()
-    correct_index: int | None = None
-    explanation: str | None = None
-    points: int = 1
-
-
-@dataclass(frozen=True)
-class SeedLesson:
-    slug: str
-    title: str
-    summary: str
-    estimated_minutes: int
-    questions: tuple[SeedQuestion, ...] = ()
-
-
-@dataclass(frozen=True)
-class SeedUnit:
-    slug: str
-    title: str
-    description: str | None = None
-    lessons: tuple[SeedLesson, ...] = ()
-
-
-@dataclass(frozen=True)
-class SeedLevel:
-    slug: str
-    code: CEFRLevel
-    title: str
-    description: str | None = None
-    units: tuple[SeedUnit, ...] = ()
-
-    def level_id(self) -> ContentId:
-        return ContentId(_derive(self.slug))
-
-
+# The declaration of what the curriculum *is* lives in ``scripts.seed_curriculum``,
+# next to the persona declarations for the same reason: that file is content, this one is
+# the machinery that validates and writes it. Editing a lesson should never mean reading
+# this file.
 def _derive(*parts: str) -> uuid.UUID:
     """A stable id for one curriculum row.
 
@@ -164,170 +127,46 @@ class SeedReport:
         )
 
 
-# ----------------------------------------------------------------- the curriculum
-#: A small but complete A1/A2 starter course. Every row is published, which is what makes
-#: the read-only endpoints return anything at all; ``--include-drafts`` adds one draft
-#: lesson and one archived unit so the 404 and filtering paths can be exercised by hand.
-CURRICULUM: tuple[SeedLevel, ...] = (
-    SeedLevel(
-        slug="a1-starter",
-        code=CEFRLevel.A1,
-        title="A1 Starter",
-        description="Greetings, introductions and the words you need to get by.",
-        units=(
-            SeedUnit(
-                slug="a1-greetings",
-                title="Greetings and introductions",
-                description="Saying hello, saying who you are, saying goodbye.",
-                lessons=(
-                    SeedLesson(
-                        slug="a1-greetings-hello",
-                        title="Saying hello",
-                        summary="Greet someone and respond to a greeting.",
-                        estimated_minutes=10,
-                        questions=(
-                            SeedQuestion(
-                                slug="a1-greetings-hello-q1",
-                                kind=QuestionKind.MULTIPLE_CHOICE,
-                                skill=SkillKind.GRAMMAR,
-                                prompt="Someone says 'Hello!'. What do you say?",
-                                choices=(
-                                    "Good morning!",
-                                    "Goodbye.",
-                                    "Thank you.",
-                                    "See you later.",
-                                ),
-                                correct_index=0,
-                                explanation="'Hello' is answered with a greeting of your own.",
-                            ),
-                            SeedQuestion(
-                                slug="a1-greetings-hello-q2",
-                                kind=QuestionKind.FILL_BLANK,
-                                skill=SkillKind.VOCABULARY,
-                                prompt="Complete the phrase: 'Nice to ___ you.'",
-                                accepted_answers=("meet",),
-                                explanation="The idiom is 'nice to meet you'.",
-                            ),
-                            SeedQuestion(
-                                slug="a1-greetings-hello-q3",
-                                kind=QuestionKind.TRUE_FALSE,
-                                skill=SkillKind.LISTENING,
-                                prompt="'Good night' is a way to say goodbye in the evening.",
-                                choices=("True", "False"),
-                                correct_index=0,
-                                explanation="It is both a greeting and a farewell.",
-                            ),
-                        ),
-                    ),
-                    SeedLesson(
-                        slug="a1-greetings-name",
-                        title="Saying your name",
-                        summary="Introduce yourself and spell a name.",
-                        estimated_minutes=8,
-                        questions=(
-                            SeedQuestion(
-                                slug="a1-greetings-name-q1",
-                                kind=QuestionKind.MULTIPLE_CHOICE,
-                                skill=SkillKind.GRAMMAR,
-                                prompt="How do you ask someone's name?",
-                                choices=(
-                                    "What is your name?",
-                                    "How are you?",
-                                    "Where are you from?",
-                                    "How old are you?",
-                                ),
-                                correct_index=0,
-                                explanation="'What is your name?' is the direct question.",
-                            ),
-                        ),
-                    ),
-                ),
-            ),
-            SeedUnit(
-                slug="a1-numbers",
-                title="Numbers and age",
-                description="Counting, and answering the question everybody asks.",
-                lessons=(
-                    SeedLesson(
-                        slug="a1-numbers-age",
-                        title="How old are you?",
-                        summary="Ask and answer with a number.",
-                        estimated_minutes=7,
-                        questions=(
-                            SeedQuestion(
-                                slug="a1-numbers-age-q1",
-                                kind=QuestionKind.FILL_BLANK,
-                                skill=SkillKind.VOCABULARY,
-                                prompt="Write the number: 'twelve'.",
-                                accepted_answers=("12",),
-                                explanation="Marking ignores case and surrounding spaces.",
-                            ),
-                            SeedQuestion(
-                                slug="a1-numbers-age-q2",
-                                kind=QuestionKind.FILL_BLANK,
-                                skill=SkillKind.GRAMMAR,
-                                prompt="Complete the question: 'How old ___ you?'",
-                                accepted_answers=("are",),
-                                explanation="'How old are you?'",
-                            ),
-                        ),
-                    ),
-                ),
-            ),
-        ),
-    ),
-    SeedLevel(
-        slug="a2-daily-life",
-        code=CEFRLevel.A2,
-        title="A2 Daily life",
-        description="Describing routines, plans and the place you live.",
-        units=(
-            SeedUnit(
-                slug="a2-routines",
-                title="Daily routines",
-                description="Talking about what you do every day.",
-                lessons=(
-                    SeedLesson(
-                        slug="a2-routines-morning",
-                        title="The morning routine",
-                        summary="Describe a sequence of everyday actions.",
-                        estimated_minutes=12,
-                        questions=(
-                            SeedQuestion(
-                                slug="a2-routines-morning-q1",
-                                kind=QuestionKind.MULTIPLE_CHOICE,
-                                skill=SkillKind.VOCABULARY,
-                                prompt="Which activity happens first in a typical morning?",
-                                choices=(
-                                    "Having breakfast",
-                                    "Going to work",
-                                    "Watching television",
-                                    "Going to bed",
-                                ),
-                                correct_index=0,
-                                explanation="Breakfast comes before the rest of the day.",
-                            ),
-                            SeedQuestion(
-                                slug="a2-routines-morning-q2",
-                                kind=QuestionKind.FILL_BLANK,
-                                skill=SkillKind.GRAMMAR,
-                                prompt="Complete: 'I usually ___ up at seven.'",
-                                accepted_answers=("get",),
-                                explanation="The phrasal verb is 'get up'.",
-                            ),
-                        ),
-                    ),
-                ),
-            ),
-        ),
-    ),
-)
-
 #: Unpublished rows are built by :func:`_draft_rows` rather than declared here, because a
 #: draft lesson needs a unit id that only exists once the published tree has been built.
 
 
-def _draft_rows(level_id: ContentId, next_unit_position: int) -> tuple[Unit, Lesson]:
+#: Where the unpublished demo rows hang off. Named rather than derived so they cannot
+#: drift onto a different level or unit without a matching edit here.
+_DRAFT_LEVEL_SLUG = "a1-starter"
+_DRAFT_UNIT_SLUG = "a1-drafts"
+_DRAFT_LESSON_UNIT_SLUG = "a1-greetings"
+_DRAFT_LESSON_SLUG = "a1-greetings-hello-draft"
+
+
+def _next_unit_position(level_slug: str) -> int:
+    """The next free unit position inside a declared level."""
+    for level in CURRICULUM:
+        if level.slug == level_slug:
+            return len(level.units) + 1
+    raise SeedRefused(f"The drafts hang off level '{level_slug}', which is no longer declared.")
+
+
+def _next_lesson_position(level_slug: str, unit_slug: str) -> int:
+    """The next free lesson position inside a declared unit.
+
+    Computed rather than hard-coded, and that is not a nicety: the draft lesson lives
+    inside a unit that also holds *published* lessons, so a literal position stops being
+    free the moment the curriculum grows past it. The result is a unique-constraint
+    violation at flush time that only ``--include-drafts`` would ever reach.
+    """
+    for level in CURRICULUM:
+        if level.slug != level_slug:
+            continue
+        for unit in level.units:
+            if unit.slug == unit_slug:
+                return len(unit.lessons) + 1
+    raise SeedRefused(
+        f"The draft lesson hangs off '{level_slug}/{unit_slug}', which is no longer declared."
+    )
+
+
+def _draft_rows(level_id: ContentId) -> tuple[Unit, Lesson]:
     """The unpublished demo rows.
 
     A review-state unit and a review-state lesson inside a *published* unit. The second is
@@ -335,19 +174,19 @@ def _draft_rows(level_id: ContentId, next_unit_position: int) -> tuple[Unit, Les
     which is the case a single "hide drafts" filter on the level alone would get wrong.
     """
     draft_unit = Unit(
-        id=ContentId(_derive("a1-starter", "a1-drafts")),
+        id=ContentId(_derive(_DRAFT_LEVEL_SLUG, _DRAFT_UNIT_SLUG)),
         level_id=level_id,
         title="Coming soon",
         description="Unpublished. Answers 404 on every public endpoint.",
-        position=next_unit_position,
+        position=_next_unit_position(_DRAFT_LEVEL_SLUG),
         state=ContentState.REVIEW,
     )
     draft_lesson = Lesson(
-        id=ContentId(_derive("a1-starter", "a1-greetings", "a1-greetings-hello-draft")),
-        unit_id=ContentId(_derive("a1-starter", "a1-greetings")),
+        id=ContentId(_derive(_DRAFT_LEVEL_SLUG, _DRAFT_LESSON_UNIT_SLUG, _DRAFT_LESSON_SLUG)),
+        unit_id=ContentId(_derive(_DRAFT_LEVEL_SLUG, _DRAFT_LESSON_UNIT_SLUG)),
         title="Saying hello (draft)",
         summary="An unpublished lesson inside a published unit.",
-        position=3,
+        position=_next_lesson_position(_DRAFT_LEVEL_SLUG, _DRAFT_LESSON_UNIT_SLUG),
         estimated_minutes=10,
         state=ContentState.REVIEW,
     )
@@ -484,7 +323,7 @@ async def run_seed(*, dry_run: bool, include_drafts: bool) -> SeedReport:
     levels, units, lessons, questions = _build_tree()
 
     if include_drafts:
-        draft_unit, draft_lesson = _draft_rows(levels[0].id, next_unit_position=len(units) + 1)
+        draft_unit, draft_lesson = _draft_rows(levels[0].id)
         units = (*units, draft_unit)
         lessons = (*lessons, draft_lesson)
 

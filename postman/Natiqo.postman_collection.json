@@ -2,7 +2,7 @@
   "info": {
     "_postman_id": "b7f3c1a2-4d5e-4f60-9a1b-2c3d4e5f6a7b",
     "name": "Natiqo API",
-    "description": "Every endpoint the backend currently exposes, with the negative cases that matter for auth.\n\nTwo things to know before editing:\n- 26 requests, 65 assertions. `../run.ps1` runs the folders in order and fails the build on the first broken assertion.\n- Variables live in the environment file, not on the collection. Collection-level variables shadow globals in Postman, so a value set with `--global-var` is silently ignored; `run.ps1` passes `--env-var` and the scripts read and write with `pm.environment`.\n\nPassword reset is a separate folder because the token only ever leaves the system through the mail provider. `run.ps1` mints one through the real forgot_password use case rather than the API growing a debug endpoint.",
+    "description": "Every endpoint the backend currently exposes, with the negative cases that matter for auth.\n\nThree things to know before editing:\n- 20 requests, 56 assertions. `../run.ps1` runs the folders in order and fails the build on the first broken assertion.\n- Variables live in the environment file, not on the collection. Collection-level variables shadow globals in Postman, so a value set with `--global-var` is silently ignored; `run.ps1` passes `--env-var` and the scripts read and write with `pm.environment`.\n- Sign-in needs an ID token from Google or Apple, which no test client can mint. `run.ps1` therefore mints a real session through the real `login_with_identity` use case with `../mint_session.py`, and the collection covers the *rejection* paths for tokens it cannot forge.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "auth": {
@@ -86,9 +86,10 @@
     },
     {
       "name": "Auth",
+      "description": "Sign-in, refresh rotation and logout. There is no register, login, forgot-password or change-password endpoint any more: all four answer 404.",
       "item": [
         {
-          "name": "Register",
+          "name": "Sign in with Google (forged token is refused)",
           "request": {
             "method": "POST",
             "header": [
@@ -99,10 +100,10 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"email\": \"{{email}}\",\n  \"password\": \"{{password}}\",\n  \"display_name\": \"Alina Haddad\",\n  \"native_language\": \"ar\",\n  \"english_variant\": \"british\",\n  \"timezone\": \"Asia/Baghdad\",\n  \"locale\": \"en-GB\",\n  \"device\": {\n    \"platform\": \"android\",\n    \"push_token\": \"pm-device-token-0001\",\n    \"app_version\": \"1.0.0\"\n  }\n}"
+              "raw": "{\n  \"id_token\": \"a-token-nobody-signed\",\n  \"device\": {\n    \"platform\": \"android\"\n  }\n}"
             },
             "url": {
-              "raw": "{{baseUrl}}/api/v1/auth/register",
+              "raw": "{{baseUrl}}/api/v1/auth/google",
               "host": [
                 "{{baseUrl}}"
               ],
@@ -110,229 +111,10 @@
                 "api",
                 "v1",
                 "auth",
-                "register"
+                "google"
               ]
             },
-            "description": "201 on success. A device block is optional; without both push_token and app_version no durable device row is written."
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('201', () => pm.response.to.have.status(201));",
-                  "const b = pm.response.json();",
-                  "pm.test('has user and tokens', () => { pm.expect(b.user).to.be.an('object'); pm.expect(b.tokens).to.be.an('object'); });",
-                  "pm.test('token type is Bearer', () => pm.expect(b.tokens.token_type).to.eql('Bearer'));",
-                  "pm.test('current_level is set by placement, not the client', () => pm.expect(b.user.profile.current_level).to.be.a('string'));",
-                  "pm.test('no plaintext token leaks into the profile', () => pm.expect(JSON.stringify(b.user)).to.not.include(b.tokens.access_token));",
-                  "pm.environment.set('accessToken', b.tokens.access_token);",
-                  "pm.environment.set('refreshToken', b.tokens.refresh_token);"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "Register (duplicate email)",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"email\": \"{{email}}\",\n  \"password\": \"{{password}}\",\n  \"display_name\": \"Someone Else\",\n  \"timezone\": \"Asia/Baghdad\"\n}"
-            },
-            "url": {
-              "raw": "{{baseUrl}}/api/v1/auth/register",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "api",
-                "v1",
-                "auth",
-                "register"
-              ]
-            },
-            "description": "409 once Register has run. Proves the unique index is enforced by the database, not only by the service."
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('409', () => pm.response.to.have.status(409));",
-                  "pm.test('stable error code', () => pm.expect(pm.response.json().error.code).to.eql('AUTH_ACCOUNT_EXISTS'));",
-                  "  pm.test('carries a request_id for support', () => pm.expect(pm.response.json().error.request_id).to.be.a('string'));"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "Register (weak password)",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"email\": \"weak.{{email}}\",\n  \"password\": \"abc\",\n  \"display_name\": \"Weak Pass\",\n  \"timezone\": \"Asia/Baghdad\"\n}"
-            },
-            "url": {
-              "raw": "{{baseUrl}}/api/v1/auth/register",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "api",
-                "v1",
-                "auth",
-                "register"
-              ]
-            },
-            "description": "422. The per-rule problems array is what the signup form renders, so its shape is part of the contract."
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('422', () => pm.response.to.have.status(422));",
-                  "const b = pm.response.json();",
-                  "pm.test('code is AUTH_WEAK_PASSWORD', () => pm.expect(b.error.code).to.eql('AUTH_WEAK_PASSWORD'));",
-                  "  pm.test('carries a request_id for support', () => pm.expect(pm.response.json().error.request_id).to.be.a('string'));",
-                  "pm.test('problems use code, not rule', () => { const p = b.error.details.problems; pm.expect(p.length).to.be.above(0); p.forEach(x => pm.expect(x).to.have.property('code')); });"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "Register (unknown field rejected)",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"email\": \"{{email}}\",\n  \"password\": \"{{password}}\",\n  \"display_name\": \"Alina Haddad\",\n  \"timezone\": \"Asia/Baghdad\",\n  \"current_level\": \"C2\"\n}"
-            },
-            "url": {
-              "raw": "{{baseUrl}}/api/v1/auth/register",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "api",
-                "v1",
-                "auth",
-                "register"
-              ]
-            },
-            "description": "422. extra=forbid: a client cannot smuggle a field the schema does not know."
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('422', () => pm.response.to.have.status(422));",
-                  "pm.test('current_level is not accepted on register', () => pm.expect(pm.response.text()).to.include('current_level'));"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "Login",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"email\": \"{{email}}\",\n  \"password\": \"{{password}}\",\n  \"device\": {\n    \"platform\": \"ios\",\n    \"push_token\": \"pm-device-token-0002\",\n    \"app_version\": \"1.1.0\"\n  }\n}"
-            },
-            "url": {
-              "raw": "{{baseUrl}}/api/v1/auth/login",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "api",
-                "v1",
-                "auth",
-                "login"
-              ]
-            },
-            "description": "200. A second device block here is what gives the Devices tests something to list and revoke."
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('200', () => pm.response.to.have.status(200));",
-                  "const b = pm.response.json();",
-                  "pm.test('returns a token pair', () => { pm.expect(b.tokens.access_token).to.be.a('string'); pm.expect(b.tokens.refresh_token).to.be.a('string'); });",
-                  "pm.test('session is active', () => pm.expect(b.user.status).to.eql('active'));",
-                  "pm.environment.set('accessToken', b.tokens.access_token);",
-                  "pm.environment.set('refreshToken', b.tokens.refresh_token);"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "Login (wrong password)",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"email\": \"{{email}}\",\n  \"password\": \"Wrong-Password-9999\"\n}"
-            },
-            "url": {
-              "raw": "{{baseUrl}}/api/v1/auth/login",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "api",
-                "v1",
-                "auth",
-                "login"
-              ]
-            },
-            "description": "401. The failed-attempt counter is committed even though the request fails. The message must stay symmetric so a wrong password is indistinguishable from an unknown account."
+            "description": "401. The signature is checked against Google's published keys before anything is read or written, so a token this client made up signs nobody in."
           },
           "event": [
             {
@@ -342,9 +124,93 @@
                 "exec": [
                   "pm.test('401', () => pm.response.to.have.status(401));",
                   "const b = pm.response.json();",
-                  "pm.test('message is symmetric, not a hint about which field was wrong', () => pm.expect(b.error.message.toLowerCase()).to.eql('email or password is incorrect.'));",
-                  "pm.test('no tokens in the body', () => pm.expect(pm.response.text()).to.not.include('access_token'));",
-                  "pm.test('carries a request_id for support', () => pm.expect(b.error.request_id).to.be.a('string'));"
+                  "pm.test('code is AUTH_IDENTITY_INVALID', () => pm.expect(b.error.code).to.eql('AUTH_IDENTITY_INVALID'));",
+                  "pm.test('carries a requestId for support', () => pm.expect(b.error.requestId).to.be.a('string'));",
+                  "pm.test('no tokens in the body', () => pm.expect(pm.response.text()).to.not.include('accessToken'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Sign in with Apple (forged token is refused)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id_token\": \"a-token-nobody-signed\",\n  \"device\": {\n    \"platform\": \"ios\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/auth/apple",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "apple"
+              ]
+            },
+            "description": "401. Same contract, different issuer and key set. Which endpoint was called decides which keys are used."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401', () => pm.response.to.have.status(401));",
+                  "pm.test('rejected, or the provider is not configured here', () => pm.expect(pm.response.json().error.code).to.be.oneOf(['AUTH_IDENTITY_INVALID', 'AUTH_PROVIDER_UNAVAILABLE']));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Sign in (token is required)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id_token\": \"too-short\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/auth/google",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "google"
+              ]
+            },
+            "description": "422. The token has a floor as well as a ceiling: an 8 KiB body is an attack, not a credential."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('422', () => pm.response.to.have.status(422));",
+                  "const b = pm.response.json();",
+                  "pm.test('code is VALIDATION_ERROR', () => pm.expect(b.error.code).to.eql('VALIDATION_ERROR'));",
+                  "pm.test('names the offending field', () => pm.expect(b.error.details.fields[0].field).to.eql('id_token'));"
                 ]
               }
             }
@@ -376,7 +242,7 @@
                 "refresh"
               ]
             },
-            "description": "200. Rotation: the presented token is consumed and a new pair is issued."
+            "description": "200. Rotation: the presented token is consumed and a new pair is issued. Needs the session minted by run.ps1."
           },
           "event": [
             {
@@ -387,16 +253,17 @@
                   "const previous = pm.environment.get('refreshToken');\n                  pm.environment.set('usedRefreshToken', previous);",
                   "pm.test('200', () => pm.response.to.have.status(200));",
                   "const b = pm.response.json();",
-                  "pm.test('issues a different refresh token', () => pm.expect(b.tokens.refresh_token).to.not.eql(previous));",
-                  "pm.environment.set('accessToken', b.tokens.access_token);",
-                  "pm.environment.set('refreshToken', b.tokens.refresh_token);"
+                  "pm.test('issues a different refresh token', () => pm.expect(b.tokens.refreshToken).to.not.eql(previous));",
+                  "pm.test('access token is usable', () => pm.expect(b.tokens.accessToken).to.be.a('string'));",
+                  "pm.environment.set('accessToken', b.tokens.accessToken);",
+                  "pm.environment.set('refreshToken', b.tokens.refreshToken);"
                 ]
               }
             }
           ]
         },
         {
-          "name": "Refresh (reused token revokes the family)",
+          "name": "Refresh (a replayed token revokes the family)",
           "request": {
             "method": "POST",
             "header": [
@@ -421,7 +288,7 @@
                 "refresh"
               ]
             },
-            "description": "401. Replay of an already-rotated token means it was copied, so the whole family is killed. Run this with the token captured before the Refresh test rotated it."
+            "description": "401. Presenting an already-rotated token means it was copied, so the whole rotation chain is killed rather than just the token presented. `usedRefreshToken` is captured by the Refresh test above."
           },
           "event": [
             {
@@ -429,91 +296,8 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('401', () => pm.response.to.have.status(401));"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "Forgot password",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"email\": \"{{email}}\"\n}"
-            },
-            "url": {
-              "raw": "{{baseUrl}}/api/v1/auth/forgot-password",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "api",
-                "v1",
-                "auth",
-                "forgot-password"
-              ]
-            },
-            "description": "Always 200 with a byte-identical body, whether or not the address exists. That is an anti-enumeration guarantee, so this test compares two responses."
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('200', () => pm.response.to.have.status(200));",
-                  "pm.test('body does not leak a token', () => pm.expect(pm.response.text().toLowerCase()).to.not.include('token'));",
-                  "pm.environment.set('forgotKnownBody', pm.response.text());"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "Forgot password (unknown email)",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"email\": \"nobody.here@example.com\"\n}"
-            },
-            "url": {
-              "raw": "{{baseUrl}}/api/v1/auth/forgot-password",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "api",
-                "v1",
-                "auth",
-                "forgot-password"
-              ]
-            },
-            "description": "Byte-identical to the known-address response. Any difference here is an account-enumeration bug."
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('200', () => pm.response.to.have.status(200));",
-                  "const known = pm.environment.get('forgotKnownBody');",
-                  "pm.test('indistinguishable from the known-address response', () => pm.expect(pm.response.text()).to.eql(known));"
+                  "pm.test('401', () => pm.response.to.have.status(401));",
+                  "pm.test('code is AUTH_REFRESH_REUSED', () => pm.expect(pm.response.json().error.code).to.eql('AUTH_REFRESH_REUSED'));"
                 ]
               }
             }
@@ -531,7 +315,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"refresh_token\": \"{{refreshToken}}\",\n  \"all_devices\": false\n}"
+              "raw": "{\n  \"refresh_token\": \"{{refreshToken2}}\",\n  \"all_devices\": false\n}"
             },
             "url": {
               "raw": "{{baseUrl}}/api/v1/auth/logout",
@@ -545,53 +329,7 @@
                 "logout"
               ]
             },
-            "description": "200. Idempotent by design, so a retry after a dropped response still reports success."
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('200', () => pm.response.to.have.status(200));"
-                ]
-              }
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "name": "Password reset (needs a real token)",
-      "description": "Run after `Mint reset token` has written the raw token. These requests are separated from the Auth folder precisely because the token cannot be obtained from an API response.",
-      "item": [
-        {
-          "name": "Reset password",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"token\": \"{{resetToken}}\",\n  \"new_password\": \"{{newPassword}}\"\n}"
-            },
-            "url": {
-              "raw": "{{baseUrl}}/api/v1/auth/reset-password",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "api",
-                "v1",
-                "auth",
-                "reset-password"
-              ]
-            },
-            "description": "200. `resetToken` is injected by run.ps1 from the real forgot_password use case, standing in for the mail provider. Revokes every session as a side effect."
+            "description": "200. Idempotent by design, so a retry after a dropped response still reports success. It uses a *second* chain minted by run.ps1, so revoking it cannot disturb the tokens the rest of the run is using."
           },
           "event": [
             {
@@ -600,14 +338,14 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('200', () => pm.response.to.have.status(200));",
-                  "pm.test('tells the user to sign in again', () => pm.expect(pm.response.json().detail).to.include('sign in'));"
+                  "pm.test('reports the outcome', () => pm.expect(pm.response.json().detail).to.be.a('string'));"
                 ]
               }
             }
           ]
         },
         {
-          "name": "Reset password (token cannot be replayed)",
+          "name": "Logout (the revoked chain is dead)",
           "request": {
             "method": "POST",
             "header": [
@@ -618,10 +356,10 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"token\": \"{{resetToken}}\",\n  \"new_password\": \"{{newPassword}}\"\n}"
+              "raw": "{\n  \"refresh_token\": \"{{refreshToken2}}\"\n}"
             },
             "url": {
-              "raw": "{{baseUrl}}/api/v1/auth/reset-password",
+              "raw": "{{baseUrl}}/api/v1/auth/refresh",
               "host": [
                 "{{baseUrl}}"
               ],
@@ -629,10 +367,10 @@
                 "api",
                 "v1",
                 "auth",
-                "reset-password"
+                "refresh"
               ]
             },
-            "description": "422. A consumed token is dead; the same generic message covers unknown, used and expired."
+            "description": "401. Proves Logout actually revoked the chain rather than only clearing the client's copy."
           },
           "event": [
             {
@@ -640,8 +378,8 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('422', () => pm.response.to.have.status(422));",
-                  "pm.test('same message for unknown, used and expired', () => pm.expect(pm.response.json().error.message).to.include('invalid or has expired'));"
+                  "pm.test('401', () => pm.response.to.have.status(401));",
+                  "pm.test('code is AUTH_REFRESH_REUSED', () => pm.expect(pm.response.json().error.code).to.eql('AUTH_REFRESH_REUSED'));"
                 ]
               }
             }
@@ -667,7 +405,8 @@
                 "v1",
                 "me"
               ]
-            }
+            },
+            "description": "200. The account is created by the sign-in, so nothing has to register first."
           },
           "event": [
             {
@@ -677,9 +416,12 @@
                 "exec": [
                   "pm.test('200', () => pm.response.to.have.status(200));",
                   "const b = pm.response.json();",
-                  "pm.test('email matches the account', () => pm.expect(b.email).to.eql(pm.environment.get('email')));",
-                  "pm.test('returns profile and settings', () => { pm.expect(b.profile).to.be.an('object'); pm.expect(b.settings).to.be.an('object'); });",
-                  "pm.test('notification preferences are complete', () => { const n = b.settings.notification_preferences; ['email','push','daily_reminder','streak_warning','review_due','weekly_report','quiet_hours_start','quiet_hours_end'].forEach(k => pm.expect(n).to.have.property(k)); });"
+                  "pm.test('the session belongs to the minted account', () => pm.expect(b.email).to.eql(pm.environment.get('email')));",
+                  "pm.test('account is active', () => pm.expect(b.status).to.eql('active'));",
+                  "pm.test('baseline role only', () => pm.expect(b.roles).to.eql(['user']));",
+                  "pm.test('emailVerified reflects the provider', () => pm.expect(b.emailVerified).to.be.a('boolean'));",
+                  "pm.test('currentLevel is set by placement, not the client', () => pm.expect(b.profile.currentLevel).to.be.a('string'));",
+                  "pm.test('no token leaks into the profile', () => pm.expect(pm.response.text()).to.not.include('eyJ'));"
                 ]
               }
             }
@@ -689,12 +431,7 @@
           "name": "Get me (no token)",
           "request": {
             "method": "GET",
-            "header": [
-              {
-                "key": "Authorization",
-                "value": ""
-              }
-            ],
+            "header": [],
             "url": {
               "raw": "{{baseUrl}}/api/v1/me",
               "host": [
@@ -706,10 +443,7 @@
                 "me"
               ]
             },
-            "description": "401 with this module's own payload, not FastAPI's bare {\"detail\": ...}.",
-            "auth": {
-              "type": "noauth"
-            }
+            "description": "401. A missing credential is not a worse error than a bad one."
           },
           "event": [
             {
@@ -718,7 +452,7 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('401', () => pm.response.to.have.status(401));",
-                  "const b = pm.response.json(); pm.expect(b.error).to.have.property('code'); pm.expect(b.error).to.have.property('message');"
+                  "pm.test('code is AUTH_TOKEN_INVALID', () => pm.expect(pm.response.json().error.code).to.eql('AUTH_TOKEN_INVALID'));"
                 ]
               }
             }
@@ -731,7 +465,7 @@
             "header": [
               {
                 "key": "Authorization",
-                "value": "Bearer not-a-real-token"
+                "value": "Bearer not-a-jwt"
               }
             ],
             "url": {
@@ -744,9 +478,6 @@
                 "v1",
                 "me"
               ]
-            },
-            "auth": {
-              "type": "noauth"
             }
           },
           "event": [
@@ -755,7 +486,8 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('401', () => pm.response.to.have.status(401));"
+                  "pm.test('401', () => pm.response.to.have.status(401));",
+                  "pm.test('carries a requestId for support', () => pm.expect(pm.response.json().error.requestId).to.be.a('string'));"
                 ]
               }
             }
@@ -773,7 +505,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"display_name\": \"Alina H.\",\n  \"avatar_key\": \"avatar-01\",\n  \"explanation_language\": \"en\",\n  \"locale\": \"en-GB\",\n  \"daily_goal_minutes\": 25,\n  \"daily_goal_new_words\": 8,\n  \"notification_preferences\": {\n    \"push\": true,\n    \"daily_reminder\": false,\n    \"quiet_hours_start\": 21,\n    \"quiet_hours_end\": 7\n  }\n}"
+              "raw": "{\n  \"display_name\": \"Alina H.\",\n  \"timezone\": \"Asia/Baghdad\",\n  \"daily_goal_minutes\": 45,\n  \"notification_preferences\": {\n    \"weekly_report\": true\n  }\n}"
             },
             "url": {
               "raw": "{{baseUrl}}/api/v1/me",
@@ -786,7 +518,7 @@
                 "me"
               ]
             },
-            "description": "200. PATCH semantics: the omitted preferences above must keep their previous values rather than resetting to defaults."
+            "description": "200. PATCH semantics: every field is optional, and one that is not sent keeps its stored value."
           },
           "event": [
             {
@@ -796,18 +528,17 @@
                 "exec": [
                   "pm.test('200', () => pm.response.to.have.status(200));",
                   "const b = pm.response.json();",
-                  "pm.test('display_name applied', () => pm.expect(b.profile.display_name).to.eql('Alina H.'));",
-                  "pm.test('daily goals applied', () => { pm.expect(b.settings.daily_goal_minutes).to.eql(25); pm.expect(b.settings.daily_goal_new_words).to.eql(8); });",
-                  "pm.test('sent preferences applied', () => { const n = b.settings.notification_preferences; pm.expect(n.push).to.be.true; pm.expect(n.daily_reminder).to.be.false; pm.expect(n.quiet_hours_start).to.eql(21); });",
-                  "pm.test('omitted preferences were left alone', () => { const n = b.settings.notification_preferences; pm.expect(n).to.have.property('weekly_report'); pm.expect(n).to.have.property('review_due'); });",
-                  "pm.test('unsent fields untouched', () => pm.expect(b.profile.native_language).to.be.a('string'));"
+                  "pm.test('displayName applied', () => pm.expect(b.profile.displayName).to.eql('Alina H.'));",
+                  "pm.test('daily goal applied', () => pm.expect(b.settings.dailyGoalMinutes).to.eql(45));",
+                  "pm.test('a preference in the patch applied', () => pm.expect(b.settings.notificationPreferences.weeklyReport).to.be.true);",
+                  "pm.test('an untouched channel keeps its stored value', () => pm.expect(b.settings.notificationPreferences.email).to.be.a('boolean'));"
                 ]
               }
             }
           ]
         },
         {
-          "name": "Update me (current_level rejected)",
+          "name": "Update me (current_level is refused)",
           "request": {
             "method": "PATCH",
             "header": [
@@ -831,7 +562,7 @@
                 "me"
               ]
             },
-            "description": "422. A learner must not be able to self-assign a level; that would bypass the placement test every later difficulty decision assumes."
+            "description": "422. The field is absent from the schema on purpose: a learner who could set their own level would bypass the placement test every later difficulty decision assumes."
           },
           "event": [
             {
@@ -840,45 +571,9 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('422', () => pm.response.to.have.status(422));",
-                  "pm.test('names the offending field', () => pm.expect(pm.response.text()).to.include('current_level'));"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "Update me (quiet hours out of range)",
-          "request": {
-            "method": "PATCH",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"notification_preferences\": {\n    \"quiet_hours_start\": 99\n  }\n}"
-            },
-            "url": {
-              "raw": "{{baseUrl}}/api/v1/me",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "api",
-                "v1",
-                "me"
-              ]
-            }
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('422', () => pm.response.to.have.status(422));"
+                  "const b = pm.response.json();",
+                  "pm.test('code is VALIDATION_ERROR', () => pm.expect(b.error.code).to.eql('VALIDATION_ERROR'));",
+                  "pm.test('names current_level', () => pm.expect(JSON.stringify(b.error.details)).to.include('current_level'));"
                 ]
               }
             }
@@ -900,7 +595,8 @@
                 "me",
                 "devices"
               ]
-            }
+            },
+            "description": "200. The minted session carries an android device, so there is one row to list and revoke."
           },
           "event": [
             {
@@ -909,11 +605,12 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('200', () => pm.response.to.have.status(200));",
-                  "const b = pm.response.json();",
-                  "pm.test('is an array', () => pm.expect(b).to.be.an('array'));",
-                  "pm.test('has at least the android session from Register', () => pm.expect(b.length).to.be.at.least(1));",
-                  "if (b.length) { pm.environment.set('deviceId', b[0].id); }",
-                  "pm.test('device shape', () => { b.forEach(d => { pm.expect(d).to.have.property('id'); pm.expect(d).to.have.property('platform'); pm.expect(d).to.have.property('push_enabled'); }); });"
+                  "const devices = pm.response.json();",
+                  "pm.test('returns an array', () => pm.expect(devices).to.be.an('array'));",
+                  "pm.test('has the minted device', () => pm.expect(devices.length).to.be.above(0));",
+                  "const device = devices[0];",
+                  "pm.test('device is enabled for push', () => pm.expect(device.pushEnabled).to.be.true);",
+                  "pm.environment.set('deviceId', device.id);"
                 ]
               }
             }
@@ -936,7 +633,7 @@
                 "devices"
               ]
             },
-            "description": "Same account, so the same devices. Exists to make explicit that no user_id is taken from the query string anywhere in this collection."
+            "description": "200. Every row belongs to the caller; the repository filters on user_id rather than trusting the path."
           },
           "event": [
             {
@@ -944,7 +641,9 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('200', () => pm.response.to.have.status(200));"
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "const mine = pm.environment.get('deviceId');",
+                  "pm.test('the captured device is the caller\\'s', () => pm.expect(pm.response.json().map(d => d.id)).to.include(mine));"
                 ]
               }
             }
@@ -976,7 +675,7 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('422', () => pm.response.to.have.status(422));",
-                  "pm.test('blames device_id', () => pm.expect(pm.response.json().error.details.field).to.eql('device_id'));"
+                  "pm.test('code is VALIDATION_ERROR', () => pm.expect(pm.response.json().error.code).to.eql('VALIDATION_ERROR'));"
                 ]
               }
             }
@@ -1000,7 +699,7 @@
                 "00000000-0000-0000-0000-000000000000"
               ]
             },
-            "description": "A well-formed but unknown device id returns the same 422 as a malformed one. 404 would confirm that some other user's device id exists, so the API does not distinguish them."
+            "description": "422, the same as a malformed id. A 404 here would confirm that some *other* account's device id exists."
           },
           "event": [
             {
@@ -1008,9 +707,8 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('422 not 404, so an id that belongs to someone else stays indistinguishable', () => pm.response.to.have.status(422));",
-                  "const b = pm.response.json();",
-                  "pm.test('blames device_id', () => pm.expect(b.error.details.field).to.eql('device_id'));"
+                  "pm.test('422', () => pm.response.to.have.status(422));",
+                  "pm.test('reply is identical to the malformed case', () => pm.expect(pm.response.json().error.code).to.eql('VALIDATION_ERROR'));"
                 ]
               }
             }
@@ -1034,7 +732,7 @@
                 "{{deviceId}}"
               ]
             },
-            "description": "204. Also revokes the refresh tokens bound to that device, so the sign-out is real rather than cosmetic."
+            "description": "204. Ends the device's sessions and stops its push delivery in the same transaction."
           },
           "event": [
             {
@@ -1044,6 +742,36 @@
                 "exec": [
                   "pm.test('204', () => pm.response.to.have.status(204));",
                   "pm.test('no body', () => pm.expect(pm.response.text()).to.eql(''));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Close account",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/me",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "me"
+              ]
+            },
+            "description": "204. Left last because it closes the account: every later call with these tokens is refused. The account is minted fresh per run, so this does not accumulate."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('204', () => pm.response.to.have.status(204));"
                 ]
               }
             }

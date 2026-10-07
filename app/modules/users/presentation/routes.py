@@ -3,10 +3,15 @@
 Handlers are thin on purpose: parse, delegate to :class:`AuthService`, render. Any
 branching about *what a user may do* belongs in the service, where it can be tested
 without a request object.
+
+There is no sign-up endpoint distinct from sign-in. The first verified ID token from a
+provider *is* the registration — asking a learner to press "create account" before an
+account exists would add a step that changes nothing about what the server writes.
 """
 
 from __future__ import annotations
 
+import secrets
 import uuid
 from collections.abc import Awaitable, Callable
 from typing import Annotated
@@ -14,50 +19,44 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Request, Response, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-from app.api.deps import AuthRateLimitDep, SettingsDep, UowDep, client_ip
-from app.core.errors import UnauthorizedError, ValidationFailed
+from app.api.deps import (
+    AuthRateLimitDep,
+    SettingsDep,
+    UowDep,
+    client_ip,
+    get_identity_verifiers,
+)
+from app.core.errors import ErrorCode, NotFoundError, UnauthorizedError, ValidationFailed
 from app.core.types import UserRole
 from app.modules.users.application.auth_service import AuthService
 from app.modules.users.application.dto import (
     AuthResult,
-    ChangePasswordCommand,
     DeviceContext,
     DeviceView,
-    ForgotPasswordCommand,
-    LoginCommand,
     LogoutCommand,
     MeView,
     RefreshCommand,
-    RegisterCommand,
-    ResendVerificationCommand,
-    ResetPasswordCommand,
+    SocialLoginCommand,
     UpdateProfileCommand,
     UpdateSettingsCommand,
-    VerifyEmailCommand,
 )
 from app.modules.users.domain.entities import User
-from app.modules.users.infrastructure.delivery import build_delivery
-from app.modules.users.infrastructure.email import build_smtp_sender
+from app.modules.users.domain.identity import IdentityProvider, VerifiedIdentity
 from app.modules.users.presentation.schemas import (
     AuthResponse,
-    ChangePasswordRequest,
-    ChangePasswordResponse,
     DevicePayload,
     DeviceResponse,
-    ForgotPasswordRequest,
-    LoginRequest,
+    DevLoginRequest,
     LogoutRequest,
     MeResponse,
     MessageResponse,
     NotificationPreferencesResponse,
     RefreshRequest,
-    RegisterRequest,
-    ResetPasswordRequest,
+    SocialLoginRequest,
     TokenPairResponse,
     UpdateMeRequest,
     UserProfileResponse,
     UserSettingsResponse,
-    VerifyEmailRequest,
 )
 
 router = APIRouter(tags=["auth"])
@@ -69,28 +68,11 @@ bearer_scheme = HTTPBearer(auto_error=False)
 
 
 def auth_service(uow: UowDep, settings: SettingsDep) -> AuthService:
-    # Reset delivery defaults to the audit-only adapter when SMTP is unconfigured, so a
-    # local run is honest about not sending mail. When SMTP_HOST is set, the link is
-    # actually emailed. Tests and local flows override with a collector so they can read
-    # the link the use case dispatched.
-    return AuthService(
-        uow,
-        settings,
-        reset_delivery=build_delivery(
-            production=settings.is_production,
-            smtp_sender=build_smtp_sender(
-                host=settings.smtp_host,
-                port=settings.smtp_port,
-                username=settings.smtp_user,
-                password=settings.smtp_password.get_secret_value()
-                if settings.smtp_password
-                else None,
-                sender=settings.smtp_from,
-                use_tls=settings.smtp_use_tls,
-            ),
-            public_web_base_url=settings.public_web_base_url,
-        ),
-    )
+    # The verifier set is derived from configuration and cached for the life of the
+    # process: a provider with no registered client ids gets no verifier, so its endpoint
+    # reports that sign-in is not enabled instead of accepting a token nothing can check,
+    # and each verifier keeps one JWK-set cache rather than refetching per request.
+    return AuthService(uow, settings, verifiers=get_identity_verifiers())
 
 
 AuthServiceDep = Annotated[AuthService, Depends(auth_service)]
@@ -140,47 +122,66 @@ def _me_response(view: MeView) -> MeResponse:
     )
 
 
-# ==================================================================== endpoints
-@router.post(
-    "/auth/register",
-    response_model=AuthResponse,
-    status_code=status.HTTP_201_CREATED,
-    summary="Create an account",
-)
-async def register(
-    payload: RegisterRequest, request: Request, service: AuthServiceDep
+async def _sign_in(
+    provider: IdentityProvider,
+    payload: SocialLoginRequest,
+    request: Request,
+    service: AuthService,
 ) -> AuthResponse:
-    """Sign up and immediately receive a session.
-
-    Registration is a login: making a new learner call a second endpoint before they
-    can start a lesson is friction with no security benefit — the refresh token is
-    stored hashed and is revocable exactly like one from a login.
-    """
-    result = await service.register(
-        RegisterCommand(
-            email=payload.email,
-            password=payload.password,
+    result = await service.login_with_identity(
+        SocialLoginCommand(
+            provider=provider,
+            id_token=payload.id_token,
+            device=_device(payload.device, request),
             display_name=payload.display_name,
             native_language=payload.native_language,
             english_variant=payload.english_variant,
             timezone=payload.timezone,
             locale=payload.locale,
-            device=_device(payload.device, request),
         )
     )
     return _auth_response(result)
 
 
-@router.post("/auth/login", response_model=AuthResponse, summary="Exchange credentials for tokens")
-async def login(payload: LoginRequest, request: Request, service: AuthServiceDep) -> AuthResponse:
-    result = await service.login(
-        LoginCommand(
-            email=payload.email,
-            password=payload.password,
-            device=_device(payload.device, request),
-        )
-    )
-    return _auth_response(result)
+# ==================================================================== endpoints
+@router.post(
+    "/auth/google",
+    response_model=AuthResponse,
+    summary="Sign in with a Google ID token",
+)
+async def sign_in_with_google(
+    payload: SocialLoginRequest,
+    request: Request,
+    service: AuthServiceDep,
+    _limit: AuthRateLimitDep,
+) -> AuthResponse:
+    """Exchange a Google ID token for a session, creating the account on first sight.
+
+    The token comes from the Google Sign-In SDK on the device. It is verified here —
+    signature, audience, expiry, issuer — and never stored: the server keeps only the
+    provider's stable subject id, which is what the next sign-in is matched on.
+    """
+    return await _sign_in(IdentityProvider.GOOGLE, payload, request, service)
+
+
+@router.post(
+    "/auth/apple",
+    response_model=AuthResponse,
+    summary="Sign in with an Apple ID token",
+)
+async def sign_in_with_apple(
+    payload: SocialLoginRequest,
+    request: Request,
+    service: AuthServiceDep,
+    _limit: AuthRateLimitDep,
+) -> AuthResponse:
+    """Exchange an Apple ID token for a session, creating the account on first sight.
+
+    Apple shares the learner's name only on the first authorization and delivers it to
+    the client rather than inside the token, so ``display_name`` may be supplied here —
+    it is used exactly once, when the account is created.
+    """
+    return await _sign_in(IdentityProvider.APPLE, payload, request, service)
 
 
 @router.post("/auth/refresh", response_model=AuthResponse, summary="Rotate a refresh token")
@@ -213,119 +214,120 @@ async def logout(payload: LogoutRequest, service: AuthServiceDep) -> MessageResp
     return MessageResponse(detail="Signed out.")
 
 
-@router.post(
-    "/auth/forgot-password",
-    response_model=MessageResponse,
-    summary="Request a password-reset link",
-)
-async def forgot_password(
-    payload: ForgotPasswordRequest, request: Request, service: AuthServiceDep
-) -> MessageResponse:
-    """Always reports success.
+# ======================================================== development sign-in
+class _DevVerifier:
+    """A verifier that vouches for the one built-in development identity.
 
-    Whether an address is registered is account state an unauthenticated caller has no
-    business learning. The same response and status are returned either way, and the
-    response body is byte-identical so even a size comparison reveals nothing.
+    Same trick as the seeder's: sign in through the real use case so account creation,
+    the identity row and the refresh chain all travel the production code path, with
+    no provider round-trip. The router that exposes it is mounted only when
+    ``DEV_LOGIN_ENABLED`` is set, so no request can reach this class otherwise.
     """
-    # The token is handed to the delivery port inside the use case. It is deliberately
-    # not returned here and not logged: a reset link in a log or an HTTP body is a
-    # credential sitting in plaintext somewhere it cannot be rotated.
-    await service.forgot_password(
-        ForgotPasswordCommand(email=payload.email, ip_address=client_ip(request))
-    )
-    return MessageResponse(detail="If that address has an account, a reset link is on its way.")
+
+    provider = IdentityProvider.GOOGLE
+
+    def __init__(self, identity: VerifiedIdentity) -> None:
+        self._identity = identity
+
+    async def verify(self, id_token: str) -> VerifiedIdentity:
+        return self._identity
 
 
-@router.post(
-    "/auth/reset-password",
-    response_model=MessageResponse,
-    summary="Complete a password reset",
+#: The fixed provider subject behind the development account. Deterministic so the
+#: second sign-in finds the identity the first one created instead of a new account.
+_DEV_SUBJECT = "dev:admin"
+_DEV_EMAIL = "admin@natiqo.dev"
+
+dev_router = APIRouter(tags=["auth"])
+
+
+@dev_router.post(
+    "/auth/dev-login",
+    response_model=AuthResponse,
+    summary="Sign in with the built-in development account (admin/admin)",
 )
-async def reset_password(payload: ResetPasswordRequest, service: AuthServiceDep) -> MessageResponse:
-    """Revokes every existing session as a side effect.
-
-    A reset is the owner's statement that a password was lost or stolen, so any
-    session opened with the old one is treated as hostile.
-    """
-    await service.reset_password(
-        ResetPasswordCommand(token=payload.token, new_password=payload.new_password)
-    )
-    return MessageResponse(detail="Your password has been updated. Please sign in.")
-
-
-@router.post(
-    "/auth/verify-email",
-    response_model=MessageResponse,
-    summary="Confirm an email address from an emailed token",
-)
-async def verify_email(payload: VerifyEmailRequest, service: AuthServiceDep) -> MessageResponse:
-    """Confirmation only — it does not grant or restore access.
-
-    An unverified learner keeps working exactly as before, so this endpoint changes a
-    flag the client can display, not a permission. Redeeming the same link twice
-    succeeds both times: a mail scanner may open it before the learner does.
-    """
-    await service.verify_email(VerifyEmailCommand(token=payload.token))
-    return MessageResponse(detail="Your email address is confirmed.")
-
-
-@router.post(
-    "/auth/resend-verification",
-    response_model=MessageResponse,
-    summary="Send another verification email",
-)
-async def resend_verification(
+async def dev_login(
+    payload: DevLoginRequest,
     request: Request,
-    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)],
-    service: AuthServiceDep,
+    uow: UowDep,
+    settings: SettingsDep,
     _limit: AuthRateLimitDep,
-) -> MessageResponse:
-    """Always reports success.
+) -> AuthResponse:
+    """The one username/password sign-in this service has, for development only.
 
-    Authenticated, unlike ``forgot-password``: an unauthenticated resend keyed on an
-    address would be a way to flood somebody else's inbox. The response still does not
-    say whether anything was sent, because "already confirmed" is state the client
-    already has from ``/me`` and does not need the server to confirm.
+    Every other sign-in delegates the credential check to a provider; this one cannot,
+    so it exists only while ``DEV_LOGIN_ENABLED`` is true. Production refuses to boot
+    with the flag set, and the route is not mounted at all without it — the guard is
+    the server's, not the caller's.
+
+    Sessions issued here live ``DEV_LOGIN_TOKEN_TTL_SECONDS`` (10 years by default)
+    so a test run is never cut short by a 15-minute expiry. Every other sign-in keeps
+    the normal token TTLs.
     """
-    user = await _authenticate(credentials, service)
-    await service.resend_verification(
-        ResendVerificationCommand(user_id=user.id, ip_address=client_ip(request))
+    # Belt and braces: the router is mounted only when the flag was set at app
+    # creation, so this branch exists for a process whose settings changed afterwards
+    # — it makes the route behave as absent in every state, not just the usual one.
+    if not settings.dev_login_enabled:
+        raise NotFoundError("Not found.")
+
+    # Both comparisons run even when the first fails: a short-circuit here would leak,
+    # through timing, whether the username exists before the password is checked.
+    username_ok = secrets.compare_digest(
+        payload.username.encode("utf-8"), settings.dev_admin_user.encode("utf-8")
     )
-    return MessageResponse(
-        detail="If your address still needs confirming, a new link is on its way."
+    password_ok = secrets.compare_digest(
+        payload.password.encode("utf-8"),
+        settings.dev_admin_password.get_secret_value().encode("utf-8"),
     )
-
-
-@router.post(
-    "/auth/change-password",
-    response_model=ChangePasswordResponse,
-    summary="Change the password of the signed-in account",
-)
-async def change_password(
-    payload: ChangePasswordRequest,
-    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)],
-    service: AuthServiceDep,
-    _limit: AuthRateLimitDep,
-) -> ChangePasswordResponse:
-    """Revokes every session, including the one making this request.
-
-    That is intentional rather than punitive: the point of changing a password is to
-    make the old credential useless everywhere, and the caller's own session is not an
-    exception. The count comes back so the client can say something more useful than
-    "done" before it drops the tokens.
-    """
-    user = await _authenticate(credentials, service)
-    revoked = await service.change_password(
-        ChangePasswordCommand(
-            user_id=user.id,
-            current_password=payload.current_password,
-            new_password=payload.new_password,
+    if not (username_ok and password_ok):
+        raise UnauthorizedError(
+            "Invalid username or password.", code=ErrorCode.AUTH_INVALID_CREDENTIALS
         )
+
+    dev_settings = settings.model_copy(
+        update={
+            "access_token_ttl_seconds": settings.dev_login_token_ttl_seconds,
+            "refresh_token_ttl_seconds": settings.dev_login_token_ttl_seconds,
+        }
     )
-    return ChangePasswordResponse(
-        detail="Your password has been updated. Please sign in again.",
-        sessions_revoked=revoked,
+    identity = VerifiedIdentity(
+        provider=IdentityProvider.GOOGLE,
+        subject=_DEV_SUBJECT,
+        email=_DEV_EMAIL,
+        email_verified=True,
+        display_name="Dev Admin",
     )
+    service = AuthService(
+        uow, dev_settings, verifiers={IdentityProvider.GOOGLE: _DevVerifier(identity)}
+    )
+    command = SocialLoginCommand(
+        provider=IdentityProvider.GOOGLE,
+        id_token=_DEV_SUBJECT,
+        device=_device(payload.device, request),
+        display_name="Dev Admin",
+    )
+    result = await service.login_with_identity(command)
+
+    required = {UserRole.ADMIN, UserRole.SUPPORT}
+    if not required <= {UserRole(role) for role in result.user.roles}:
+        # First sight of this account: it was created with the default role, so the
+        # tokens minted a line ago carry no admin claims. Grant the roles, revoke that
+        # throwaway session, and sign in once more — the pair handed to the client is
+        # then minted from the account its own responses describe. Later sign-ins take
+        # this branch never and cost one query fewer.
+        user = await uow.users.get(result.user.id)
+        if user is None:  # pragma: no cover - sign-in above just loaded it
+            raise UnauthorizedError(
+                "This sign-in is no longer linked to an account.",
+                code=ErrorCode.AUTH_IDENTITY_INVALID,
+            )
+        user.roles = (UserRole.ADMIN, UserRole.SUPPORT)
+        await uow.users.update(user)
+        await uow.commit()
+        await service.logout(LogoutCommand(refresh_token=result.tokens.refresh_token))
+        result = await service.login_with_identity(command)
+
+    return _auth_response(result)
 
 
 # ============================================================================ me
@@ -388,9 +390,9 @@ async def delete_me(
     """Close the account, keeping the record.
 
     204 with no body either way: the caller's own account is already closed, so there is
-    nothing useful to tell them and no reason to make a retried request fail. Every session,
-    reset link and verification link is revoked in the same transaction as the status
-    change, so the account stops being reachable immediately rather than at token expiry.
+    nothing useful to tell them and no reason to make a retried request fail. Every live
+    refresh chain is revoked in the same transaction as the status change, so the account
+    stops being renewable immediately rather than at token expiry.
     """
     user = await _authenticate(credentials, service)
     await service.delete_account(user.id)
@@ -473,4 +475,11 @@ async def _authenticate(
     return await service.authenticate(credentials.credentials)
 
 
-__all__ = ["AuthServiceDep", "CurrentUser", "current_user", "require_role", "router"]
+__all__ = [
+    "AuthServiceDep",
+    "CurrentUser",
+    "current_user",
+    "dev_router",
+    "require_role",
+    "router",
+]

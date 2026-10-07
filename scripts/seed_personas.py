@@ -11,15 +11,14 @@ account is a healthy A1 learner hides every interesting branch in the app.
 
 Two rules keep reruns safe:
 
-* **The shared password is the ownership marker.** The seeder enriches an existing
-  account only when its stored hash verifies against :data:`DEMO_PASSWORD`. An account
-  that happens to share a demo email but was created by a real person with a different
-  password is left completely alone, so a demo environment that has drifted into
-  real usage cannot be overwritten by a rerun.
-* **Nothing here is a secret.** These addresses and this password are published in the
-  README on purpose. They are demo credentials for a seeded local environment, and
-  :mod:`scripts.seed` refuses to write them to a production database without an
-  explicit override.
+* **A deterministic provider identity is the ownership marker.** The seeder recognises
+  its own accounts by the identity it minted for them (``seed:<persona>``), so an
+  account that happens to share a demo email but was created some other way is left
+  completely alone, and a demo environment that has drifted into real usage cannot be
+  overwritten by a rerun.
+* **Nothing here is a secret.** These addresses are published in the README on purpose.
+  They are demo data for a seeded local environment, and :mod:`scripts.seed` refuses to
+  write them to a production database without an explicit override.
 """
 
 from __future__ import annotations
@@ -36,14 +35,6 @@ from app.core.types import (
     UserStatus,
 )
 from app.modules.users.domain.entities import NotificationPreferences
-
-#: One password for every demo account, so a reviewer can log in as any of them.
-#: 17 characters with a digit and a dash: it clears the configured minimum length and
-#: the common-password screen, and it is obviously not a real credential.
-#: Published in the README on purpose — a demo password no reviewer can see is a demo
-#: nobody can use — so the S105 suppression below is scoped to this line, rather than
-#: disabling the rule for scripts/ and blinding it to a real credential in future.
-DEMO_PASSWORD = "Natiqo-Demo-2026"  # noqa: S105
 
 #: Fixed namespace for every deterministic id the seeder mints. Chosen once and frozen
 #: rather than generated at import: a UUID5 namespace that changed between runs would
@@ -105,7 +96,6 @@ class SeedPersona:
     key: str
     email: str
     display_name: str
-    password: str = DEMO_PASSWORD
     status: UserStatus = UserStatus.ACTIVE
     roles: tuple[UserRole, ...] = (UserRole.USER,)
     email_verified: bool = True
@@ -376,7 +366,6 @@ PERSONAS: tuple[SeedPersona, ...] = (
 
 
 __all__ = [
-    "DEMO_PASSWORD",
     "PERSONAS",
     "SEED_NAMESPACE",
     "SeedAiCall",

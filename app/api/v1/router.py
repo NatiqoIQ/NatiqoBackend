@@ -12,7 +12,10 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from app.modules.content.presentation.routes import router as content_router
-from app.modules.users.presentation.routes import router as users_router
+from app.modules.users.presentation.routes import (
+    dev_router as dev_login_router,
+    router as users_router,
+)
 
 api_router = APIRouter()
 
@@ -23,7 +26,12 @@ api_router.include_router(users_router)
 #: ``modules/content/presentation/routes.py`` for why that is safe.
 api_router.include_router(content_router, prefix="/content", tags=["content"])
 
+#: The development sign-in deliberately stays *off* ``api_router``: ``create_app``
+#: mounts it only when ``DEV_LOGIN_ENABLED`` is set, so a production app object never
+#: contains the route — it is absent from the router and from the OpenAPI document,
+#: not merely refused at request time.
+
 # Later modules follow the same shape:
 #   api_router.include_router(lessons.router, prefix="/lessons", tags=["lessons"])
 
-__all__ = ["api_router"]
+__all__ = ["api_router", "dev_login_router"]

@@ -5,10 +5,12 @@
 # 1. It owns the server. Starting uvicorn here, waiting for /ready, and stopping it
 #    afterwards means a run cannot silently talk to whatever else happens to be
 #    listening on the port.
-# 2. Password reset is a second pass. The token only ever leaves the system through
-#    the mail provider, so there is no endpoint that hands it back. Rather than
-#    adding a debug endpoint, mint_reset_token.py calls the real forgot_password use
-#    case and picks the token up from the delivery boundary.
+# 2. Sign-in needs an ID token from Google or Apple, which no local client can mint —
+#    and there is deliberately no switch that makes the API accept a forged one.
+#    mint_session.py therefore calls the real login_with_identity use case with a stub
+#    verifier, against the same database this server is reading, and hands the tokens
+#    to newman. The account is created by that call, exactly as a real first sign-in
+#    would create it.
 
 param(
     [string]$BaseUrl = "http://127.0.0.1:8099",
@@ -41,7 +43,8 @@ Push-Location $root
 $newman = "./postman/node_modules/.bin/newman.cmd"
 $collection = "./postman/Natiqo.postman_collection.json"
 $environment = "./postman/dev.postman_environment.json"
-$tokenFile = "./postman/reset_token.json"
+$sessionFile = "./postman/session.json"
+$secondSessionFile = "./postman/session2.json"
 $server = $null
 
 function Stop-Server {
@@ -101,16 +104,26 @@ try {
         Write-Host "==> server ready"
     }
 
-    $code = Invoke-Newman -Folders @("Health", "Auth", "Me") -Vars @{ email = $Email; baseUrl = $BaseUrl }
-    if ($code -ne 0) { exit $code }
+    # Two sessions for one account, under two subjects. The second chain exists so the
+    # Logout test can revoke something real without disturbing the tokens every other
+    # request is using.
+    Write-Host "==> minting sessions (stands in for Google and Apple)"
+    Remove-Item -Force $sessionFile, $secondSessionFile -ErrorAction SilentlyContinue
+    uv run python ./postman/mint_session.py $Email --subject postman:main --output $sessionFile
+    if ($LASTEXITCODE -ne 0) { throw "could not mint a session for $Email" }
+    uv run python ./postman/mint_session.py $Email --subject postman:secondary --output $secondSessionFile
+    if ($LASTEXITCODE -ne 0) { throw "could not mint the second session for $Email" }
 
-    Write-Host "==> minting reset token (stands in for the mail provider)"
-    Remove-Item -Force $tokenFile -ErrorAction SilentlyContinue
-    uv run python ./postman/mint_reset_token.py $Email
-    if ($LASTEXITCODE -ne 0) { throw "could not mint a reset token for $Email" }
+    $session = Get-Content $sessionFile -Raw | ConvertFrom-Json
+    $second = Get-Content $secondSessionFile -Raw | ConvertFrom-Json
 
-    $token = (Get-Content $tokenFile -Raw | ConvertFrom-Json).token
-    $code = Invoke-Newman -Folders @("Password reset (needs a real token)") -Vars @{ resetToken = $token; email = $Email; baseUrl = $BaseUrl }
+    $code = Invoke-Newman -Folders @("Health", "Auth", "Me") -Vars @{
+        baseUrl = $BaseUrl
+        email = $session.email
+        accessToken = $session.accessToken
+        refreshToken = $session.refreshToken
+        refreshToken2 = $second.refreshToken
+    }
     if ($code -ne 0) { exit $code }
 
     Write-Host "`n==> all endpoints passed"

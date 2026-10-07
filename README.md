@@ -47,6 +47,35 @@ validation rejects that combination.
 Ports 8000 and 8099 are commonly already taken by local tooling — pass an explicit
 `--port` if the bind fails.
 
+## Sign-in
+
+Accounts are created and reached through **Google or Apple**; there is no password
+anywhere in the system, so there is nothing to hash, reset or leak.
+
+The client obtains an ID token from the provider's native SDK and POSTs it to
+`/api/v1/auth/google` or `/api/v1/auth/apple`. The server verifies the signature against
+the provider's published keys, checks the issuer, the audience and the expiry, and then
+keys the account on the provider's `(provider, subject)` pair. The token itself is never
+stored and the provider is never called on the learner's behalf.
+
+Set the client ids of every app that signs in, or that provider is not offered:
+
+```bash
+GOOGLE_CLIENT_IDS=1234567890-abc.apps.googleusercontent.com,1234567890-def.apps.googleusercontent.com
+APPLE_CLIENT_IDS=app.natiqo.ios,app.natiqo.android
+```
+
+Both accept a comma-separated list or a JSON array, like `CORS_ORIGINS`. An id token
+minted for a client id that is not listed is rejected, so a token lifted from an
+attacker-controlled app cannot be replayed here. In production at least one of the two
+must be set, and a request to a provider with no configured client ids answers `401`
+`AUTH_PROVIDER_UNAVAILABLE` rather than trusting the token.
+
+An email is only used to *link* a second provider to an existing account, and only when
+the provider asserts the address is verified — otherwise an unverified address could be
+used to take the account over. See the
+[Mobile integration guide](docs/mobile-integration-ar.md) for the client side.
+
 ## Quality gates
 
 ```bash
@@ -58,9 +87,39 @@ uv run pytest
 
 ## Demo data
 
-`scripts/seed.py` loads six demo accounts so the app has something realistic to render:
-each one sits on a different branch — admin, learner, active, suspended, Arabic-speaking,
-different CEFR levels and daily goals.
+Two seeders, deliberately separate: one owns **accounts**, the other owns the
+**curriculum**. Merging them would mean a routine `--yes` to create a test learner could
+also rewrite published course material.
+
+### The curriculum — `scripts/seed_content.py`
+
+A complete six-level course, so the catalogue routes return a course rather than a
+sample. 6 levels (A1–C2), 18 units, 37 lessons and 114 questions, every row published and
+every question graded — multiple choice, true/false and fill-in-the-blank, spread across
+all six tracked skills.
+
+```bash
+uv run python -m scripts.seed_content --dry-run        # show the plan, write nothing
+uv run python -m scripts.seed_content --yes            # no interactive confirmation
+uv run python -m scripts.seed_content --yes --include-drafts
+```
+
+The declaration is [scripts/seed_curriculum.py](scripts/seed_curriculum.py) and the
+machinery is [scripts/seed_content.py](scripts/seed_content.py). Rows are built as domain
+entities before anything is written, so a bad position or an unanswerable question fails
+the script instead of becoming a row the catalogue serves.
+
+**A slug is permanent.** Every id is `uuid5` of its slug path, so renaming a title is
+free while renaming a slug orphans whatever progress is keyed on the old id. `--include-drafts`
+adds one unpublished unit and one unpublished lesson for exercising the `404` paths; their
+positions are computed from the declaration, because a literal one would collide with a
+published sibling as soon as the course grows.
+
+### The accounts — `scripts/seed.py`
+
+Six demo accounts so the app has something realistic to render: each one sits on a
+different branch — admin, learner, active, suspended, Arabic-speaking, different CEFR
+levels and daily goals.
 
 ```bash
 uv run python -m scripts.seed --dry-run   # show the plan, write nothing
@@ -75,28 +134,29 @@ uv run python -m scripts.seed --yes --only admin --only learner
 | `--only PERSONA` | Restricts to one persona. Repeatable. |
 | `--allow-production` | Permits a production write. Off unless you pass it. |
 
-Every persona uses the password **`Natiqo-Demo-2026`**. It is public and printed here on
-purpose — these are throwaway accounts for local and demo use. Never reuse it, and never
-seed a real user database: the seeder refuses to write in production without
-`--allow-production`.
+Every persona owns a **deterministic provider identity** instead of a password: the
+seeder signs each one in through the real use case with a `seed:<persona>` subject on
+the `google` provider. There is no demo credential to leak or reuse, and the identity is
+what makes an account recognisably the seeder's on the next run. Never seed a real user
+database: the seeder refuses to write in production without `--allow-production`.
 
 ### Reruns are safe
 
-Run it as often as you like. Accounts are matched by email, and their devices and usage
-history are written under deterministic ids, so a second run updates the personas in
-place rather than creating duplicates — and it reports zero changes. Run it twice and
-compare the reports if you want to see that for yourself.
+Run it as often as you like. Accounts are matched by the seeded provider identity, and
+their devices and usage history are written under deterministic ids, so a second run
+updates the personas in place rather than creating duplicates — and it reports zero
+changes. Run it twice and compare the reports if you want to see that for yourself.
 
-The one case worth knowing about: if a run is interrupted, `AuthService.register()`
-commits each account as it is created, so a partial run can leave an account with no
-profile behind it. Simply run the seeder again — it finds the account, completes the
-missing rows, and leaves the rest untouched.
+The one case worth knowing about: if a run is interrupted,
+`AuthService.login_with_identity()` commits each account as it is created, so a partial
+run can leave an account with no profile behind it. Simply run the seeder again — it
+finds the account, completes the missing rows, and leaves the rest untouched.
 
 ### It will not touch accounts it does not own
 
-If an email already exists with a different password, the seeder skips that persona and
-says so. It never re-hashes someone else's password to the demo value, and it writes
-nothing at all for a persona it skipped.
+If an address already belongs to an account with no `seed:<persona>` identity behind it,
+the seeder skips that persona and says so. It never links the seeded identity onto
+somebody else's account, and it writes nothing at all for a persona it skipped.
 
 ## Layout
 
@@ -142,12 +202,11 @@ Client-facing documentation:
 | --- | --- | --- | --- |
 | `GET` | `/health` | — | Liveness probe |
 | `GET` | `/ready` | — | Readiness; verifies the database and cache, `503` when unhealthy |
-| `POST` | `/api/v1/auth/register` | — | Create an account, issues access + refresh tokens |
-| `POST` | `/api/v1/auth/login` | — | Exchange credentials for tokens |
+| `POST` | `/api/v1/auth/google` | — | Sign in with a Google ID token, creating the account on first sight. Issues access + refresh tokens |
+| `POST` | `/api/v1/auth/apple` | — | Sign in with an Apple ID token, same contract |
 | `POST` | `/api/v1/auth/refresh` | refresh token | Rotate a refresh token; replay is rejected |
 | `POST` | `/api/v1/auth/logout` | refresh token | Revoke this device, or `all_devices: true` |
-| `POST` | `/api/v1/auth/forgot-password` | — | Request a reset; the same `200` either way, never reveals whether the account exists |
-| `POST` | `/api/v1/auth/reset-password` | — | Consume a reset token; revokes every existing session |
+| `DELETE` | `/api/v1/me` | Bearer | Close the caller's own account and revoke every session |
 | `GET` | `/api/v1/me` | Bearer | Current profile and settings |
 | `PATCH` | `/api/v1/me` | Bearer | PATCH semantics — omit a field to leave it alone. Accepts profile and settings fields under either spelling (see [Client contract](docs/client-contract.md)); deliberately refuses `currentLevel` so a learner cannot bypass the placement test |
 | `GET` | `/api/v1/me/devices` | Bearer | List the caller's devices |

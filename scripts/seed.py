@@ -12,9 +12,10 @@ neither device rows nor usage history grow each time the script is invoked.
 Three properties matter more than convenience here, and each is enforced in code rather
 than left to the operator:
 
-**A rerun is a no-op for data it did not create.** See :func:`run_seed` for the
-ownership check. The shared demo password is what marks an account as the seeder's; an
-account that does not verify against it is skipped without a single write.
+**A rerun is a no-op for data it did not create.** See :func:`_seed_one` for the
+ownership check. A seeded account carries a deterministic provider identity
+(:func:`seed_subject`), and that is what marks it as the seeder's; an account holding a
+demo address without that identity is skipped without a single write.
 
 **A production environment is refused by default.** Seeding a live database would
 overwrite real profile and settings rows with fictional data, so the guard is on unless
@@ -42,16 +43,15 @@ from app.core.config import Settings, get_settings
 from app.core.database import dispose_engine, make_uow
 from app.core.errors import AppError
 from app.core.logging import get_logger
-from app.core.security import verify_password
 from app.core.time import utc_now
 from app.core.types import CEFRLevel, UserId, UserStatus
 from app.core.uow import UnitOfWorkProtocol
 from app.modules.ai.domain.usage import AiUsageEntry
 from app.modules.users.application.auth_service import AuthService
-from app.modules.users.application.dto import DeviceContext, LoginCommand, RegisterCommand
+from app.modules.users.application.dto import DeviceContext, SocialLoginCommand
 from app.modules.users.domain.entities import UserDevice, UserProfile, UserSettings
+from app.modules.users.domain.identity import IdentityProvider, VerifiedIdentity
 from app.modules.users.domain.policy import normalise_email
-from app.modules.users.infrastructure.delivery import build_delivery
 from app.platform.ai.providers import estimate_cost
 from scripts.seed_personas import PERSONAS, SEED_NAMESPACE, SeedDevice, SeedPersona
 
@@ -60,6 +60,39 @@ logger = get_logger("scripts.seed")
 #: The level a brand-new account starts at. Anyone the persona places above it got
 #: there by taking the placement test, so their profile records that they finished one.
 PLACEMENT_FLOOR = CEFRLevel.A1
+
+#: The provider a seeded identity is recorded under. Paired with :func:`seed_subject`,
+#: it is what marks an account as this seeder's.
+SEED_IDENTITY_PROVIDER = IdentityProvider.GOOGLE
+
+
+def seed_subject(persona_key: str) -> str:
+    """The deterministic provider subject that identifies a seeded account.
+
+    Frozen rather than generated: a subject that changed between runs would stop the
+    seeder recognising its own rows, and every invocation would create a second account
+    for the same persona.
+    """
+    return f"seed:{persona_key}"
+
+
+class SeedIdentityVerifier:
+    """A verifier that vouches for exactly one persona.
+
+    The seeder signs in through the real use case instead of writing rows by hand, so
+    account creation, the identity row and the first refresh chain all travel the same
+    code path the app uses. This class is what makes that possible with no network. It
+    is a fixture and lives in a script; the API builds its verifier map from
+    configuration, so no request can ever reach it.
+    """
+
+    provider = SEED_IDENTITY_PROVIDER
+
+    def __init__(self, identity: VerifiedIdentity) -> None:
+        self._identity = identity
+
+    async def verify(self, id_token: str) -> VerifiedIdentity:
+        return self._identity
 
 
 class SeedRefused(RuntimeError):
@@ -229,15 +262,9 @@ async def run_seed(
     personas = select_personas(only)
     _assert_writable(settings, allow_production=allow_production, dry_run=dry_run)
 
-    # AuthService requires a delivery adapter rather than defaulting one — choosing
-    # between an audit logger and a real mailer is a deployment decision, and
-    # build_delivery is where that choice already lives. The seeder never requests a
-    # reset; it only has to supply the port.
-    auth = AuthService(uow, settings, build_delivery(production=settings.is_production))
-
     outcomes: list[PersonaOutcome] = []
     for persona in personas:
-        outcomes.append(await _seed_one(uow, auth, settings, persona, dry_run=dry_run))
+        outcomes.append(await _seed_one(uow, settings, persona, dry_run=dry_run))
         if not dry_run:
             # One commit per persona. A failure at persona four leaves three complete
             # accounts and one untouched, and the next run resumes from there.
@@ -258,24 +285,35 @@ async def run_seed(
 
 async def _seed_one(
     uow: UnitOfWorkProtocol,
-    auth: AuthService,
     settings: Settings,
     persona: SeedPersona,
     *,
     dry_run: bool,
 ) -> PersonaOutcome:
-    email = normalise_email(persona.email)
-    existing = await uow.users.get_by_email(email)
+    """Decide what to do with one persona, and do it unless this is a dry run.
 
-    if existing is not None and not verify_password(persona.password, existing.password_hash):
-        # Someone else's account that happens to hold a demo address. Not ours to edit.
-        return PersonaOutcome(
-            key=persona.key,
-            email=email,
-            action=SeedAction.SKIP,
-            user_id=existing.id,
-            reason="account exists with a different password; left untouched",
-        )
+    Ownership is carried by the identity row, not by a shared credential: an account
+    this seeder created is the one whose ``(provider, subject)`` pair is
+    :func:`seed_subject`. An account that merely holds a demo address is somebody
+    else's and is left entirely alone.
+    """
+    email = normalise_email(persona.email)
+    identity = await uow.identities.find(str(SEED_IDENTITY_PROVIDER), seed_subject(persona.key))
+    existing = await uow.users.get(identity.user_id) if identity is not None else None
+
+    if existing is None:
+        # No seeded identity behind this persona. If the address is taken anyway, it
+        # belongs to a real person or another environment, and this script has no
+        # business editing it — nor a demo password to prove otherwise any more.
+        collision = await uow.users.get_by_email(email)
+        if collision is not None:
+            return PersonaOutcome(
+                key=persona.key,
+                email=email,
+                action=SeedAction.SKIP,
+                user_id=collision.id,
+                reason="address already belongs to an unseeded account; left untouched",
+            )
 
     if dry_run:
         if existing is None:
@@ -290,7 +328,7 @@ async def _seed_one(
         return await _predict_enrichment(uow, persona, existing.id)
 
     if existing is None:
-        return await _create(uow, auth, settings, persona, email)
+        return await _create(uow, settings, persona, email)
     return await _enrich(uow, settings, persona, existing.id)
 
 
@@ -334,34 +372,58 @@ async def _predict_enrichment(
     )
 
 
+def _build_auth(
+    uow: UnitOfWorkProtocol, settings: Settings, persona: SeedPersona, email: str
+) -> AuthService:
+    """An ``AuthService`` whose only verifier trusts this persona.
+
+    Passing the credential-free command through the real service is what keeps the
+    seeder from drifting away from the app: if sign-in ever stops creating a profile,
+    or starts creating two identity rows, the seed breaks at the same moment the app
+    does — which is the point.
+    """
+    identity = VerifiedIdentity(
+        provider=SEED_IDENTITY_PROVIDER,
+        subject=seed_subject(persona.key),
+        email=email,
+        email_verified=persona.email_verified,
+        display_name=persona.display_name,
+    )
+    return AuthService(
+        uow,
+        settings,
+        verifiers={SEED_IDENTITY_PROVIDER: SeedIdentityVerifier(identity)},
+    )
+
+
 async def _create(
     uow: UnitOfWorkProtocol,
-    auth: AuthService,
     settings: Settings,
     persona: SeedPersona,
     email: str,
 ) -> PersonaOutcome:
-    """Register the account, then bring the rest of its rows up to the persona.
+    """Sign the account in for the first time, then bring its rows up to the persona.
 
-    ``AuthService.register`` commits internally and mints the first refresh chain, so
-    registration cannot share a transaction with what follows. That is acceptable here
-    and only here: a crash between the two leaves a real, usable account missing some
-    demo extras, which the next run enriches. A use case whose halves must land
-    together is a different problem, and the fix for it belongs in the service rather
-    than in a script that works around it.
+    ``login_with_identity`` both creates the account and mints the first refresh chain,
+    and it commits internally, so it cannot share a transaction with what follows. That
+    is acceptable here and only here: a crash between the two leaves a real, usable
+    account missing some demo extras, which the next run enriches. A use case whose
+    halves must land together is a different problem, and the fix for it belongs in the
+    service rather than in a script that works around it.
 
-    Device rows are deliberately *not* written here. ``register`` creates the first and
-    each :func:`_mint_extra_sessions` login creates the rest, through the same
+    Device rows are deliberately *not* written here. The sign-in creates the first and
+    each :func:`_mint_extra_sessions` sign-in creates the rest, through the same
     ``upsert_for_token`` path the app uses — so the seeder would be doing the same work
     twice, and doing it in the one order that breaks: with ``autoflush`` off, a row this
     function had pending would be invisible to the SELECT inside the next upsert, and
     the duplicate would only surface as a unique-constraint violation at flush.
     """
     primary = persona.devices[0] if persona.devices else SeedDevice()
-    result = await auth.register(
-        RegisterCommand(
-            email=email,
-            password=persona.password,
+    auth = _build_auth(uow, settings, persona, email)
+    result = await auth.login_with_identity(
+        SocialLoginCommand(
+            provider=SEED_IDENTITY_PROVIDER,
+            id_token=seed_subject(persona.key),
             display_name=persona.display_name,
             native_language=persona.native_language,
             english_variant=persona.english_variant,
@@ -372,7 +434,7 @@ async def _create(
     )
     user_id = result.user_id
     await _write_account(uow, settings, persona, user_id)
-    sessions = await _mint_extra_sessions(auth, persona, email)
+    sessions = await _mint_extra_sessions(uow, settings, persona, email)
     return PersonaOutcome(
         key=persona.key,
         email=email,
@@ -417,20 +479,27 @@ async def _enrich(
     )
 
 
-async def _mint_extra_sessions(auth: AuthService, persona: SeedPersona, email: str) -> int:
-    """Log in once per extra device, so a two-device persona has two refresh chains.
+async def _mint_extra_sessions(
+    uow: UnitOfWorkProtocol, settings: Settings, persona: SeedPersona, email: str
+) -> int:
+    """Sign in once per extra device, so a two-device persona has two refresh chains.
 
     Skipped for accounts that cannot authenticate. A suspended demo account keeps the
-    session minted at registration — which is what a real suspension looks like — but
-    it cannot log in again to mint more.
+    session minted at first sign-in — which is what a real suspension looks like — but
+    it cannot sign in again to mint more.
     """
     if len(persona.devices) < 2:
         return 0
     if persona.status not in (UserStatus.ACTIVE, UserStatus.PENDING_VERIFICATION):
         return 0
+    auth = _build_auth(uow, settings, persona, email)
     for device in persona.devices[1:]:
-        await auth.login(
-            LoginCommand(email=email, password=persona.password, device=_device_context(device))
+        await auth.login_with_identity(
+            SocialLoginCommand(
+                provider=SEED_IDENTITY_PROVIDER,
+                id_token=seed_subject(persona.key),
+                device=_device_context(device),
+            )
         )
     return len(persona.devices) - 1
 
@@ -454,10 +523,6 @@ async def _write_account(
     user.roles = persona.roles
     if persona.email_verified and user.email_verified_at is None:
         user.verify_email()
-    # Clearing a lockout is part of making a demo account usable again: an earlier demo
-    # session can leave one locked out, and a seeded account nobody can log into is a
-    # broken demo rather than a realistic one.
-    user.record_successful_login()
     await uow.users.update(user)
 
     profile = await uow.users.get_profile(user_id)

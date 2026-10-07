@@ -26,10 +26,14 @@ user_id_var: ContextVar[str | None] = ContextVar("user_id", default=None)
 REDACTED = "***redacted***"
 REDACTED_KEYS: frozenset[str] = frozenset(
     {
+        # Kept even though the application stores no credential any more: a value bound
+        # to this key in some future log line is the one leak that would matter most.
         "password",
-        "new_password",
-        "current_password",
         "password_hash",
+        # The provider ID token is a bearer credential until it has been verified, so the
+        # verifier's own log lines must never be able to reproduce one.
+        "id_token",
+        "identity_token",
         "token",
         "access_token",
         "refresh_token",

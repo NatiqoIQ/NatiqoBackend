@@ -73,21 +73,47 @@ class Settings(BaseSettings):
     jwt_audience: str = "natiqo-clients"
     access_token_ttl_seconds: int = 900
     refresh_token_ttl_seconds: int = 2_592_000
-    password_argon2_time_cost: int = 3
-    password_argon2_memory_cost: int = 65_536
-    password_argon2_parallelism: int = 4
-    password_min_length: int = 10
+
+    # ------------------------------------------------------- social sign-in
+    #: Accepted audiences for a Google ID token. The mobile client obtains the token
+    #: from the Google Sign-In SDK and posts it to ``/auth/google``; the server verifies
+    #: its signature against Google's published keys and checks that it was minted for
+    #: one of these client ids. ``NoDecode`` for the same reason as ``cors_origins``:
+    #: the value is a comma-separated list in the environment, not JSON.
+    google_client_ids: Annotated[list[str], NoDecode] = Field(default_factory=list)
+    #: Accepted audiences for an Apple ID token (the app's bundle id and, when a web
+    #: flow is added, its service id).
+    apple_client_ids: Annotated[list[str], NoDecode] = Field(default_factory=list)
+    #: Overridable so a deployment — or a test — can point at a different key set
+    #: without a code change.
+    google_jwks_url: str = "https://www.googleapis.com/oauth2/v3/certs"
+    apple_jwks_url: str = "https://appleid.apple.com/auth/keys"
+    #: How long a fetched JWK set is reused before it is fetched again.
+    jwks_cache_seconds: int = 3600
 
     #: ``NoDecode`` is load-bearing, not decoration. Without it pydantic-settings
     #: JSON-decodes any complex field before validators run, so the comma-separated
     #: form documented in ``.env.example`` raises ``SettingsError`` at startup and
-    #: :meth:`_split_origins` never executes. With it the raw string arrives intact.
+    #: :meth:`_split_list` never executes. With it the raw string arrives intact.
     cors_origins: Annotated[list[str], NoDecode] = Field(default_factory=list)
     cors_allow_credentials: bool = True
 
     #: Only enable behind a reverse proxy you control. When false, X-Forwarded-For
     #: is ignored for rate limiting so a client cannot spoof it to dodge its budget.
     trust_forwarded_for: bool = False
+
+    # ------------------------------------------------- development sign-in
+    #: A username/password sign-in that exists only so a developer or QA can enter the
+    #: app without configuring a provider client id. The route is mounted only when
+    #: this is true, and :meth:`validate_environment` refuses to boot a production
+    #: process that has it enabled — "remove it before production" is enforced by the
+    #: server itself rather than left to a checklist.
+    dev_login_enabled: bool = False
+    dev_admin_user: str = "admin"
+    dev_admin_password: SecretStr = SecretStr("admin")
+    #: Sessions minted through the dev sign-in live this long, so a test run is never
+    #: interrupted by a 15-minute expiry. Normal sign-in keeps the token TTLs above.
+    dev_login_token_ttl_seconds: int = 315_360_000  # 10 years
 
     # ------------------------------------------------------------ limits
     rate_limit_enabled: bool = True
@@ -101,22 +127,9 @@ class Settings(BaseSettings):
     #: default scope (120/min) is the right order of magnitude for a normal lesson.
     rate_limit_quiz_requests_per_minute: int = 120
     max_request_body_bytes: int = 1_048_576
-    login_max_failed_attempts: int = 5
-    login_lockout_seconds: int = 900
     #: How long a client-supplied ``Idempotency-Key`` is honoured. 24h covers a client
     #: retrying after a night of no signal, which is the realistic mobile failure.
     idempotency_ttl_seconds: int = 86_400
-    #: SMTP for password reset, email verification and notifications. Unset means
-    #: "development": the logging adapter is used and nobody receives an email. That is
-    #: fine locally and a silent production failure otherwise, so it is checked at boot.
-    smtp_host: str | None = None
-    smtp_port: int = 587
-    smtp_user: str | None = None
-    smtp_password: SecretStr | None = None
-    smtp_from: str = "noreply@natiqo.app"
-    smtp_use_tls: bool = True
-    #: Base URL used to build links inside emails (verification, password reset).
-    public_web_base_url: str = "https://natiqo.app"
     #: A quiz session left open is abandoned after this long. Long enough for a learner who
     #: pauses mid-lesson, short enough that a resumed session still feels like theirs.
     quiz_session_ttl_seconds: int = 7_200
@@ -169,14 +182,14 @@ class Settings(BaseSettings):
     allow_sqlite_tests: bool = False
 
     # ------------------------------------------------------- validators
-    @field_validator("cors_origins", mode="before")
+    @field_validator("cors_origins", "google_client_ids", "apple_client_ids", mode="before")
     @classmethod
-    def _split_origins(cls, value: object) -> object:
-        """Accept both ``a,b`` and ``["a","b"]``.
+    def _split_list(cls, value: object) -> object:
+        """Accept both ``a,b`` and ``["a","b"]`` for every comma-separated setting.
 
         The comma-separated form is what ``.env.example`` documents and what a human
         writes in a shell, so it is the primary case. JSON is still accepted because it
-        is the only way to express an origin containing a comma, and because
+        is the only way to express a value containing a comma, and because
         deployments that predate this validator were already written in JSON.
         """
         if not isinstance(value, str):
@@ -188,11 +201,11 @@ class Settings(BaseSettings):
                 decoded = json.loads(text)
             except json.JSONDecodeError as exc:
                 raise ValueError(
-                    "cors_origins looks like JSON but is not valid JSON; "
+                    "value looks like JSON but is not valid JSON; "
                     "use a comma-separated list instead."
                 ) from exc
             if not isinstance(decoded, list):
-                raise ValueError("cors_origins must be a JSON array of strings.")
+                raise ValueError("value must be a JSON array of strings.")
             return [str(item).strip() for item in decoded if str(item).strip()]
 
         return [item.strip() for item in text.split(",") if item.strip()]
@@ -257,6 +270,16 @@ class Settings(BaseSettings):
     def uses_fcm(self) -> bool:
         return bool(self.fcm_credentials_json)
 
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def uses_google(self) -> bool:
+        return bool(self.google_client_ids)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def uses_apple(self) -> bool:
+        return bool(self.apple_client_ids)
+
     # ------------------------------------------------------ guardrails
     def validate_environment(self) -> list[str]:
         """Return a list of configuration problems. Empty list means safe to boot."""
@@ -284,8 +307,12 @@ class Settings(BaseSettings):
             problems.append("POSTGRES_PASSWORD still holds a development placeholder")
         if not self.uses_redis:
             problems.append("REDIS_URL must be configured in production")
+        if not self.uses_google and not self.uses_apple:
+            problems.append("Configure GOOGLE_CLIENT_IDS and/or APPLE_CLIENT_IDS in production")
         if self.ai_enabled and self.ai_provider == "none":
             problems.append("AI_ENABLED requires a real AI_PROVIDER")
+        if self.dev_login_enabled:
+            problems.append("DEV_LOGIN_ENABLED must be false in production")
         return problems
 
 

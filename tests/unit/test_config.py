@@ -76,3 +76,26 @@ class TestCorsOrigins:
         assert any(
             "CORS_ALLOW_CREDENTIALS" in problem for problem in settings.validate_environment()
         )
+
+
+class TestDevLoginGuard:
+    """The development sign-in must be impossible to ship by accident."""
+
+    def test_production_refuses_the_flag(self) -> None:
+        settings = build(app_env="production", dev_login_enabled=True)
+        assert any(
+            "DEV_LOGIN_ENABLED" in problem for problem in settings.validate_environment()
+        )
+
+    def test_production_is_clean_without_the_flag(self) -> None:
+        settings = build(app_env="production", dev_login_enabled=False)
+        assert not any(
+            "DEV_LOGIN_ENABLED" in problem for problem in settings.validate_environment()
+        )
+
+    def test_development_may_enable_the_flag(self) -> None:
+        """The guard is a production rule, not a ban: local development needs it."""
+        settings = build(app_env="development", dev_login_enabled=True)
+        assert not any(
+            "DEV_LOGIN_ENABLED" in problem for problem in settings.validate_environment()
+        )

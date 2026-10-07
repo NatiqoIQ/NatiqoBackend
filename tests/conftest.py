@@ -32,6 +32,9 @@ _TEST_ENV = {
     "QUEUE_ENABLED": "false",
     "LOG_FORMAT": "console",
     "LOG_LEVEL": "WARNING",
+    # A developer's .env may enable the development sign-in; the suite decides for
+    # itself, per test, whether the route exists — see the ``dev_client`` fixture.
+    "DEV_LOGIN_ENABLED": "false",
     # An in-memory database per test: no server, no schema migration, no chance of
     # touching a real one. The Postgres integration tests override this explicitly.
     "DATABASE_URL": "sqlite+aiosqlite:///:memory:",

@@ -6,6 +6,7 @@ or the token format changes.
 """
 
 from app.modules.users.domain.entities import (
+    ExternalIdentity,
     NotificationPreferences,
     RefreshSession,
     User,
@@ -13,41 +14,42 @@ from app.modules.users.domain.entities import (
     UserProfile,
     UserSettings,
 )
+from app.modules.users.domain.identity import (
+    IdentityProvider,
+    IdentityVerificationError,
+    IdentityVerifierPort,
+    VerifiedIdentity,
+)
 from app.modules.users.domain.policy import (
     DEFAULT_NATIVE_LANGUAGE,
-    PasswordProblem,
-    check_password,
     is_valid_email,
     is_valid_timezone_name,
     normalise_email,
 )
 from app.modules.users.domain.ports import (
-    PasswordResetDeliveryPort,
-    PasswordResetRecord,
-    PasswordResetRepositoryPort,
+    ExternalIdentityRepositoryPort,
     RefreshTokenRepositoryPort,
     UserDeviceRepositoryPort,
-    UserRepository,
     UserRepositoryPort,
 )
 
 __all__ = [
     "DEFAULT_NATIVE_LANGUAGE",
+    "ExternalIdentity",
+    "ExternalIdentityRepositoryPort",
+    "IdentityProvider",
+    "IdentityVerificationError",
+    "IdentityVerifierPort",
     "NotificationPreferences",
-    "PasswordProblem",
-    "PasswordResetDeliveryPort",
-    "PasswordResetRecord",
-    "PasswordResetRepositoryPort",
     "RefreshSession",
     "RefreshTokenRepositoryPort",
     "User",
     "UserDevice",
     "UserDeviceRepositoryPort",
     "UserProfile",
-    "UserRepository",
     "UserRepositoryPort",
     "UserSettings",
-    "check_password",
+    "VerifiedIdentity",
     "is_valid_email",
     "is_valid_timezone_name",
     "normalise_email",

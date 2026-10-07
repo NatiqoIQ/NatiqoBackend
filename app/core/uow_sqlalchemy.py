@@ -23,8 +23,7 @@ if TYPE_CHECKING:  # pragma: no cover
         UnitRepositoryPort,
     )
     from app.modules.users.domain.ports import (
-        EmailVerificationRepositoryPort,
-        PasswordResetRepositoryPort,
+        ExternalIdentityRepositoryPort,
         RefreshTokenRepositoryPort,
         UserDeviceRepositoryPort,
         UserRepositoryPort,
@@ -154,20 +153,12 @@ class SqlAlchemyUnitOfWork:
         return self._repo("user_devices", SqlAlchemyUserDeviceRepository)
 
     @property
-    def password_reset(self) -> PasswordResetRepositoryPort:
+    def identities(self) -> ExternalIdentityRepositoryPort:
         from app.modules.users.infrastructure.repositories import (
-            SqlAlchemyPasswordResetRepository,
+            SqlAlchemyExternalIdentityRepository,
         )
 
-        return self._repo("password_reset", SqlAlchemyPasswordResetRepository)
-
-    @property
-    def email_verification(self) -> EmailVerificationRepositoryPort:
-        from app.modules.users.infrastructure.repositories import (
-            SqlAlchemyEmailVerificationRepository,
-        )
-
-        return self._repo("email_verification", SqlAlchemyEmailVerificationRepository)
+        return self._repo("identities", SqlAlchemyExternalIdentityRepository)
 
     @property
     def ai_usage(self) -> AiUsageRepositoryPort:

@@ -41,6 +41,14 @@ class ErrorCode(StrEnum):
     AUTH_FORBIDDEN = "AUTH_FORBIDDEN"
     AUTH_INSUFFICIENT_ROLE = "AUTH_INSUFFICIENT_ROLE"
     AUTH_LOGIN_ATTEMPTS_EXCEEDED = "AUTH_LOGIN_ATTEMPTS_EXCEEDED"
+    #: The Google/Apple ID token failed signature, issuer, audience or expiry checks.
+    AUTH_IDENTITY_INVALID = "AUTH_IDENTITY_INVALID"
+    #: The provider shared no usable email, so a new account cannot be keyed.
+    AUTH_IDENTITY_INCOMPLETE = "AUTH_IDENTITY_INCOMPLETE"
+    #: The address is already registered and the provider did not vouch for it.
+    AUTH_IDENTITY_CONFLICT = "AUTH_IDENTITY_CONFLICT"
+    #: Sign-in was requested from a provider this deployment has not enabled.
+    AUTH_PROVIDER_UNAVAILABLE = "AUTH_PROVIDER_UNAVAILABLE"
 
     # ------------------------------------------------------------------ user
     USER_NOT_FOUND = "USER_NOT_FOUND"

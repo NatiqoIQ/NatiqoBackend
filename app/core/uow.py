@@ -26,8 +26,7 @@ if TYPE_CHECKING:  # pragma: no cover
         UnitRepositoryPort,
     )
     from app.modules.users.domain.ports import (
-        EmailVerificationRepositoryPort,
-        PasswordResetRepositoryPort,
+        ExternalIdentityRepositoryPort,
         RefreshTokenRepositoryPort,
         UserDeviceRepositoryPort,
         UserRepositoryPort,
@@ -55,10 +54,7 @@ class UnitOfWorkProtocol(Protocol):
     def user_devices(self) -> UserDeviceRepositoryPort: ...
 
     @property
-    def password_reset(self) -> PasswordResetRepositoryPort: ...
-
-    @property
-    def email_verification(self) -> EmailVerificationRepositoryPort: ...
+    def identities(self) -> ExternalIdentityRepositoryPort: ...
 
     @property
     def ai_usage(self) -> AiUsageRepositoryPort: ...

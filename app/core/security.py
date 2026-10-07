@@ -1,4 +1,4 @@
-"""Cryptography: Argon2id password hashing and JWT issuing/verification.
+"""Cryptography: JWT issuing and verification.
 
 Token model
 -----------
@@ -23,8 +23,6 @@ from datetime import datetime, timedelta
 from typing import Any, Literal
 
 import jwt
-from argon2 import PasswordHasher
-from argon2.exceptions import InvalidHashError, VerificationError, VerifyMismatchError
 
 from app.core.config import get_settings
 from app.core.errors import ErrorCode, UnauthorizedError
@@ -32,58 +30,6 @@ from app.core.time import utc_now
 from app.core.types import UserId
 
 TokenType = Literal["access", "refresh"]
-
-#: Argon2id parameters are tuned for a VPS-class deployment; the cost values come
-#: from configuration so they can be raised as hardware improves.
-_hasher: PasswordHasher | None = None
-
-
-def get_hasher() -> PasswordHasher:
-    global _hasher
-    if _hasher is None:
-        settings = get_settings()
-        _hasher = PasswordHasher(
-            time_cost=settings.password_argon2_time_cost,
-            memory_cost=settings.password_argon2_memory_cost,
-            parallelism=settings.password_argon2_parallelism,
-            hash_len=32,
-            salt_len=16,
-        )
-    return _hasher
-
-
-# --------------------------------------------------------------------- passwords
-def hash_password(password: str) -> str:
-    """Hash a plaintext password with Argon2id."""
-    return get_hasher().hash(password)
-
-
-def verify_password(password: str, password_hash: str) -> bool:
-    """Constant-time-ish verification. Never raises on malformed input."""
-    try:
-        return get_hasher().verify(password_hash, password)
-    except (VerifyMismatchError, VerificationError, InvalidHashError):
-        return False
-
-
-def needs_rehash(password_hash: str) -> bool:
-    """True when a stored hash was produced with weaker parameters than configured."""
-    try:
-        return get_hasher().check_needs_rehash(password_hash)
-    except (InvalidHashError, VerificationError):
-        return True
-
-
-#: Burn a comparable amount of CPU on unknown accounts so that response timing does
-#: not disclose whether an email is registered.
-_DUMMY_HASH = "$argon2id$v=19$m=65536,t=3,p=4$c29tZXNhbHR2YWx1ZQ$Zm9vYmFyYmF6cXV4Zm9vYmFyYmF6"
-
-
-def dummy_verify() -> None:
-    try:
-        get_hasher().verify(_DUMMY_HASH, "timing-equaliser")
-    except (VerifyMismatchError, VerificationError, InvalidHashError):
-        pass
 
 
 # ------------------------------------------------------------------------ secrets

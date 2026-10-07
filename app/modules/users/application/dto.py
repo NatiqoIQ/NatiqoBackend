@@ -21,6 +21,7 @@ from app.core.types import (
     UserId,
 )
 from app.modules.users.domain.entities import NotificationPreferences, User
+from app.modules.users.domain.identity import IdentityProvider
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,22 +37,25 @@ class DeviceContext:
 
 
 @dataclass(frozen=True, slots=True)
-class RegisterCommand:
-    email: str
-    password: str
-    display_name: str
+class SocialLoginCommand:
+    """Sign in with a provider ID token, creating the account on first sight.
+
+    ``id_token`` is the raw JWT the client obtained from the Google or Apple SDK. It is
+    a credential: it is verified and then discarded, and must never be logged or stored.
+
+    The profile fields are only consulted when a brand-new account is created. A
+    returning learner keeps whatever they set, so a stale value on the device cannot
+    overwrite a preference the learner changed elsewhere.
+    """
+
+    provider: IdentityProvider
+    id_token: str
+    device: DeviceContext = field(default_factory=DeviceContext)
+    display_name: str | None = None
     native_language: ContentLanguage = ContentLanguage.AR
     english_variant: EnglishVariant = EnglishVariant.BRITISH
     timezone: str = "Asia/Baghdad"
     locale: Locale = Locale.EN_GB
-    device: DeviceContext = field(default_factory=DeviceContext)
-
-
-@dataclass(frozen=True, slots=True)
-class LoginCommand:
-    email: str
-    password: str
-    device: DeviceContext = field(default_factory=DeviceContext)
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,66 +69,6 @@ class LogoutCommand:
     refresh_token: str
     #: Revoke every session for the account, not just this device's chain.
     all_devices: bool = False
-
-
-@dataclass(frozen=True, slots=True)
-class ForgotPasswordCommand:
-    email: str
-    ip_address: str | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class ResetPasswordCommand:
-    token: str
-    new_password: str
-
-
-@dataclass(frozen=True, slots=True)
-class VerifyEmailCommand:
-    """Redeem a verification token. ``token`` is the raw value from the emailed link."""
-
-    token: str
-
-
-@dataclass(frozen=True, slots=True)
-class ResendVerificationCommand:
-    """Ask for another verification email.
-
-    Addressed by ``user_id`` rather than by email because the caller is authenticated:
-    an unauthenticated resend endpoint keyed on an address is a mail cannon pointed at
-    anyone else's inbox.
-    """
-
-    user_id: UserId
-    ip_address: str | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class ChangePasswordCommand:
-    """Change the password of an authenticated account.
-
-    ``current_password`` is mandatory, and that is the point of this flow: a reset flow
-    exists for someone who cannot supply it, and a change flow that skipped it would be
-    a way for a stolen access token to become permanent ownership. The caller is
-    therefore asked to prove they know the credential they are replacing.
-    """
-
-    user_id: UserId
-    current_password: str
-    new_password: str
-
-
-@dataclass(frozen=True, slots=True)
-class EmailVerificationTicket:
-    """Internal only, exactly like :class:`PasswordResetTicket`.
-
-    Holds the raw token because the delivery channel is the only place it can exist in
-    reversible form; never returned from an HTTP handler.
-    """
-
-    user_id: UserId
-    token: str
-    expires_at: datetime
 
 
 @dataclass(frozen=True, slots=True)
@@ -280,16 +224,6 @@ class AuthResult:
 
 
 @dataclass(frozen=True, slots=True)
-class PasswordResetTicket:
-    """Internal only. Carries the raw token for the delivery channel; it is never
-    returned from an HTTP handler."""
-
-    user_id: UserId
-    token: str
-    expires_at: datetime
-
-
-@dataclass(frozen=True, slots=True)
 class DeviceView:
     id: uuid.UUID
     platform: str
@@ -312,15 +246,11 @@ __all__ = [
     "AuthResult",
     "DeviceContext",
     "DeviceView",
-    "ForgotPasswordCommand",
-    "LoginCommand",
     "LogoutCommand",
     "MeView",
     "NotificationPreferencesView",
-    "PasswordResetTicket",
     "RefreshCommand",
-    "RegisterCommand",
-    "ResetPasswordCommand",
+    "SocialLoginCommand",
     "TokenPair",
     "UpdateProfileCommand",
     "UpdateSettingsCommand",

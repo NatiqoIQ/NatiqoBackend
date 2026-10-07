@@ -25,6 +25,10 @@ from app.core.events import InProcessEventBus, get_event_bus
 from app.core.logging import get_logger
 from app.core.uow_sqlalchemy import SqlAlchemyUnitOfWork
 from app.modules.content.application.catalogue_service import CatalogueService
+from app.modules.users.domain.identity import (
+    IdentityProvider,
+    IdentityVerifierPort,
+)
 from app.platform.ai.port import AIProvider
 from app.platform.ai.service import AIService
 from app.platform.cache.port import CachePort
@@ -133,6 +137,34 @@ def get_push() -> PushPort:
 
 
 PushDep = Annotated[PushPort, Depends(get_push)]
+
+
+# ------------------------------------------------------------------ identity
+@lru_cache(maxsize=1)
+def _build_identity_verifiers() -> dict[IdentityProvider, IdentityVerifierPort]:
+    """Provider verifiers, built once per process.
+
+    Process-cached on purpose: each verifier owns a JWK-set cache, and a per-request
+    verifier would refetch the provider's keys on every single sign-in — turning a
+    cached local check into a network round trip to Google or Apple.
+    """
+    from app.platform.identity.verifiers import build_verifiers
+
+    verifiers = build_verifiers(get_settings())
+    logger.info(
+        "deps.identity_verifiers",
+        providers=sorted(str(provider) for provider in verifiers),
+    )
+    return verifiers
+
+
+def get_identity_verifiers() -> dict[IdentityProvider, IdentityVerifierPort]:
+    return _build_identity_verifiers()
+
+
+IdentityVerifiersDep = Annotated[
+    dict[IdentityProvider, IdentityVerifierPort], Depends(get_identity_verifiers)
+]
 
 
 # ------------------------------------------------------------------- database
@@ -303,5 +335,6 @@ def reset_composition_root() -> None:
         _build_storage,
         _build_push,
         _build_ai_provider,
+        _build_identity_verifiers,
     ):
         factory.cache_clear()

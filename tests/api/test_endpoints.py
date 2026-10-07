@@ -11,9 +11,9 @@ Two things are deliberately tested here rather than mocked out:
 
 * the real ASGI app, so middleware, exception handlers, and dependency injection are
   the production ones;
-* the password-reset collector, injected through ``dependency_overrides``, because
-  the production adapter refuses to carry the token and the flow is otherwise
-  unobservable from outside the process.
+* the ID-token verifier, injected through ``dependency_overrides``, because the
+  production adapter fetches Google's and Apple's published keys over the network and
+  a test has no business doing that.
 
 ``test_every_published_operation_is_covered`` compares the OpenAPI document against
 the operations these tests actually call, so a newly added endpoint fails CI until it
@@ -30,7 +30,7 @@ from typing import Any
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient, Response
-from sqlalchemy import select, text
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import SettingsDep, UowDep
@@ -38,7 +38,7 @@ from app.core.config import get_settings
 from app.core.database import create_all, dispose_engine
 from app.core.errors import ErrorCode
 from app.core.registry import import_all_models
-from app.core.types import ContentState, QuestionKind, SkillKind
+from app.core.types import ContentState, QuestionKind, SkillKind, UserStatus
 from app.main import app
 from app.modules.content.infrastructure.models import (
     LessonModel,
@@ -47,22 +47,21 @@ from app.modules.content.infrastructure.models import (
     UnitModel,
 )
 from app.modules.users.application.auth_service import AuthService
-from app.modules.users.infrastructure.delivery import InMemoryPasswordResetDelivery
+from app.modules.users.domain.identity import (
+    IdentityProvider,
+    IdentityVerificationError,
+    VerifiedIdentity,
+)
+from app.modules.users.infrastructure.models import UserModel
 from app.modules.users.presentation.routes import auth_service
 
-#: A synthetic account. This is a test fixture, not a real person or a real address.
-NEW_ACCOUNT = {
-    "email": "endpoint-probe@natiqo.app",
-    "password": "S3cure-Lantern-42",
-    "display_name": "Endpoint Probe",
-    "native_language": "ar",
-    "english_variant": "british",
-    "timezone": "Asia/Baghdad",
-    "locale": "en-GB",
-}
+#: The account these tests sign in as. A test fixture, not a real person or address.
+PROBE_EMAIL = "endpoint-probe@natiqo.app"
+PROBE_NAME = "Endpoint Probe"
+GOOGLE_SUBJECT = "endpoint-probe-google"
+APPLE_SUBJECT = "endpoint-probe-apple"
 
-
-#: The device hint sent with a registration, so ``/me/devices`` has a row to return.
+#: The device hint sent with a sign-in, so ``/me/devices`` has a row to return.
 WEB_DEVICE = {
     "platform": "web",
     "app_version": "1.0.0",
@@ -77,15 +76,10 @@ WEB_DEVICE = {
 PUBLISHED_OPERATIONS: set[tuple[str, str]] = {
     ("GET", "/health"),
     ("GET", "/ready"),
-    ("POST", "/api/v1/auth/register"),
-    ("POST", "/api/v1/auth/login"),
+    ("POST", "/api/v1/auth/google"),
+    ("POST", "/api/v1/auth/apple"),
     ("POST", "/api/v1/auth/refresh"),
     ("POST", "/api/v1/auth/logout"),
-    ("POST", "/api/v1/auth/forgot-password"),
-    ("POST", "/api/v1/auth/reset-password"),
-    ("POST", "/api/v1/auth/verify-email"),
-    ("POST", "/api/v1/auth/resend-verification"),
-    ("POST", "/api/v1/auth/change-password"),
     ("GET", "/api/v1/me"),
     ("PATCH", "/api/v1/me"),
     ("DELETE", "/api/v1/me"),
@@ -108,47 +102,57 @@ def error_code(response: Response) -> str:
     return str(response.json()["error"]["code"])
 
 
-@pytest.fixture
-def reset_delivery() -> InMemoryPasswordResetDelivery:
-    return InMemoryPasswordResetDelivery()
+class FakeVerifier:
+    """A provider that trusts exactly the tokens a test hands it.
 
-
-class _VerificationOutbox:
-    """Captures verification links so an HTTP test can complete the confirmation.
-
-    Without this the app falls back to a logger that sends nothing, and an end-to-end
-    verification test would have no way to obtain the token the way a learner does.
+    The real adapters verify a signature against Google's or Apple's published keys and
+    are covered by their own tests. What this file is about is the HTTP surface — status
+    codes, serialization, auth wiring — and none of that is improved by a network call.
     """
 
-    def __init__(self) -> None:
-        self.sent: list[str] = []
+    def __init__(self, provider: IdentityProvider) -> None:
+        self.provider = provider
+        self._identities: dict[str, VerifiedIdentity] = {}
 
-    async def send_reset_link(self, **_kwargs: Any) -> None:
-        raise AssertionError("the reset channel is not part of these flows")
+    def trust(self, token: str, identity: VerifiedIdentity) -> None:
+        self._identities[token] = identity
 
-    async def send_verification_link(
-        self, *, user_id: Any, email: str, raw_token: str, expires_at: Any
-    ) -> None:
-        self.sent.append(raw_token)
+    async def verify(self, id_token: str) -> VerifiedIdentity:
+        try:
+            return self._identities[id_token]
+        except KeyError:
+            raise IdentityVerificationError("unknown_token") from None
 
 
-@pytest.fixture
-def verification_outbox() -> _VerificationOutbox:
-    return _VerificationOutbox()
+#: Module-level so the fixture and the ``sign_in`` helper address the same instance.
+#: ``trust`` is deterministic for a given token, so no test can affect another's result.
+GOOGLE = FakeVerifier(IdentityProvider.GOOGLE)
+APPLE = FakeVerifier(IdentityProvider.APPLE)
+
+
+def identity_for(
+    provider: IdentityProvider = IdentityProvider.GOOGLE, **overrides: Any
+) -> VerifiedIdentity:
+    return VerifiedIdentity(
+        **{
+            "provider": provider,
+            "subject": GOOGLE_SUBJECT if provider is IdentityProvider.GOOGLE else APPLE_SUBJECT,
+            "email": PROBE_EMAIL,
+            "email_verified": True,
+            "display_name": PROBE_NAME,
+            **overrides,
+        }
+    )
 
 
 @pytest_asyncio.fixture
-async def client(
-    reset_delivery: InMemoryPasswordResetDelivery, verification_outbox: _VerificationOutbox
-) -> AsyncIterator[AsyncClient]:
+async def client() -> AsyncIterator[AsyncClient]:
     """A real HTTP client against the real app, backed by a fresh in-memory schema.
 
-    ``auth_service`` is overridden only to swap the delivery adapter. Everything the
-    override builds is the production ``AuthService``; the use cases, repositories,
-    and token handling are untouched.
+    ``auth_service`` is overridden only to swap the ID-token verifier. Everything the
+    override builds is the production ``AuthService``; the use cases, repositories and
+    token handling are untouched.
     """
-    from app.main import app
-
     import_all_models()
     await create_all()
 
@@ -156,8 +160,7 @@ async def client(
         return AuthService(
             uow,
             settings,
-            reset_delivery=reset_delivery,
-            verification_delivery=verification_outbox,
+            verifiers={IdentityProvider.GOOGLE: GOOGLE, IdentityProvider.APPLE: APPLE},
         )
 
     app.dependency_overrides[auth_service] = build_service
@@ -171,10 +174,31 @@ async def client(
         await dispose_engine()
 
 
-async def register(client: AsyncClient, account: dict[str, Any] = NEW_ACCOUNT) -> dict[str, Any]:
-    """Create an account and return the ``user`` and ``tokens`` blocks."""
-    response = await client.post("/api/v1/auth/register", json={**account, "device": WEB_DEVICE})
-    assert response.status_code == 201, response.text
+async def sign_in(
+    client: AsyncClient,
+    verifier: FakeVerifier | None = None,
+    *,
+    token: str | None = None,
+    device: dict[str, Any] | None = None,
+    body: dict[str, Any] | None = None,
+    **identity_overrides: Any,
+) -> dict[str, Any]:
+    """Sign in and return the ``user`` and ``tokens`` blocks.
+
+    The first sign-in for an identity creates the account, so this is also how a test
+    gets a learner — there is no separate registration step to fake.
+    """
+    chosen = verifier or GOOGLE
+    # Comfortably over the schema's minimum length, so a test that means to exercise
+    # sign-in cannot fail on the shape of its own fixture.
+    id_token = token or f"{chosen.provider.value}-id-token-probe"
+    chosen.trust(id_token, identity_for(chosen.provider, **identity_overrides))
+
+    response = await client.post(
+        f"/api/v1/auth/{chosen.provider.value}",
+        json={"id_token": id_token, "device": device or WEB_DEVICE, **(body or {})},
+    )
+    assert response.status_code == 200, response.text
     return response.json()
 
 
@@ -214,22 +238,21 @@ async def test_health_and_readiness_report_success(client: AsyncClient) -> None:
     assert report["checks"], "readiness returned no dependency checks"
 
 
-# ==================================================================== register
+# ================================================================== sign in
 @pytest.mark.asyncio
-async def test_register_creates_account_and_issues_session(client: AsyncClient) -> None:
-    response = await client.post(
-        "/api/v1/auth/register", json={**NEW_ACCOUNT, "device": WEB_DEVICE}
-    )
-    assert response.status_code == 201, response.text
+async def test_google_sign_in_creates_the_account_and_issues_a_session(
+    client: AsyncClient,
+) -> None:
+    body = await sign_in(client)
 
-    body = response.json()
     user = body["user"]
-    assert user["email"] == NEW_ACCOUNT["email"]
+    assert user["email"] == PROBE_EMAIL
     assert user["status"] == "active"
-    assert user["emailVerified"] is False
-    # Registration grants the baseline role; anything beyond that is an operator act.
+    # The provider vouched for the address, so the account records it as confirmed.
+    assert user["emailVerified"] is True
+    # Sign-in grants the baseline role; anything beyond that is an operator act.
     assert user["roles"] == ["user"]
-    assert user["profile"]["displayName"] == NEW_ACCOUNT["display_name"]
+    assert user["profile"]["displayName"] == PROBE_NAME
     assert user["profile"]["currentLevel"], "placement level should be defaulted"
 
     tokens = body["tokens"]
@@ -240,72 +263,82 @@ async def test_register_creates_account_and_issues_session(client: AsyncClient) 
 
 
 @pytest.mark.asyncio
-async def test_register_rejects_duplicate_email(client: AsyncClient) -> None:
-    await register(client)
-    second = await client.post("/api/v1/auth/register", json={**NEW_ACCOUNT, "device": WEB_DEVICE})
-    assert second.status_code == 409, second.text
-    # A specific code beats a generic conflict: the client can tell "that address is
-    # taken" apart from any other 409 without parsing the message.
-    assert error_code(second) == "AUTH_ACCOUNT_EXISTS"
+async def test_signing_in_again_reuses_the_same_account(client: AsyncClient) -> None:
+    first = await sign_in(client)
+    second = await sign_in(client)
+
+    assert second["user"]["id"] == first["user"]["id"]
+    # A fresh session every time; the account is what must not be duplicated.
+    assert second["tokens"]["refreshToken"] != first["tokens"]["refreshToken"]
 
 
 @pytest.mark.asyncio
-async def test_register_rejects_malformed_payload(client: AsyncClient) -> None:
-    """Validation happens at the edge, so the service never sees a bad value."""
+async def test_apple_sign_in_links_to_the_same_account_by_verified_email(
+    client: AsyncClient,
+) -> None:
+    """The same learner on two platforms must land on one account."""
+    google = await sign_in(client)
+
+    apple = await sign_in(client, APPLE, token="apple-id-token-probe")
+
+    assert apple["user"]["id"] == google["user"]["id"]
+
+
+@pytest.mark.asyncio
+async def test_an_untrusted_token_signs_nobody_in(client: AsyncClient) -> None:
+    """A token the verifier has never seen is a token nobody proved they own."""
     response = await client.post(
-        "/api/v1/auth/register",
-        json={"email": "not-an-email", "password": "", "display_name": "A"},
+        "/api/v1/auth/google",
+        json={"id_token": "forged-token-nobody-owns", "device": WEB_DEVICE},
     )
+
+    assert response.status_code == 401, response.text
+    assert error_code(response) == "AUTH_IDENTITY_INVALID"
+
+
+@pytest.mark.asyncio
+async def test_sign_in_rejects_a_malformed_payload(client: AsyncClient) -> None:
+    """Validation happens at the edge, so the service never sees a bad value."""
+    response = await client.post("/api/v1/auth/google", json={"id_token": "short"})
+
     assert response.status_code == 422, response.text
 
 
-# ======================================================================== login
 @pytest.mark.asyncio
-async def test_login_exchanges_credentials_for_tokens(client: AsyncClient) -> None:
-    await register(client)
+async def test_an_unverified_provider_email_cannot_claim_an_account(
+    client: AsyncClient,
+) -> None:
+    """Otherwise a provider account carrying someone else's address takes it over."""
+    await sign_in(client)
+    APPLE.trust(
+        "unverified-apple-token", identity_for(IdentityProvider.APPLE, email_verified=False)
+    )
 
     response = await client.post(
-        "/api/v1/auth/login",
+        "/api/v1/auth/apple",
+        json={"id_token": "unverified-apple-token", "device": WEB_DEVICE},
+    )
+
+    assert response.status_code == 401, response.text
+    assert error_code(response) == "AUTH_IDENTITY_CONFLICT"
+
+
+@pytest.mark.asyncio
+async def test_no_credential_is_accepted_or_stored(client: AsyncClient) -> None:
+    """There is no password field left on the wire, so nothing can send one."""
+    await sign_in(client)
+
+    response = await client.post(
+        "/api/v1/auth/google",
         json={
-            "email": NEW_ACCOUNT["email"],
-            "password": NEW_ACCOUNT["password"],
+            "id_token": "anything",
+            "email": PROBE_EMAIL,
+            "password": "whatever-1234",
             "device": WEB_DEVICE,
         },
     )
-    assert response.status_code == 200, response.text
-    body = response.json()
-    assert body["user"]["email"] == NEW_ACCOUNT["email"]
-    assert body["tokens"]["accessToken"]
 
-
-@pytest.mark.asyncio
-async def test_login_rejects_wrong_password(client: AsyncClient) -> None:
-    await register(client)
-    response = await client.post(
-        "/api/v1/auth/login",
-        json={"email": NEW_ACCOUNT["email"], "password": "Wrong-Password-1"},
-    )
-    assert response.status_code == 401, response.text
-
-
-@pytest.mark.asyncio
-async def test_login_does_not_reveal_whether_an_account_exists(client: AsyncClient) -> None:
-    """An unknown address and a wrong password must be indistinguishable."""
-    unknown = await client.post(
-        "/api/v1/auth/login",
-        json={"email": "nobody@natiqo.app", "password": "Whatever-123"},
-    )
-    await register(client)
-    wrong = await client.post(
-        "/api/v1/auth/login",
-        json={"email": NEW_ACCOUNT["email"], "password": "Whatever-123"},
-    )
-    assert unknown.status_code == wrong.status_code == 401
-    assert error_code(unknown) == error_code(wrong) == "AUTH_INVALID_CREDENTIALS"
-
-    # Identical apart from `request_id`, which is unique per request by design and
-    # carries no account state. Everything a client could branch on must match.
-    assert without_request_id(unknown) == without_request_id(wrong)
+    assert response.status_code == 422, response.text
 
 
 # =========================================================================== me
@@ -331,13 +364,13 @@ async def test_me_rejects_a_forged_token(client: AsyncClient) -> None:
 
 @pytest.mark.asyncio
 async def test_get_me_returns_profile_and_settings(client: AsyncClient) -> None:
-    body = await register(client)
+    body = await sign_in(client)
     response = await client.get("/api/v1/me", headers=auth_headers(body["tokens"]["accessToken"]))
     assert response.status_code == 200, response.text
 
     me = response.json()
     assert me["id"] == body["user"]["id"]
-    assert me["email"] == NEW_ACCOUNT["email"]
+    assert me["email"] == PROBE_EMAIL
     assert set(me["profile"]) == {
         "displayName",
         "avatarKey",
@@ -367,7 +400,7 @@ async def test_get_me_returns_profile_and_settings(client: AsyncClient) -> None:
 
 @pytest.mark.asyncio
 async def test_patch_me_updates_profile_and_settings(client: AsyncClient) -> None:
-    body = await register(client)
+    body = await sign_in(client)
     response = await client.patch(
         "/api/v1/me",
         headers=auth_headers(body["tokens"]["accessToken"]),
@@ -390,7 +423,7 @@ async def test_patch_me_updates_profile_and_settings(client: AsyncClient) -> Non
 @pytest.mark.asyncio
 async def test_patch_me_refuses_to_set_current_level(client: AsyncClient) -> None:
     """A learner must not be able to skip the placement test."""
-    body = await register(client)
+    body = await sign_in(client)
     response = await client.patch(
         "/api/v1/me",
         headers=auth_headers(body["tokens"]["accessToken"]),
@@ -401,7 +434,7 @@ async def test_patch_me_refuses_to_set_current_level(client: AsyncClient) -> Non
 
 @pytest.mark.asyncio
 async def test_patch_me_rejects_out_of_range_values(client: AsyncClient) -> None:
-    body = await register(client)
+    body = await sign_in(client)
     response = await client.patch(
         "/api/v1/me",
         headers=auth_headers(body["tokens"]["accessToken"]),
@@ -413,7 +446,7 @@ async def test_patch_me_rejects_out_of_range_values(client: AsyncClient) -> None
 # ===================================================================== devices
 @pytest.mark.asyncio
 async def test_device_lifecycle_list_then_revoke(client: AsyncClient) -> None:
-    body = await register(client)
+    body = await sign_in(client)
     headers = auth_headers(body["tokens"]["accessToken"])
 
     listed = await client.get("/api/v1/me/devices", headers=headers)
@@ -436,12 +469,13 @@ async def test_device_lifecycle_list_then_revoke(client: AsyncClient) -> None:
 @pytest.mark.asyncio
 async def test_device_list_is_scoped_to_the_caller(client: AsyncClient) -> None:
     """A device id belonging to another account is not reachable."""
-    first = await register(client)
-    second = await client.post(
-        "/api/v1/auth/register",
-        json={**NEW_ACCOUNT, "email": "second-probe@natiqo.app", "device": WEB_DEVICE},
+    first = await sign_in(client)
+    second = await sign_in(
+        client,
+        token="second-probe-token",
+        subject="second-probe",
+        email="second-probe@natiqo.app",
     )
-    assert second.status_code == 201, second.text
 
     first_devices = await client.get(
         "/api/v1/me/devices", headers=auth_headers(first["tokens"]["accessToken"])
@@ -450,7 +484,7 @@ async def test_device_list_is_scoped_to_the_caller(client: AsyncClient) -> None:
 
     response = await client.delete(
         f"/api/v1/me/devices/{device_id}",
-        headers=auth_headers(second.json()["tokens"]["accessToken"]),
+        headers=auth_headers(second["tokens"]["accessToken"]),
     )
     # A 422 "Unknown device." rather than a 404: the service deliberately answers
     # identically for a device that does not exist and one owned by someone else, so
@@ -467,7 +501,7 @@ async def test_device_list_is_scoped_to_the_caller(client: AsyncClient) -> None:
 
 @pytest.mark.asyncio
 async def test_revoke_device_rejects_a_malformed_id(client: AsyncClient) -> None:
-    body = await register(client)
+    body = await sign_in(client)
     response = await client.delete(
         "/api/v1/me/devices/not-a-uuid",
         headers=auth_headers(body["tokens"]["accessToken"]),
@@ -479,7 +513,7 @@ async def test_revoke_device_rejects_a_malformed_id(client: AsyncClient) -> None
 # ====================================================================== tokens
 @pytest.mark.asyncio
 async def test_refresh_rotates_the_session(client: AsyncClient) -> None:
-    body = await register(client)
+    body = await sign_in(client)
     original = body["tokens"]["refreshToken"]
 
     response = await client.post(
@@ -506,17 +540,9 @@ async def test_refresh_rejects_a_short_token(client: AsyncClient) -> None:
 
 @pytest.mark.asyncio
 async def test_logout_revokes_only_the_presented_session(client: AsyncClient) -> None:
-    first = await register(client)
-    second = await client.post(
-        "/api/v1/auth/login",
-        json={
-            "email": NEW_ACCOUNT["email"],
-            "password": NEW_ACCOUNT["password"],
-            "device": {**WEB_DEVICE, "user_agent": "second-session/1.0"},
-        },
-    )
-    assert second.status_code == 200, second.text
-    second_tokens = second.json()["tokens"]
+    first = await sign_in(client)
+    second = await sign_in(client, device={**WEB_DEVICE, "user_agent": "second-session/1.0"})
+    second_tokens = second["tokens"]
 
     response = await client.post(
         "/api/v1/auth/logout", json={"refresh_token": first["tokens"]["refreshToken"]}
@@ -540,16 +566,8 @@ async def test_logout_revokes_only_the_presented_session(client: AsyncClient) ->
 
 @pytest.mark.asyncio
 async def test_logout_all_devices_revokes_everything(client: AsyncClient) -> None:
-    first = await register(client)
-    second = await client.post(
-        "/api/v1/auth/login",
-        json={
-            "email": NEW_ACCOUNT["email"],
-            "password": NEW_ACCOUNT["password"],
-            "device": WEB_DEVICE,
-        },
-    )
-    assert second.status_code == 200, second.text
+    first = await sign_in(client)
+    second = await sign_in(client)
 
     response = await client.post(
         "/api/v1/auth/logout",
@@ -557,7 +575,7 @@ async def test_logout_all_devices_revokes_everything(client: AsyncClient) -> Non
     )
     assert response.status_code == 200, response.text
 
-    for token in (first["tokens"]["refreshToken"], second.json()["tokens"]["refreshToken"]):
+    for token in (first["tokens"]["refreshToken"], second["tokens"]["refreshToken"]):
         replay = await client.post(
             "/api/v1/auth/refresh", json={"refresh_token": token, "device": WEB_DEVICE}
         )
@@ -567,99 +585,37 @@ async def test_logout_all_devices_revokes_everything(client: AsyncClient) -> Non
 @pytest.mark.asyncio
 async def test_logout_is_idempotent(client: AsyncClient) -> None:
     """A retry after a dropped response must not be told the logout failed."""
-    body = await register(client)
+    body = await sign_in(client)
     token = body["tokens"]["refreshToken"]
     for _ in range(2):
         response = await client.post("/api/v1/auth/logout", json={"refresh_token": token})
         assert response.status_code == 200, response.text
 
 
-# ============================================================== password reset
-@pytest.mark.asyncio
-async def test_password_reset_round_trip(
-    client: AsyncClient, reset_delivery: InMemoryPasswordResetDelivery
-) -> None:
-    body = await register(client)
+# ==================================================== removed credential surface
+# Every endpoint that existed to create or manage a password is gone. These checks are
+# the regression guard: a route reintroduced by accident would restore an authentication
+# path this service has deliberately stopped supporting, and nothing else in the suite
+# would notice, because no other test asks for these paths at all.
 
-    requested = await client.post(
-        "/api/v1/auth/forgot-password", json={"email": NEW_ACCOUNT["email"]}
-    )
-    assert requested.status_code == 200, requested.text
 
-    link = reset_delivery.latest_for(NEW_ACCOUNT["email"])
-    assert link is not None, "reset link was never dispatched"
-    # A credential in an HTTP body is a credential nobody can rotate.
-    assert link.raw_token not in requested.text
-
-    reset = await client.post(
-        "/api/v1/auth/reset-password",
-        json={"token": link.raw_token, "new_password": "Rotated-Password-2"},
-    )
-    assert reset.status_code == 200, reset.text
-
-    # A reset is a statement that the old password was lost, so it must invalidate it.
-    with_old = await client.post(
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/api/v1/auth/register",
         "/api/v1/auth/login",
-        json={"email": NEW_ACCOUNT["email"], "password": NEW_ACCOUNT["password"]},
-    )
-    assert with_old.status_code == 401
-
-    with_new = await client.post(
-        "/api/v1/auth/login",
-        json={"email": NEW_ACCOUNT["email"], "password": "Rotated-Password-2"},
-    )
-    assert with_new.status_code == 200, with_new.text
-
-    # Existing sessions were opened with the old password and are treated as hostile.
-    old_session = await client.post(
-        "/api/v1/auth/refresh",
-        json={"refresh_token": body["tokens"]["refreshToken"], "device": WEB_DEVICE},
-    )
-    assert old_session.status_code == 401
-
-
-@pytest.mark.asyncio
-async def test_forgot_password_does_not_reveal_account_existence(
-    client: AsyncClient, reset_delivery: InMemoryPasswordResetDelivery
-) -> None:
-    await register(client)
-    known = await client.post("/api/v1/auth/forgot-password", json={"email": NEW_ACCOUNT["email"]})
-    unknown = await client.post("/api/v1/auth/forgot-password", json={"email": "nobody@natiqo.app"})
-    assert known.status_code == unknown.status_code == 200
-    assert known.json() == unknown.json()
-    # Only the real account gets a token minted.
-    assert reset_delivery.latest_for("nobody@natiqo.app") is None
-
-
-@pytest.mark.asyncio
-async def test_reset_password_rejects_a_bad_token(client: AsyncClient) -> None:
-    response = await client.post(
+        "/api/v1/auth/forgot-password",
         "/api/v1/auth/reset-password",
-        json={"token": "x" * 40, "new_password": "Whatever-123"},
-    )
-    assert response.status_code in (401, 422), response.text
-
-
+        "/api/v1/auth/verify-email",
+        "/api/v1/auth/resend-verification",
+        "/api/v1/auth/change-password",
+    ],
+)
 @pytest.mark.asyncio
-async def test_reset_password_cannot_be_reused(
-    client: AsyncClient, reset_delivery: InMemoryPasswordResetDelivery
-) -> None:
-    await register(client)
-    await client.post("/api/v1/auth/forgot-password", json={"email": NEW_ACCOUNT["email"]})
-    link = reset_delivery.latest_for(NEW_ACCOUNT["email"])
-    assert link is not None
+async def test_the_password_endpoints_are_gone(client: AsyncClient, path: str) -> None:
+    response = await client.post(path, json={})
 
-    first = await client.post(
-        "/api/v1/auth/reset-password",
-        json={"token": link.raw_token, "new_password": "First-Rotation-1"},
-    )
-    assert first.status_code == 200, first.text
-
-    replay = await client.post(
-        "/api/v1/auth/reset-password",
-        json={"token": link.raw_token, "new_password": "Second-Rotation-2"},
-    )
-    assert replay.status_code in (401, 422), replay.text
+    assert response.status_code == 404, response.text
 
 
 # ================================================================ doc contract
@@ -689,201 +645,27 @@ async def test_every_published_operation_is_covered(client: AsyncClient) -> None
 
 
 # ------------------------------------------------------------------ verification
-# The three endpoints a learner touches to prove an address is theirs. The thread through
-# all of them: a token is a credential, so it is single-use, it is only ever emailed, and
-# the learner must never be locked out by a provider having a bad minute.
+# The address is confirmed by the provider, not by a link. There is no token to email,
+# no link to expire, and no flow that can be turned into an address-enumeration oracle.
 
 
-async def test_confirming_an_address_flips_the_verified_flag_on_me(
-    client: AsyncClient, verification_outbox: _VerificationOutbox
-) -> None:
-    created = await register(client)
-    headers = auth_headers(created["tokens"]["accessToken"])
-    await client.post("/api/v1/auth/resend-verification", headers=headers)
-    assert len(verification_outbox.sent) == 1
+async def test_a_verified_provider_address_is_recorded_as_confirmed(client: AsyncClient) -> None:
+    created = await sign_in(client)
 
-    response = await client.post(
-        "/api/v1/auth/verify-email", json={"token": verification_outbox.sent[0]}
-    )
+    me = await client.get("/api/v1/me", headers=auth_headers(created["tokens"]["accessToken"]))
 
-    assert response.status_code == 200, response.text
-    me = await client.get("/api/v1/me", headers=headers)
+    assert me.status_code == 200, me.text
     assert me.json()["emailVerified"] is True
 
 
-async def test_an_unverified_account_can_still_use_the_app(client: AsyncClient) -> None:
-    """Gating login would lock out everyone registered before verification existed."""
-    created = await register(client)
+async def test_an_unverified_provider_address_still_works(client: AsyncClient) -> None:
+    """Confirmation is a nudge the client renders, never a gate on using the app."""
+    created = await sign_in(client, token="unverified-google", email_verified=False)
 
     me = await client.get("/api/v1/me", headers=auth_headers(created["tokens"]["accessToken"]))
 
     assert me.status_code == 200, me.text
     assert me.json()["emailVerified"] is False
-
-
-async def test_opening_the_same_link_twice_is_not_an_error(
-    client: AsyncClient, verification_outbox: _VerificationOutbox
-) -> None:
-    """Mail scanners open the link first; the learner must not be shown a failure."""
-    created = await register(client)
-    await client.post(
-        "/api/v1/auth/resend-verification", headers=auth_headers(created["tokens"]["accessToken"])
-    )
-    body = {"token": verification_outbox.sent[0]}
-
-    first = await client.post("/api/v1/auth/verify-email", json=body)
-    second = await client.post("/api/v1/auth/verify-email", json=body)
-
-    assert first.status_code == 200, first.text
-    assert second.status_code == 200, second.text
-
-
-async def test_a_forged_token_is_refused_without_saying_which_part_was_wrong(
-    client: AsyncClient,
-) -> None:
-    response = await client.post("/api/v1/auth/verify-email", json={"token": "f" * 64})
-
-    assert response.status_code == 422, response.text
-    # One code for missing, expired and already-spent alike: splitting them would let an
-    # attacker learn that a guessed token once existed.
-    assert error_code(response) == "VALIDATION_ERROR"
-
-
-async def test_resending_twice_does_not_send_a_second_email(
-    client: AsyncClient, verification_outbox: _VerificationOutbox
-) -> None:
-    """A live link is the answer; a second copy is how a provider rate-limits the user."""
-    headers = auth_headers((await register(client))["tokens"]["accessToken"])
-
-    await client.post("/api/v1/auth/resend-verification", headers=headers)
-    again = await client.post("/api/v1/auth/resend-verification", headers=headers)
-
-    assert again.status_code == 200, again.text
-    assert len(verification_outbox.sent) == 1
-
-
-async def test_resending_always_answers_success_so_it_cannot_probe_verified_addresses(
-    client: AsyncClient, verification_outbox: _VerificationOutbox
-) -> None:
-    created = await register(client)
-    headers = auth_headers(created["tokens"]["accessToken"])
-    await client.post("/api/v1/auth/resend-verification", headers=headers)
-    await client.post("/api/v1/auth/verify-email", json={"token": verification_outbox.sent[0]})
-
-    confirmed = await client.post("/api/v1/auth/resend-verification", headers=headers)
-
-    assert confirmed.status_code == 200, confirmed.text
-    assert len(verification_outbox.sent) == 1, "a confirmed address has nothing to resend"
-
-
-async def test_resending_needs_a_session(client: AsyncClient) -> None:
-    response = await client.post("/api/v1/auth/resend-verification")
-
-    assert response.status_code == 401, response.text
-
-
-# ------------------------------------------------------------------ change password
-
-
-async def test_changing_the_password_succeeds_and_kills_the_refresh_session(
-    client: AsyncClient,
-) -> None:
-    """A change must not leave a working session behind.
-
-    Note what this does *not* claim: the access token that made the request keeps working
-    until it expires, because it is a self-contained JWT and revoking sessions cannot reach
-    a token that has already been handed out. That is the trade for stateless auth, and it
-    is why the access-token lifetime has to stay short. The renewable credential is the
-    one that matters, and it dies here.
-    """
-    created = await register(client)
-    refresh_token = created["tokens"]["refreshToken"]
-
-    changed = await client.post(
-        "/api/v1/auth/change-password",
-        headers=auth_headers(created["tokens"]["accessToken"]),
-        json={"currentPassword": NEW_ACCOUNT["password"], "newPassword": "Baghdad-progresses-2027"},
-    )
-
-    assert changed.status_code == 200, changed.text
-    assert changed.json()["sessionsRevoked"] >= 1
-
-    renewed = await client.post("/api/v1/auth/refresh", json={"refreshToken": refresh_token})
-
-    assert renewed.status_code == 401, renewed.text
-
-
-async def test_the_old_password_stops_working_after_a_change(client: AsyncClient) -> None:
-    created = await register(client)
-    await client.post(
-        "/api/v1/auth/change-password",
-        headers=auth_headers(created["tokens"]["accessToken"]),
-        json={"currentPassword": NEW_ACCOUNT["password"], "newPassword": "Baghdad-progresses-2027"},
-    )
-
-    with_old = await client.post(
-        "/api/v1/auth/login",
-        json={"email": NEW_ACCOUNT["email"], "password": NEW_ACCOUNT["password"]},
-    )
-    with_new = await client.post(
-        "/api/v1/auth/login",
-        json={"email": NEW_ACCOUNT["email"], "password": "Baghdad-progresses-2027"},
-    )
-
-    assert with_old.status_code == 401, with_old.text
-    assert with_new.status_code == 200, with_new.text
-
-
-async def test_a_wrong_current_password_is_refused(client: AsyncClient) -> None:
-    created = await register(client)
-    headers = auth_headers(created["tokens"]["accessToken"])
-
-    response = await client.post(
-        "/api/v1/auth/change-password",
-        headers=headers,
-        json={"currentPassword": "not-the-password", "newPassword": "Baghdad-progresses-2027"},
-    )
-
-    assert response.status_code == 401, response.text
-    # The session must survive a failed attempt, or one typo locks the learner out.
-    assert (await client.get("/api/v1/me", headers=headers)).status_code == 200
-
-
-async def test_reusing_the_same_password_is_refused(client: AsyncClient) -> None:
-    """Re-hashing an identical password changes the hash while changing nothing."""
-    created = await register(client)
-    headers = auth_headers(created["tokens"]["accessToken"])
-
-    response = await client.post(
-        "/api/v1/auth/change-password",
-        headers=headers,
-        json={"currentPassword": NEW_ACCOUNT["password"], "newPassword": NEW_ACCOUNT["password"]},
-    )
-
-    assert response.status_code == 422, response.text
-    assert (await client.get("/api/v1/me", headers=headers)).status_code == 200
-
-
-async def test_a_weak_new_password_is_refused(client: AsyncClient) -> None:
-    created = await register(client)
-
-    response = await client.post(
-        "/api/v1/auth/change-password",
-        headers=auth_headers(created["tokens"]["accessToken"]),
-        json={"currentPassword": NEW_ACCOUNT["password"], "newPassword": "short"},
-    )
-
-    assert response.status_code == 422, response.text
-    assert error_code(response) == "AUTH_WEAK_PASSWORD"
-
-
-async def test_changing_a_password_needs_a_session(client: AsyncClient) -> None:
-    response = await client.post(
-        "/api/v1/auth/change-password",
-        json={"currentPassword": NEW_ACCOUNT["password"], "newPassword": "Baghdad-progresses-2027"},
-    )
-
-    assert response.status_code == 401, response.text
 
 
 # ============================================================== account closure (GDPR)
@@ -900,7 +682,7 @@ async def test_deleting_the_account_closes_it_and_kills_the_session(client: Asyn
     its own — but the renewable credential dies here, and every later authenticated request
     is refused because the account behind it is closed.
     """
-    created = await register(client)
+    created = await sign_in(client)
     access_token = created["tokens"]["accessToken"]
     refresh_token = created["tokens"]["refreshToken"]
 
@@ -919,12 +701,12 @@ async def test_deleting_the_account_closes_it_and_kills_the_session(client: Asyn
 
 @pytest.mark.asyncio
 async def test_a_closed_account_can_no_longer_log_in(client: AsyncClient) -> None:
-    created = await register(client)
+    created = await sign_in(client)
     await client.delete("/api/v1/me", headers=auth_headers(created["tokens"]["accessToken"]))
 
     relogin = await client.post(
-        "/api/v1/auth/login",
-        json={"email": NEW_ACCOUNT["email"], "password": NEW_ACCOUNT["password"]},
+        "/api/v1/auth/google",
+        json={"id_token": "google-id-token-probe", "device": WEB_DEVICE},
     )
 
     assert relogin.status_code == 401, relogin.text
@@ -934,7 +716,7 @@ async def test_a_closed_account_can_no_longer_log_in(client: AsyncClient) -> Non
 @pytest.mark.asyncio
 async def test_deleting_twice_still_answers_the_same_way(client: AsyncClient) -> None:
     """A retried delete must not turn a dropped response into a visible error."""
-    created = await register(client)
+    created = await sign_in(client)
     headers = auth_headers(created["tokens"]["accessToken"])
 
     first = await client.delete("/api/v1/me", headers=headers)
@@ -953,31 +735,36 @@ async def test_deleting_the_account_needs_a_session(client: AsyncClient) -> None
 
 
 @pytest.mark.asyncio
-async def test_an_unconfirmed_legacy_account_can_still_log_in(
+async def test_a_pending_verification_status_is_not_a_gate(
     client: AsyncClient, content_db: AsyncSession
 ) -> None:
     """Seeded and pre-feature accounts sit in ``pending_verification``.
 
-    Refusing them would lock out every account that registered before verification existed,
-    which is the opposite of what "verification is a nudge, not a gate" means. The status
-    stays truthful and ``/me`` still reports the address as unconfirmed.
+    Refusing them would lock out every account created before the status existed, which is
+    the opposite of what "the address flag is a nudge, not a gate" means. The status stays
+    truthful — it is what ``/me`` reports — and the account keeps working.
     """
-    created = await register(client)
-    await content_db.execute(
-        text("update users set status = 'pending_verification' where id = :uid"),
-        {"uid": created["user"]["id"]},
-    )
+    created = await sign_in(client)
+    # Written through the ORM rather than raw SQL: SQLite stores this UUID as 32 hex
+    # characters with no dashes, so the id the API reports does not match the column and
+    # a hand-written UPDATE silently changes zero rows.
+    row = await content_db.get(UserModel, uuid.UUID(created["user"]["id"]))
+    assert row is not None, "the fixture could not find the account it just created"
+    row.status = UserStatus.PENDING_VERIFICATION.value
     await content_db.commit()
+    content_db.expunge_all()
 
     relogin = await client.post(
-        "/api/v1/auth/login",
-        json={"email": NEW_ACCOUNT["email"], "password": NEW_ACCOUNT["password"]},
+        "/api/v1/auth/google",
+        json={"id_token": "google-id-token-probe", "device": WEB_DEVICE},
     )
     assert relogin.status_code == 200, relogin.text
 
-    me = await client.get("/api/v1/me", headers=auth_headers(relogin.json()["tokens"]["accessToken"]))
+    me = await client.get(
+        "/api/v1/me", headers=auth_headers(relogin.json()["tokens"]["accessToken"])
+    )
     assert me.status_code == 200, me.text
-    assert me.json()["emailVerified"] is False
+    assert me.json()["status"] == "pending_verification"
 
 
 # ===================================================================== security headers
@@ -1480,9 +1267,8 @@ async def test_every_response_body_is_camel_case(client: AsyncClient) -> None:
     a per-endpoint expected-shape list would itself rot, and it would only ever prove the
     endpoints somebody remembered to write down.
     """
-    registered = await client.post("/api/v1/auth/register", json=NEW_ACCOUNT)
-    assert registered.status_code == 201, registered.text
-    tokens = registered.json()["tokens"]
+    registered = await sign_in(client)
+    tokens = registered["tokens"]
 
     probes = [
         await client.get("/api/v1/content/levels"),
@@ -1518,21 +1304,30 @@ async def test_a_request_body_is_accepted_in_either_spelling(client: AsyncClient
     on the new one must both function. Once that window closes the snake_case half of this
     test can be deleted — but deleting it is a decision, and not doing so is not.
     """
-    body = {key: value for key, value in NEW_ACCOUNT.items() if key != "email"}
+    body = {
+        "display_name": PROBE_NAME,
+        "native_language": "ar",
+        "english_variant": "british",
+        "timezone": "Asia/Baghdad",
+    }
 
     camel = {camelise(key): value for key, value in body.items()}
     snake = dict(body)
     mixed = dict(camel)
     mixed["displayName"] = body["display_name"]
 
-    # Distinct addresses: the three payloads must differ only in spelling, and registering
-    # the same account three times would otherwise fail on the uniqueness check and prove
-    # nothing about parsing.
+    # Distinct identities: the three payloads must differ only in spelling, and signing in
+    # three times as the same learner would reuse one account and prove nothing about
+    # parsing.
     for label, payload in (("camel", camel), ("snake", snake), ("mixed", mixed)):
-        payload["email"] = f"{label}-input@natiqo.app"
-        response = await client.post("/api/v1/auth/register", json=payload)
-        assert response.status_code == 201, f"{label} input rejected: {response.text}"
-        assert response.json()["user"]["email"] == payload["email"]
+        email = f"{label}-input@natiqo.app"
+        token = f"{label}-input-token"
+        GOOGLE.trust(token, identity_for(subject=f"{label}-input", email=email))
+        response = await client.post(
+            "/api/v1/auth/google", json={"id_token": token, **payload, "device": WEB_DEVICE}
+        )
+        assert response.status_code == 200, f"{label} input rejected: {response.text}"
+        assert response.json()["user"]["email"] == email
         assert response.json()["user"]["profile"]["displayName"] == body["display_name"]
 
 
@@ -1614,7 +1409,7 @@ async def test_a_miss_is_not_cacheable(client: AsyncClient) -> None:
 @pytest.mark.asyncio
 async def test_authenticated_data_is_never_cached(client: AsyncClient) -> None:
     """A profile on a shared phone's HTTP cache is a leak waiting for the next user."""
-    body = await register(client)
+    body = await sign_in(client)
     me = await client.get("/api/v1/me", headers=auth_headers(body["tokens"]["accessToken"]))
     assert me.status_code == 200
     assert me.headers["cache-control"] == "no-store"

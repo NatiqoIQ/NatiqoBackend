@@ -28,21 +28,21 @@ from app.core.config import reset_settings_cache
 from app.core.database import create_all, dispose_engine, get_session_factory
 from app.core.errors import AppError
 from app.core.registry import import_all_models
-from app.core.security import hash_password
+from app.core.time import utc_now
 from app.core.types import CEFRLevel, UserId, UserRole, UserStatus
 from app.core.uow_sqlalchemy import SqlAlchemyUnitOfWork
 from app.modules.ai.infrastructure.models import AiUsageRecord
-from app.modules.users.application.auth_service import AuthService
 from app.modules.users.domain.policy import normalise_email
-from app.modules.users.infrastructure.delivery import build_delivery
 from app.modules.users.infrastructure.models import (
     RefreshTokenModel,
     UserDeviceModel,
+    UserIdentityModel,
     UserModel,
     UserProfileModel,
     UserSettingsModel,
 )
 from scripts.seed import (
+    SEED_IDENTITY_PROVIDER,
     PersonaOutcome,
     SeedAction,
     SeedRefused,
@@ -56,9 +56,10 @@ from scripts.seed import (
     _write_devices,
     main,
     run_seed,
+    seed_subject,
     select_personas,
 )
-from scripts.seed_personas import DEMO_PASSWORD, PERSONAS, SEED_NAMESPACE, SeedDevice
+from scripts.seed_personas import PERSONAS, SEED_NAMESPACE, SeedDevice
 
 pytestmark = pytest.mark.integration
 
@@ -329,16 +330,14 @@ async def test_foreign_account_is_left_untouched(uow, settings, verify) -> None:
     """An account holding a demo address but a real password must not be rewritten.
 
     This is the safety property that lets the seed be run against a shared environment:
-    the shared demo password is what marks an account as the seeder's, and an account
-    that does not match it belongs to a person.
+    a seeded account is one carrying the seeder's own provider identity, and an account
+    holding a demo address without that identity belongs to a person.
     """
     stranger_id = UserId(uuid.uuid4())
-    stranger_hash = hash_password("a-real-persons-password")
     verify.add(
         UserModel(
             id=stranger_id,
             email=ADMIN_EMAIL,
-            password_hash=stranger_hash,
             status=UserStatus.ACTIVE.value,
             roles=[str(UserRole.USER)],
         )
@@ -354,10 +353,16 @@ async def test_foreign_account_is_left_untouched(uow, settings, verify) -> None:
 
     untouched = await verify.scalar(select(UserModel).where(UserModel.id == stranger_id))
     assert untouched is not None
-    # The credential is the thing that must not change: a seeder that "helpfully"
-    # re-hashed this account to the demo password would be handing a stranger's inbox
-    # to anyone who has read the README.
-    assert untouched.password_hash == stranger_hash
+    # The identity is the thing that must not change: attaching a seeded identity to an
+    # account the seeder does not own would hand that person's history to the next
+    # person who reads the README.
+    assert untouched.status == UserStatus.ACTIVE.value
+    assert (
+        await verify.scalar(
+            select(UserIdentityModel).where(UserIdentityModel.user_id == stranger_id)
+        )
+        is None
+    )
     # And nothing was created around it either. The seeder writes a profile, settings,
     # devices and usage for accounts it owns; a stranger gets none of those.
     assert (
@@ -384,7 +389,6 @@ async def test_skipped_persona_is_the_only_one_not_created(uow, settings, verify
         UserModel(
             id=stranger_id,
             email=ADMIN_EMAIL,
-            password_hash=hash_password("a-real-persons-password"),
             status=UserStatus.ACTIVE.value,
             roles=[str(UserRole.USER)],
         )
@@ -425,21 +429,34 @@ async def test_partial_seed_is_completed_by_a_later_run(uow, settings, verify) -
 async def test_an_account_missing_its_profile_and_settings_is_completed(
     uow, settings, verify
 ) -> None:
-    """The half-written state ``AuthService.register`` can leave behind.
+    """The half-written state a sign-in can leave behind.
 
-    Registration commits the account before anything else, so a crash in between leaves
-    a user row with no profile and no settings. Enrichment has to create them rather
-    than assume they are there, or the account stays unusable however many times the
-    seeder is run.
+    The account and its identity commit before the profile and settings rows do, so a
+    crash in between leaves a user row with neither. Enrichment has to create them
+    rather than assume they are there, or the account stays unusable however many times
+    the seeder is run.
+
+    The identity row is what makes this the seeder's account; without it the same email
+    is somebody else's and the persona is skipped.
     """
     user_id = UserId(uuid.uuid4())
     verify.add(
         UserModel(
             id=user_id,
             email=LEARNER_EMAIL,
-            password_hash=hash_password(DEMO_PASSWORD),
             status=UserStatus.PENDING_VERIFICATION.value,
             roles=[str(UserRole.USER)],
+        )
+    )
+    await verify.commit()
+    verify.add(
+        UserIdentityModel(
+            user_id=user_id,
+            provider=str(SEED_IDENTITY_PROVIDER),
+            subject=seed_subject("learner"),
+            email=LEARNER_EMAIL,
+            email_verified=True,
+            last_login_at=utc_now(),
         )
     )
     await verify.commit()
@@ -829,11 +846,9 @@ async def test_a_suspended_multi_device_persona_mints_no_extra_sessions(uow, set
         ),
         status=UserStatus.SUSPENDED,
     )
-    auth = AuthService(uow, settings, build_delivery(production=False))
-
-    # Registering a suspended account still works; it is the *logins* that must not
+    # Creating a suspended account still works; it is the *sign-ins* that must not
     # happen, because a suspended user cannot authenticate.
-    assert await _mint_extra_sessions(auth, persona, "admin@natiqo.app") == 0
+    assert await _mint_extra_sessions(uow, settings, persona, "admin@natiqo.app") == 0
 
 
 @pytest.mark.asyncio
@@ -852,7 +867,6 @@ async def test_a_tokenless_device_row_is_not_written_twice(uow, settings, verify
         UserModel(
             id=user_id,
             email=OMAR_EMAIL,
-            password_hash=hash_password(DEMO_PASSWORD),
             status=UserStatus.ACTIVE.value,
             roles=[str(UserRole.USER)],
         )

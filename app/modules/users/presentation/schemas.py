@@ -6,6 +6,9 @@ Two conventions are enforced here rather than in each handler:
   accepted on ``PATCH /me`` at all; the placement test owns it.
 * **Enum and length validation happens at the edge** so the service layer receives
   already-typed values and never re-parses strings.
+
+There is no credential schema because there is no credential: a learner signs in with an
+ID token from Google or Apple, which the server verifies before anything else happens.
 """
 
 from __future__ import annotations
@@ -13,13 +16,15 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Annotated, Literal
 
-from pydantic import ConfigDict, EmailStr, Field
+from pydantic import ConfigDict, Field
 
 from app.core.responses import WireModel
 from app.core.types import ContentLanguage, EnglishVariant, Locale
 
 DisplayName = Annotated[str, Field(min_length=2, max_length=80, examples=["Ali"])]
-Password = Annotated[str, Field(min_length=1, max_length=256)]
+#: An ID token is a signed JWT, so it is a few hundred characters in practice. The upper
+#: bound is generous but finite: one that is 8 KiB is an attack, not a credential.
+IdToken = Annotated[str, Field(min_length=16, max_length=8192)]
 PushToken = Annotated[str, Field(min_length=8, max_length=512)]
 IanaTimezone = Annotated[
     str,
@@ -43,24 +48,37 @@ class DevicePayload(WireModel):
 
 
 # ---------------------------------------------------------------------- auth
-class RegisterRequest(WireModel):
+class SocialLoginRequest(WireModel):
+    """Body of ``POST /auth/google`` and ``POST /auth/apple``.
+
+    The profile fields are advisory: they are applied only when the request creates a
+    brand-new account. A returning learner keeps the preferences they already have, so a
+    stale value on a device cannot silently reset a setting changed elsewhere.
+    """
+
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
-    email: EmailStr
-    password: Password
-    display_name: DisplayName
+    id_token: IdToken
+    device: DevicePayload = Field(default_factory=DevicePayload)
+    display_name: DisplayName | None = None
     native_language: ContentLanguage = ContentLanguage.AR
     english_variant: EnglishVariant = EnglishVariant.BRITISH
     timezone: IanaTimezone = "Asia/Baghdad"
     locale: Locale = Locale.EN_GB
-    device: DevicePayload = Field(default_factory=DevicePayload)
 
 
-class LoginRequest(WireModel):
+class DevLoginRequest(WireModel):
+    """Body of ``POST /auth/dev-login``.
+
+    The credential check is the only one in the service: everywhere else the provider
+    owns the password and the server never sees one. That is exactly why this route
+    exists only when ``DEV_LOGIN_ENABLED`` is set, and never in production.
+    """
+
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
-    email: EmailStr
-    password: Password
+    username: Annotated[str, Field(min_length=1, max_length=64)]
+    password: Annotated[str, Field(min_length=1, max_length=128)]
     device: DevicePayload = Field(default_factory=DevicePayload)
 
 
@@ -76,59 +94,6 @@ class LogoutRequest(WireModel):
 
     refresh_token: Annotated[str, Field(min_length=16, max_length=4096)]
     all_devices: bool = False
-
-
-class ForgotPasswordRequest(WireModel):
-    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
-
-    email: EmailStr
-
-
-class ResetPasswordRequest(WireModel):
-    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
-
-    token: Annotated[str, Field(min_length=16, max_length=512)]
-    new_password: Password
-
-
-class VerifyEmailRequest(WireModel):
-    """Body of ``POST /auth/verify-email``.
-
-    A ``POST`` rather than a ``GET`` even though it only changes a timestamp: a link is
-    followed by clients, prefetchers and mail scanners, and a ``GET`` that mutates is
-    consumed by all three without the learner ever seeing the confirmation.
-    """
-
-    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
-
-    token: Annotated[str, Field(min_length=16, max_length=512)]
-
-
-class ChangePasswordRequest(WireModel):
-    """Body of ``POST /auth/change-password``.
-
-    ``currentPassword`` is required rather than optional. An authenticated caller who
-    cannot supply it does not need this endpoint — they need ``/auth/forgot-password``,
-    which proves ownership of the mailbox instead.
-    """
-
-    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
-
-    current_password: Password
-    new_password: Password
-
-
-class ChangePasswordResponse(WireModel):
-    """Signals that every session was revoked, so the client must re-authenticate.
-
-    Returned instead of a plain message because the client has a concrete action to take:
-    dropping its tokens and sending the learner back to the sign-in screen. A learner left
-    on a screen that looks signed-in, with a session that no longer works, is a support
-    ticket every time.
-    """
-
-    detail: str
-    sessions_revoked: int
 
 
 class TokenPairResponse(WireModel):
@@ -184,7 +149,7 @@ class AuthResponse(WireModel):
 
 
 class MessageResponse(WireModel):
-    """Used by endpoints that must not disclose whether an account exists."""
+    """Used by endpoints that report an outcome without returning a resource."""
 
     detail: str
 
@@ -242,16 +207,13 @@ __all__ = [
     "AuthResponse",
     "DevicePayload",
     "DeviceResponse",
-    "ForgotPasswordRequest",
-    "LoginRequest",
     "LogoutRequest",
     "MeResponse",
     "MessageResponse",
     "NotificationPreferencesPatch",
     "NotificationPreferencesResponse",
     "RefreshRequest",
-    "RegisterRequest",
-    "ResetPasswordRequest",
+    "SocialLoginRequest",
     "TokenPairResponse",
     "UpdateMeRequest",
     "UserProfileResponse",

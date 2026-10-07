@@ -6,8 +6,8 @@ Two rules drive the shapes here:
   request.** ``UserProfile.timezone`` decides when a streak day rolls over, and
   ``UserSettings.explanation_language`` decides which explanation a learner sees. The
   client may *suggest* a value; the server validates and stores it.
-* **Authentication state is data, not a JWT claim.** Lockout counters and token
-  revocation must survive a restart and be revocable, so they live in rows.
+* **Authentication state is data, not a JWT claim.** Token revocation must survive a
+  restart and be immediately revocable, so refresh-token families live in rows.
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ from __future__ import annotations
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Any
 
 from app.core.time import DEFAULT_TIMEZONE, ensure_aware, utc_now
@@ -95,17 +95,18 @@ class NotificationPreferences:
 
 @dataclass(slots=True)
 class User:
-    """The authentication root: identity, credentials and account lifecycle."""
+    """The authentication root: identity and account lifecycle.
+
+    There is no credential here by design. A learner proves who they are through a
+    Google or Apple ID token, so the account holds no password to store, hash, reset or
+    leak; the provider owns that problem.
+    """
 
     id: UserId
     email: str
-    password_hash: str
     status: UserStatus = UserStatus.ACTIVE
     roles: tuple[UserRole, ...] = (UserRole.USER,)
     email_verified_at: datetime | None = None
-    failed_login_attempts: int = 0
-    locked_until: datetime | None = None
-    password_changed_at: datetime | None = None
     deleted_at: datetime | None = None
     created_at: datetime = field(default_factory=utc_now)
     updated_at: datetime = field(default_factory=utc_now)
@@ -121,40 +122,6 @@ class User:
 
     def verify_email(self, at: datetime | None = None) -> None:
         self.email_verified_at = at or utc_now()
-
-    @property
-    def is_locked(self) -> bool:
-        if self.locked_until is None:
-            return False
-        if ensure_aware(self.locked_until) <= utc_now():
-            # The window elapsed: clear it so the next attempt is evaluated fresh.
-            self.locked_until = None
-            self.failed_login_attempts = 0
-            return False
-        return True
-
-    def lock_seconds_remaining(self) -> int:
-        if self.locked_until is None:
-            return 0
-        remaining = ensure_aware(self.locked_until) - utc_now()
-        return max(int(remaining.total_seconds()), 0)
-
-    def record_failed_login(self, *, max_attempts: int, lockout_seconds: int) -> None:
-        """Count a failure and lock the account once the budget is exhausted."""
-        self.failed_login_attempts += 1
-        if self.failed_login_attempts >= max_attempts:
-            self.locked_until = utc_now() + timedelta(seconds=lockout_seconds)
-
-    def record_successful_login(self) -> None:
-        self.failed_login_attempts = 0
-        self.locked_until = None
-
-    def change_password(self, password_hash: str) -> None:
-        """Rotate the credential hash and drop every lockout counter with it."""
-        self.password_hash = password_hash
-        self.password_changed_at = utc_now()
-        self.failed_login_attempts = 0
-        self.locked_until = None
 
     def soft_delete(self, at: datetime | None = None) -> None:
         """Close the account without destroying the row.
@@ -173,10 +140,6 @@ class User:
         self.status = UserStatus.DELETED
         self.deleted_at = at or utc_now()
         self.updated_at = self.deleted_at
-        # The credential outlives the request only to make the account unopenable from
-        # every angle at once; nothing should be able to log in and change it back.
-        self.failed_login_attempts = 0
-        self.locked_until = None
 
     def suspend(self) -> None:
         self.status = UserStatus.SUSPENDED
@@ -270,3 +233,26 @@ class UserDevice:
     @property
     def is_active(self) -> bool:
         return self.revoked_at is None
+
+
+@dataclass(frozen=True, slots=True)
+class ExternalIdentity:
+    """A sign-in account at a provider, linked to exactly one :class:`User`.
+
+    ``(provider, subject)`` is unique and is how an account is recognised on the next
+    sign-in: the subject is the provider's stable, opaque user id, which unlike an email
+    never changes and is never reassigned to a different person. One learner may hold
+    several rows — a Google identity and an Apple identity for the same human — which is
+    why this is its own table rather than columns on ``users``.
+    """
+
+    id: uuid.UUID
+    user_id: UserId
+    provider: str
+    subject: str
+    email: str | None = None
+    email_verified: bool = False
+    display_name: str | None = None
+    picture_url: str | None = None
+    created_at: datetime = field(default_factory=utc_now)
+    last_login_at: datetime = field(default_factory=utc_now)

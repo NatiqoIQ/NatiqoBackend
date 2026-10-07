@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.time import ensure_aware, utc_now
 from app.core.types import UserId
 from app.modules.users.domain.entities import (
+    ExternalIdentity,
     NotificationPreferences,
     RefreshSession,
     User,
@@ -26,12 +27,10 @@ from app.modules.users.domain.entities import (
     UserSettings,
 )
 from app.modules.users.domain.policy import normalise_email
-from app.modules.users.domain.ports import PasswordResetRecord
 from app.modules.users.infrastructure.models import (
-    EmailVerificationTokenModel,
-    PasswordResetTokenModel,
     RefreshTokenModel,
     UserDeviceModel,
+    UserIdentityModel,
     UserModel,
     UserProfileModel,
     UserSettingsModel,
@@ -55,18 +54,12 @@ def _to_user(model: UserModel) -> User:
     return User(
         id=UserId(model.id),
         email=model.email,
-        password_hash=model.password_hash,
         status=UserStatus(model.status),
         roles=tuple(UserRole(role) for role in (model.roles or ["user"])),
         email_verified_at=ensure_aware(model.email_verified_at)
         if model.email_verified_at
         else None,
-        password_changed_at=ensure_aware(model.password_changed_at)
-        if model.password_changed_at
-        else None,
         deleted_at=ensure_aware(model.deleted_at) if model.deleted_at else None,
-        failed_login_attempts=model.failed_login_attempts,
-        locked_until=ensure_aware(model.locked_until) if model.locked_until else None,
         created_at=ensure_aware(model.created_at),
         updated_at=ensure_aware(model.updated_at),
     )
@@ -118,6 +111,21 @@ def _to_session(model: RefreshTokenModel) -> RefreshSession:
     )
 
 
+def _to_identity(model: UserIdentityModel) -> ExternalIdentity:
+    return ExternalIdentity(
+        id=model.id,
+        user_id=UserId(model.user_id),
+        provider=model.provider,
+        subject=model.subject,
+        email=model.email,
+        email_verified=model.email_verified,
+        display_name=model.display_name,
+        picture_url=model.picture_url,
+        created_at=ensure_aware(model.created_at),
+        last_login_at=ensure_aware(model.last_login_at),
+    )
+
+
 def _to_device(model: UserDeviceModel) -> UserDevice:
     return UserDevice(
         id=model.id,
@@ -158,13 +166,9 @@ class SqlAlchemyUserRepository:
             UserModel(
                 id=user.id,
                 email=user.email,
-                password_hash=user.password_hash,
                 status=user.status.value,
                 roles=[role.value for role in user.roles],
                 email_verified_at=user.email_verified_at,
-                password_changed_at=user.password_changed_at,
-                failed_login_attempts=user.failed_login_attempts,
-                locked_until=user.locked_until,
                 created_at=user.created_at,
                 updated_at=user.updated_at,
             )
@@ -180,17 +184,13 @@ class SqlAlchemyUserRepository:
             update(UserModel)
             .where(UserModel.id == user.id, UserModel.email == user.email)
             .values(
-                password_hash=user.password_hash,
                 status=user.status.value,
                 roles=[role.value for role in user.roles],
                 email_verified_at=user.email_verified_at,
-                password_changed_at=user.password_changed_at,
                 # Listed explicitly because this method enumerates every mutable column: a
                 # new entity field that is not added here is silently dropped on write, and
                 # the closure timestamp would never reach the row.
                 deleted_at=user.deleted_at,
-                failed_login_attempts=user.failed_login_attempts,
-                locked_until=user.locked_until,
                 updated_at=utc_now(),
             )
         )
@@ -402,154 +402,58 @@ class SqlAlchemyUserDeviceRepository:
         )
 
 
-class SqlAlchemyPasswordResetRepository:
-    def __init__(self, session: AsyncSession) -> None:
-        self._session = session
+class SqlAlchemyExternalIdentityRepository:
+    """Provider identities linked to accounts.
 
-    async def add(
-        self,
-        *,
-        user_id: UserId,
-        token_hash: str,
-        expires_at: datetime,
-        requested_ip: str | None = None,
-    ) -> None:
-        self._session.add(
-            PasswordResetTokenModel(
-                user_id=user_id,
-                token_hash=token_hash,
-                expires_at=expires_at,
-                requested_ip=requested_ip,
-            )
-        )
-
-    async def get(self, token_hash: str) -> PasswordResetRecord | None:
-        stmt = select(PasswordResetTokenModel).where(
-            PasswordResetTokenModel.token_hash == token_hash
-        )
-        model = (await self._session.execute(stmt)).scalar_one_or_none()
-        if model is None:
-            return None
-        return PasswordResetRecord(
-            user_id=UserId(model.user_id),
-            token_hash=model.token_hash,
-            expires_at=ensure_aware(model.expires_at),
-            created_at=ensure_aware(model.created_at),
-            used_at=ensure_aware(model.used_at) if model.used_at else None,
-            requested_ip=model.requested_ip,
-        )
-
-    async def consume(self, token_hash: str, *, at: datetime | None = None) -> None:
-        await self._session.execute(
-            update(PasswordResetTokenModel)
-            .where(PasswordResetTokenModel.token_hash == token_hash)
-            .values(used_at=at or utc_now())
-        )
-
-    async def revoke_outstanding(self, user_id: UserId, *, at: datetime | None = None) -> int:
-        """Invalidate every unused token for the account.
-
-        A new request supersedes earlier ones: two live reset links means two parties
-        can change the credential, and the older holder has no reason to still be
-        trying.
-        """
-        result = await self._session.execute(
-            update(PasswordResetTokenModel)
-            .where(
-                PasswordResetTokenModel.user_id == user_id,
-                PasswordResetTokenModel.used_at.is_(None),
-            )
-            .values(used_at=at or utc_now())
-        )
-        return _rows_affected(result)
-
-
-class SqlAlchemyEmailVerificationRepository:
-    """Email-verification token storage.
-
-    A near-copy of :class:`SqlAlchemyPasswordResetRepository` rather than a subclass or a
-    shared generic. The duplication is the cheaper mistake: a shared abstraction would
-    have to be parameterised by table, and the one thing that must never be shared here
-    is the ability of one flow to touch the other's rows.
+    ``find`` is the hot path — every sign-in starts with it — so it is a single lookup
+    on the ``(provider, subject)`` unique index and nothing more.
     """
 
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
-    async def add(
-        self,
-        *,
-        user_id: UserId,
-        token_hash: str,
-        expires_at: datetime,
-        requested_ip: str | None = None,
-    ) -> None:
-        self._session.add(
-            EmailVerificationTokenModel(
-                user_id=user_id,
-                token_hash=token_hash,
-                expires_at=expires_at,
-                requested_ip=requested_ip,
-            )
-        )
-
-    async def get(self, token_hash: str) -> PasswordResetRecord | None:
-        stmt = select(EmailVerificationTokenModel).where(
-            EmailVerificationTokenModel.token_hash == token_hash
+    async def find(self, provider: str, subject: str) -> ExternalIdentity | None:
+        stmt = select(UserIdentityModel).where(
+            UserIdentityModel.provider == provider,
+            UserIdentityModel.subject == subject,
         )
         model = (await self._session.execute(stmt)).scalar_one_or_none()
-        if model is None:
-            return None
-        return PasswordResetRecord(
-            user_id=UserId(model.user_id),
-            token_hash=model.token_hash,
-            expires_at=ensure_aware(model.expires_at),
-            created_at=ensure_aware(model.created_at),
-            used_at=ensure_aware(model.used_at) if model.used_at else None,
-            requested_ip=model.requested_ip,
+        return _to_identity(model) if model else None
+
+    async def list_for_user(self, user_id: UserId) -> list[ExternalIdentity]:
+        stmt = select(UserIdentityModel).where(UserIdentityModel.user_id == user_id)
+        models = (await self._session.execute(stmt)).scalars().all()
+        return [_to_identity(model) for model in models]
+
+    async def add(self, identity: ExternalIdentity) -> None:
+        self._session.add(
+            UserIdentityModel(
+                id=identity.id,
+                user_id=identity.user_id,
+                provider=identity.provider,
+                subject=identity.subject,
+                email=identity.email,
+                email_verified=identity.email_verified,
+                display_name=identity.display_name,
+                picture_url=identity.picture_url,
+                last_login_at=identity.last_login_at,
+                created_at=identity.created_at,
+            )
         )
 
-    async def consume(self, token_hash: str, *, at: datetime | None = None) -> None:
+    async def touch_login(self, provider: str, subject: str, *, at: datetime | None = None) -> None:
         await self._session.execute(
-            update(EmailVerificationTokenModel)
-            .where(EmailVerificationTokenModel.token_hash == token_hash)
-            .values(used_at=at or utc_now())
-        )
-
-    async def revoke_outstanding(self, user_id: UserId, *, at: datetime | None = None) -> int:
-        """Invalidate every unused verification token for the account.
-
-        Same rule as the reset flow: only the newest link can confirm, so the older
-        ones are marked used rather than left live.
-        """
-        result = await self._session.execute(
-            update(EmailVerificationTokenModel)
+            update(UserIdentityModel)
             .where(
-                EmailVerificationTokenModel.user_id == user_id,
-                EmailVerificationTokenModel.used_at.is_(None),
+                UserIdentityModel.provider == provider,
+                UserIdentityModel.subject == subject,
             )
-            .values(used_at=at or utc_now())
+            .values(last_login_at=at or utc_now())
         )
-        return _rows_affected(result)
-
-    async def has_usable(self, user_id: UserId, *, at: datetime | None = None) -> bool:
-        """Whether a live, unexpired, unused verification link already exists."""
-        moment = at or utc_now()
-        stmt = (
-            select(func.count())
-            .select_from(EmailVerificationTokenModel)
-            .where(
-                EmailVerificationTokenModel.user_id == user_id,
-                EmailVerificationTokenModel.used_at.is_(None),
-                EmailVerificationTokenModel.expires_at > moment,
-            )
-        )
-        return bool((await self._session.execute(stmt)).scalar_one())
 
 
 __all__ = [
-    "SqlAlchemyEmailVerificationRepository",
-    "SqlAlchemyPasswordResetRepository",
+    "SqlAlchemyExternalIdentityRepository",
     "SqlAlchemyRefreshTokenRepository",
     "SqlAlchemyUserDeviceRepository",
     "SqlAlchemyUserRepository",

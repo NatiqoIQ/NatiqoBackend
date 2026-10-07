@@ -43,14 +43,13 @@ BACKEND_ROOT = Path(__file__).resolve().parents[2]
 #: it should not, shows up here as a set difference rather than as a vague later error.
 EXPECTED_TABLES = {
     "ai_usage_records",
-    "email_verification_tokens",
     "lessons",
     "levels",
-    "password_reset_tokens",
     "questions",
     "refresh_tokens",
     "units",
     "user_devices",
+    "user_identities",
     "user_profiles",
     "user_settings",
     "users",
@@ -167,9 +166,8 @@ class TestMigratedConstraints:
 
         user_id = str(uuid.uuid4())
         connection.execute(
-            "insert into users (id, email, password_hash, status, roles,"
-            " failed_login_attempts, created_at, updated_at)"
-            " values (?, ?, 'h', 'active', '[]', 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+            "insert into users (id, email, status, roles, created_at, updated_at)"
+            " values (?, ?, 'active', '[]', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
             (user_id, f"{user_id}@example.com"),
         )
         connection.commit()
@@ -217,9 +215,8 @@ class TestMigratedConstraints:
         user_id = str(uuid.uuid4())
         with pytest.raises(sqlite3.IntegrityError):
             migrated.execute(
-                "insert into users (id, email, password_hash, status, roles,"
-                " failed_login_attempts, created_at, updated_at)"
-                " values (?, ?, 'h', 'zombie', '[]', 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+                "insert into users (id, email, status, roles, created_at, updated_at)"
+                " values (?, ?, 'zombie', '[]', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
                 (user_id, f"{user_id}@example.com"),
             )
             migrated.commit()

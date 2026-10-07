@@ -14,10 +14,12 @@
 | --- | --- |
 | ماذا يوجد؟ | حسابات + ملفات مستخدم + كتالوج محتوى (قراءة فقط) |
 | ماذا لا يوجد بعد؟ | quiz، تقدّم، مراجعة SRS، نقاط، اشتراكات، إشعارات، ذكاء اصطناعي، لوحة admin |
-| كيف أدخل؟ | access token **15 دقيقة** + refresh token **30 يوم** مع تدوير |
+| كيف أدخل؟ | Google أو Apple فقط — أرسل ID token إلى `/auth/google` أو `/auth/apple`. **لا كلمة مرور في النظام** |
+| كيف أُنشئ حساباً؟ | أول دخول يُنشئ الحساب تلقائياً — لا يوجد `register` ولا `forgot-password` |
+| كيف أدخل بعد ذلك؟ | access token **15 دقيقة** + refresh token **30 يوم** مع تدوير |
 | ماذا أعرض قبل الدخول؟ | الكتالوج كاملاً — 4 مسارات عامة |
 | هل أستطيع حل الأسئلة؟ | **لا**. لا يوجد endpoint لتسجيل الإجابة ولا لحفظ التقدم |
-| أهم فخّين | لا ترسل `cursor` فارغاً · لا تعتمد على single-flight لتحديث التوكن |
+| أهم فخّين | لا ترسل `cursor` فارغاً · لا تُهمل single-flight لتحديث التوكن |
 
 ---
 
@@ -28,15 +30,14 @@
 ```
 ✅ موجود                          ❌ غير موجود (أي طلب لها يعيد 404)
 ─────────────────────────────      ─────────────────────────────
-POST   /auth/register              أي quiz أو session أو إجابة سؤال
-POST   /auth/login                 أي تسجيل تقدّم أو إجابة صحيحة
+POST   /auth/google                أي quiz أو session أو إجابة سؤال
+POST   /auth/apple                 أي تسجيل تقدّم أو إجابة صحيحة
 POST   /auth/refresh               أي SRS أو مراجعة متباعدة
 POST   /auth/logout                أي نقاط / سلسلة أيام / إنجازات
-POST   /auth/forgot-password       أي اشتراك أو دفع
-POST   /auth/reset-password        أي إشعارات (فقط التفضيلات، لا الإرسال)
-GET    /me · PATCH /me             أي رفع صوت أو صورة (لا يوجد upload)
-GET    /me/devices                 أي تحليلات
-DELETE /me/devices/{id}            أي محتوى جديد (لا كتابة على المحتوى)
+GET    /me · PATCH /me             أي اشتراك أو دفع
+DELETE /me                         أي إشعارات (فقط التفضيلات، لا الإرسال)
+GET    /me/devices                 أي رفع صوت أو صورة (لا يوجد upload)
+DELETE /me/devices/{id}            أي تحليلات
 GET    /content/levels             ─────────────────────────────
 GET    /content/levels/{c}/units
 GET    /content/units/{id}/lessons
@@ -56,22 +57,21 @@ GET    /content/lessons/{id}
 
 | # | Method | Path | مصادقة | يجيب بـ |
 | --- | --- | --- | --- | --- |
-| 1 | `POST` | `/api/v1/auth/register` | — | `201` + مستخدم + توكنات |
-| 2 | `POST` | `/api/v1/auth/login` | — | `200` + مستخدم + توكنات |
+| 1 | `POST` | `/api/v1/auth/google` | — | `200` + مستخدم + توكنات (يُنشئ الحساب أول مرة) |
+| 2 | `POST` | `/api/v1/auth/apple` | — | `200` + مستخدم + توكنات (نفس العقد) |
 | 3 | `POST` | `/api/v1/auth/refresh` | — (refresh في body) | `200` + توكنات جديدة |
 | 4 | `POST` | `/api/v1/auth/logout` | — (refresh في body) | `200` |
-| 5 | `POST` | `/api/v1/auth/forgot-password` | — | `200` دائماً |
-| 6 | `POST` | `/api/v1/auth/reset-password` | — | `200` |
-| 7 | `GET` | `/api/v1/me` | Bearer | `200` |
-| 8 | `PATCH` | `/api/v1/me` | Bearer | `200` |
-| 9 | `GET` | `/api/v1/me/devices` | Bearer | `200` + مصفوفة |
-| 10 | `DELETE` | `/api/v1/me/devices/{device_id}` | Bearer | `204` |
-| 11 | `GET` | `/api/v1/content/levels` | — | `200` + صفحة |
-| 12 | `GET` | `/api/v1/content/levels/{level_code}/units` | — | `200` + صفحة |
-| 13 | `GET` | `/api/v1/content/units/{unit_id}/lessons` | — | `200` + صفحة |
-| 14 | `GET` | `/api/v1/content/lessons/{lesson_id}` | — | `200` |
-| 15 | `GET` | `/health` | — | `200` |
-| 16 | `GET` | `/ready` | — | `200` / `503` |
+| 5 | `GET` | `/api/v1/me` | Bearer | `200` |
+| 6 | `PATCH` | `/api/v1/me` | Bearer | `200` |
+| 7 | `DELETE` | `/api/v1/me` | Bearer | `204` — إغلاق الحساب |
+| 8 | `GET` | `/api/v1/me/devices` | Bearer | `200` + مصفوفة |
+| 9 | `DELETE` | `/api/v1/me/devices/{device_id}` | Bearer | `204` |
+| 10 | `GET` | `/api/v1/content/levels` | — | `200` + صفحة |
+| 11 | `GET` | `/api/v1/content/levels/{level_code}/units` | — | `200` + صفحة |
+| 12 | `GET` | `/api/v1/content/units/{unit_id}/lessons` | — | `200` + صفحة |
+| 13 | `GET` | `/api/v1/content/lessons/{lesson_id}` | — | `200` |
+| 14 | `GET` | `/health` | — | `200` |
+| 15 | `GET` | `/ready` | — | `200` / `503` |
 
 كل المسارات تحت `/api/v1/`. **`/health` و `/ready` ليست تحت `/api/v1`.**
 
@@ -105,27 +105,60 @@ const api  = '$base/api/v1';
 > `shared_preferences` ولا في كود مدمج. هو bearer token صالح 30 يوماً؛ تسريبه يعني سرقة
 > الحساب. `accessToken` اختصاراً يمكن إبقاؤه في الذاكرة فقط لأنه قصير العمر.
 
-### 5.2 التسجيل — `POST /auth/register` `→ 201`
+### 5.2 لا توجد كلمة مرور — الدخول بـ Google أو Apple
+
+`register` و `login` و `forgot-password` و `reset-password` **لم تعد موجودة: كلها تُرجع `404`.**
+السيرفر لا يخزّن كلمة مرور لأي حساب، فلا يوجد ما يُسرَّب ولا ما يُستعاد.
+
+الدخول وإنشاء الحساب مسار واحد:
+
+```text
+1. SDK على الجهاز   google_sign_in      →  idToken (JWT)
+                    sign_in_with_apple  →  idToken (JWT)
+2. POST /api/v1/auth/google  { idToken, ... }
+3. السيرفر يتحقق من التوقيع والـ issuer والـ audience والصلاحية
+4. أول مرة يظهر (المزوّد، subject) → يُنشأ الحساب. بعدها → نفس الحساب دائماً.
+```
 
 ```jsonc
-// الطلب — فقط email و password و displayName إجبارية
+// POST /api/v1/auth/google   |   POST /api/v1/auth/apple
 {
-  "email": "ali@example.com",
-  "password": "Str0ngPassw0rd!",     // 10 أحرف على الأقل
-  "displayName": "Ali",
-  "locale": "ar-IQ",                  // en-GB | ar-IQ | en
-  "nativeLanguage": "ar",             // en | ar | iq
-  "englishVariant": "british",        // british | american | both
+  "idToken": "eyJhbGciOi...",        // إجباري — 16 حرفاً على الأقل
+  "displayName": "Ali",              // يُطبَّق فقط عند إنشاء حساب جديد
+  "locale": "ar-IQ",                 // en-GB | ar-IQ | en
+  "nativeLanguage": "ar",            // en | ar | iq
+  "englishVariant": "british",       // british | american | both
   "timezone": "Asia/Baghdad",
-  "device": {                          // اختياري لكن مطلوب للإشعارات
-    "platform": "ios",                 // ios | android | web
-    "pushToken": "ea1b2c3d4e5f6a7b",   // 8 أحرف على الأقل
+  "device": {                        // اختياري لكن مطلوب للإشعارات
+    "platform": "ios",               // ios | android | web
+    "pushToken": "ea1b2c3d4e5f6a7b", // 8 أحرف على الأقل
     "appVersion": "1.0.0"
   }
 }
 ```
 
-**ما ترده** (`201`):
+**أول دخول يُنشئ الحساب** — لا يوجد مسار تسجيل منفصل، ولهذا الحالة `200` وليست `201`.
+
+نقاط يجب أن تعرفها:
+
+- **`idToken` هو ID token من المزوّد نفسه، وليس access token ولا authorization code.**
+  استخدم `google_sign_in` أو `sign_in_with_apple` مباشرة؛ لا تبنِ تدفق OAuth بنفسك.
+- **`displayName` و `locale` و `timezone` تُطبَّق عند إنشاء الحساب فقط.** مستخدم عائد
+  يحتفظ بتفضيلاته المخزّنة، فلا يستطيع جهاز قديم أن يعيد ضبطها.
+- **Apple لا يضع الاسم داخل التوكن أبداً**، ويرسله مرة واحدة فقط عند أول تصريح. لذلك
+  أرسل `displayName` في أول تسجيل، وإلا صار الاسم مقتطعاً من البريد.
+- **`emailVerified` الآن يعكس ما يؤكده المزوّد** (Google يؤكده دائماً). لا تعرض شاشة
+  "أكّد بريدك" — لا يوجد endpoint لذلك.
+- **`currentLevel` يبدأ `A1` تلقائياً.** لا يوجد placement test ولا endpoint يغيّره.
+- كل تطبيق يحتاج `client id` مُدرَجاً في `GOOGLE_CLIENT_IDS` / `APPLE_CLIENT_IDS` على
+  السيرفر. توكن صادر لـ client id غير مُدرَج يُرفض بـ `401 AUTH_IDENTITY_INVALID`،
+  ومزوّد غير مُهيّأ أصلاً يُرجع `401 AUTH_PROVIDER_UNAVAILABLE`.
+- حساب بمزوّد ثانٍ (Apple بعد Google) **يُربط بنفس الحساب** إذا أكّد المزوّد أن البريد
+  للشخص نفسه وكان مطابقاً. إن كان غير مؤكَّد فالنتيجة `401 AUTH_IDENTITY_CONFLICT` —
+  وهذا مقصود: بدونه يستطيع من يملك حساب مزوّد بعنوان غير مؤكّد أن يستولي على الحساب.
+- حساب بلا بريد صالح من المزوّد ولا حساب قائم: `401 AUTH_IDENTITY_INCOMPLETE`.
+
+**ما ترده** (`200`):
 
 ```jsonc
 {
@@ -134,7 +167,7 @@ const api  = '$base/api/v1';
     "email": "ali@example.com",
     "status": "active",
     "roles": ["user"],
-    "emailVerified": false,           // لا يوجد endpoint لتأكيد البريد!
+    "emailVerified": true,            // يعكسه المزوّد — Google يؤكده دائماً
     "createdAt": "2026-10-02T21:20:18.664792Z",
     "profile": {
       "displayName": "Ali", "avatarKey": null,
@@ -161,22 +194,10 @@ const api  = '$base/api/v1';
 }
 ```
 
-> **انتبه:** `emailVerified` دائماً `false` ولا يوجد أي endpoint يغيّره. لا تبني شاشة
-> "تأكيد بريدك" ولا تمنع المستخدم بناءً عليه.
-
 > **انتبه:** `currentLevel` يبدأ `A1` تلقائياً. **لا يوجد placement test ولا أي endpoint
 > يغيّره.** لا تعرض للمستخدم "اختبار تحديد مستوى" — لا يوجد.
 
-### 5.3 الدخول — `POST /auth/login` `→ 200`
-
-نفس جسم الاستجابة (`user` + `tokens`). يقبل `device` أيضاً.
-
-```jsonc
-{ "email": "ali@example.com", "password": "...",
-  "device": { "platform": "ios", "pushToken": "ea1b2c3d4e5f6a7b" } }
-```
-
-### 5.4 التحديث — `POST /auth/refresh` `→ 200`
+### 5.3 التحديث — `POST /auth/refresh` `→ 200`
 
 **التوكن يتغير في كل مرة.** هذه ليست تجميلية — انظر 5.5.
 
@@ -186,7 +207,7 @@ const api  = '$base/api/v1';
 
 اختبرته: التوكن القديم يعطي `401 AUTH_REFRESH_REUSED` بعد الاستخدام.
 
-### 5.5 ⚠️ إعادة استخدام refresh = إبطال كل الجلسات
+### 5.4 ⚠️ إعادة استخدام refresh = إبطال كل الجلسات
 
 هذا أهم سلوك أمني في النظام، ويجب أن تستوعبه:
 
@@ -196,10 +217,10 @@ const api  = '$base/api/v1';
 3. السيرفر يعتبره سرقة → يُبطل **كل** جلسات المستخدم على كل أجهزته
 ```
 
-إن Geology `AUTH_REFRESH_REUSED` من تطبيقك **بسبب سباق، وليس هجوماً**، فأنت expelled
-المستخدم من كل أجهزته. لهذا السبب البنيت interlocks في 5.6.
+إن وصلتك `AUTH_REFRESH_REUSED` من تطبيقك **بسبب سباق، وليس هجوماً**، فأنت طردت
+المستخدم من كل أجهزته. لهذا السبب بُني النمط في 5.5.
 
-### 5.6 النمط الصحيح: `401` → refresh واحد فقط (single-flight)
+### 5.5 النمط الصحيح: `401` → refresh واحد فقط (single-flight)
 
 هذا أهم شيء تبنيه في طبقة الشبكة. بدونه سيحصل سباق عند إطلاق التطبيق.
 
@@ -226,9 +247,9 @@ class ApiClient {
 → طرد كل الجلسات. هذا أسوأ خطأ ممكن في تطبيق جوال.
 
 **نقطة واحدة أخيرة:** أرسل `device` مع طلب الـ refresh، وإلا ستنقطع `pushEnabled` عن
-الجهاز. السيرفر يجدّد `lastSeenAt` في `register` و `login` و `refresh`.
+الجهاز. السيرفر يجدّد `lastSeenAt` في كل عملية دخول وفي `refresh`.
 
-### 5.7 الخروج
+### 5.6 الخروج
 
 ```jsonc
 // طلب
@@ -240,22 +261,19 @@ class ApiClient {
 `allDevices: true` يخرج كل أجهزة المستخدم. بعد الخروج، أي refresh يعطي
 `401 AUTH_REFRESH_REUSED` (ليس `AUTH_TOKEN_REVOKED` — انتبه للكود).
 
-### 5.8 نسيت كلمة المرور
+### 5.7 إغلاق الحساب — `DELETE /me` `→ 204`
 
-`POST /auth/forgot-password` يرجع **`200` دائماً** بنفس الرسالة، سواء الحساب موجود أم لا:
-
-```jsonc
-{ "email": "ali@example.com" }
-// 200: { "detail": "If that address has an account, a reset link is on its way." }
+```http
+DELETE /api/v1/me
+Authorization: Bearer <accessToken>
 ```
 
-هذا مقصود لمنع كشف الحسابات المسجلة. **لا تعرض رسالة "لا يوجد حساب بهذا البريد"** حتى لو
-كانت مريحة — هي تسريب معلومات.
+`204` بلا جسم. يُغلق الحساب فوراً ويُبطل كل سلاسل الـ refresh، فيصبح أي `refresh` بعدها
+`401`. الـ `accessToken` الحالي يبقى صالحاً حتى انتهائه (15 دقيقة) لكنه يشير إلى حساب
+مغلق، فترفضه كل المسارات المحمية بـ `401 USER_DELETED` — امسح التوكنات محلياً فوراً.
 
-⚠️ **لكن:** لا يوجد endpoint يرسل بريداً فعلياً ولا لإتمام الاستعادة. جرّب
-`POST /auth/reset-password` بـ token وهمي وستحصل على `401 AUTH_TOKEN_INVALID`. جهّز شاشة
-"نسيت كلمة المرور" لكن أخبرني: **إرسال رسالةogging والبريد غير مفعّل بعد**، فالمستخدم لن
-يستلم شيئاً.
+الطلب الثاني لنفس الحساب يرجع `204` أيضاً: العملية idempotent، فإعادة المحاولة بعد
+انقطاع الشبكة لا تفشل. **لا يوجد تأكيد عبر البريد ولا مهلة سماح.**
 
 ---
 
@@ -266,11 +284,11 @@ class ApiClient {
 ```jsonc
 {
   "error": {
-    "code": "AUTH_INVALID_CREDENTIALS",     // تفرّع عليه، لا على message
-    "message": "Email or password is incorrect.",
+    "code": "AUTH_IDENTITY_INVALID",       // تفرّع عليه، لا على message
+    "message": "That sign-in could not be verified. Please try again.",
     "details": {                            // اختياري
       "fields": [
-        { "field": "password", "issue": "...", "type": "..." }
+        { "field": "idToken", "issue": "...", "type": "..." }
       ]
     },
     "requestId": "01d7605b12b64d11a7c68a28320587fe"
@@ -288,13 +306,14 @@ class ApiClient {
 
 | `code` | HTTP | ماذا يعني | ماذا تفعل |
 | --- | --- | --- | --- |
-| `AUTH_INVALID_CREDENTIALS` | 401 | بريد أو كلمة مرور خطأ | "بيانات الدخول غير صحيحة" — **لا** تميّز أيهما |
-| `AUTH_ACCOUNT_EXISTS` | 409 | البريد مسجّل | "سجّل الدخول بدل التسجيل" |
-| `AUTH_ACCOUNT_LOCKED` | 403 | الحساب مقفل | اعرض رسالة "تواصل معنا" |
-| `AUTH_ACCOUNT_DISABLED` | 403 | معطّل | اعرض رسالة "تواصل معنا" |
-| `AUTH_WEAK_PASSWORD` | 422 | كلمة المرور قصيرة/ضعيفة | `details.fields` يحدد أي قاعدة |
-| `AUTH_TOKEN_INVALID` | 401 | التوكن تالف | شغّل 5.6 |
-| `AUTH_TOKEN_EXPIRED` | 401 | انتهت صلاحية الـ access | شغّل 5.6 |
+| `AUTH_IDENTITY_INVALID` | 401 | التوكن لم يُتحقق منه (توقيع/audience/issuer/صلاحية) | أعد المحاولة عبر SDK المزوّد، ثم "تعذّر الدخول" |
+| `AUTH_PROVIDER_UNAVAILABLE` | 401 | المزوّد غير مُهيّأ على السيرفر | أخفِ زر هذا المزوّد — أعلم الفريق الخلفي |
+| `AUTH_IDENTITY_CONFLICT` | 401 | بريد موجود لكن المزوّد لم يؤكّده | "سجّل الدخول بالطريقة التي استخدمتها سابقاً" |
+| `AUTH_IDENTITY_INCOMPLETE` | 401 | المزوّد لم يشارك بريداً صالحاً | اطلب من المستخدم حساباً آخر |
+| `AUTH_ACCOUNT_DISABLED` | 403 | الحساب معلّق | اعرض رسالة "تواصل معنا" |
+| `USER_DELETED` | 401 | الحساب مُغلق | امسح التوكنات محلياً واخرج |
+| `AUTH_TOKEN_INVALID` | 401 | التوكن تالف | شغّل 5.5 |
+| `AUTH_TOKEN_EXPIRED` | 401 | انتهت صلاحية الـ access | شغّل 5.5 |
 | `AUTH_REFRESH_INVALID` | 401 | refresh غير صالح | اخرج من الحساب |
 | `AUTH_REFRESH_REUSED` | 401 | إعادة استخدام — **كل الجلسات أُبطلت** | اخرج فوراً، لا تحاول مرة أخرى |
 | `AUTH_FORBIDDEN` | 403 | لا صلاحية | لا تعرض المحتوى |
@@ -567,7 +586,7 @@ Bearer. `204` (بلا جسم).
 
 ### طبقة الشبكة
 - [ ] `ApiClient` مع base URL و`Authorization` تلقائي
-- [ ] single-flight refresh (§5.6) — **الأهم**
+- [ ] single-flight refresh (§5.5) — **الأهم**
 - [ ] `X-Request-ID` في كل log
 - [ ] `cursor` يُحذف عند null (§7.2)
 - [ ] GZip شفاف
@@ -585,8 +604,8 @@ Bearer. `204` (بلا جسم).
 - [ ] `GET /me` عند الإقلاع
 
 ### الشاشات
-- [ ] تسجيل / دخول مع عرض `details.fields` عند 422
-- [ ] نسيت كلمة المرور (مع التحذير §5.8)
+- [ ] دخول بـ Google و Apple، مع عرض `details.fields` عند 422
+- [ ] إنشاء الحساب تلقائياً عند أول دخول (لا شاشة تسجيل منفصلة)
 - [ ] تصفح: مستويات → وحدات → دروس
 - [ ] درس بأسئلة قابلة للعرض (بدون تصحيح)
 - [ ] الملف الشخصي (بدون حقل المستوى)
@@ -594,8 +613,8 @@ Bearer. `204` (بلا جسم).
 
 ### مطلوب قرار قبل البناء
 - [ ] **تصحيح الأسئلة + حفظ التقدم** — يحتاج backend (quiz + progress)
-- [ ] **تأكيد البريد** — غير موجود
-- [ ] **إرسال بريد استعادة كلمة المرور** — غير مفعّل
+- [ ] **apple client id** — iOS فلازم `APPLE_CLIENT_IDS` مضبوط على السيرفر قبل إطلاق الشاشة
+- [ ] **إغلاق الحساب** — موجود (`DELETE /me`) لكن بدون مهلة سماح ولا تأكيد
 - [ ] **placement test** — غير موجود، المستوى يبدأ `A1`
 
 ---
@@ -605,15 +624,16 @@ Bearer. `204` (بلا جسم).
 | العَرَض | السبب |
 | --- | --- |
 | `422` على أول صفحة | ترسل `cursor=` فارغاً — احذفه (§7.2) |
-| `AUTH_REFRESH_REUSED` بلا سبب | سباق refresh — أضف single-flight (§5.6) |
-| طرد المستخدم من كل الأجهزة | السبب نفسه: سباق refresh (§5.6) |
+| `AUTH_REFRESH_REUSED` بلا سبب | سباق refresh — أضف single-flight (§5.5) |
+| طرد المستخدم من كل الأجهزة | السبب نفسه: سباق refresh (§5.5) |
 | لا يعمل الكاش في webview | `ETag` غير-exposed (§7.7) |
 | `422` عند تعديل الملف | ترسل `currentLevel` (§7.1) |
 | `401` متكرر بعد 15 دقيقة | لا يوجد refresh تلقائي |
-| `429` عند الدخول | الحد 10/دقيقة — عادي، لا تعِد فوراً |
+| `429` عند الدخول | الحد 10/دقيقة لكل IP — عادي، لا تعِد فوراً |
 | ضاع `limit` بعد تحويل 307 | عميلك لا يرسل query عند التحويل (§7.4) |
 | شكل الخطأ لا يطابق OpenAPI | كان `422` يُنشر بشكل خاطئ — أُصلح (§6)، و`openapi.json` الآن مطابق لما يُرسَل فعلاً |
-| شاشة "لا يوجد حساب" بعد نسيت كلمة المرور | **لا تفعل هذا** — تسريب معلومات (§5.8) |
+| `AUTH_IDENTITY_CONFLICT` بعد دخول بمزوّد ثانٍ | المزوّد لم يؤكّد البريد — استخدم المزوّد الأصلي، أو اطلب من المستخدم تأكيد البريد ثم أعد المحاولة |
+| تصميم شاشة "تسجيل" منفصلة | لا معنى لها: أول دخول بـ Google/Apple هو التسجيل (§5.2) |
 
 ---
 
@@ -623,7 +643,7 @@ Bearer. `204` (بلا جسم).
 
 1. **البيئات** — عنوان staging و production، هل HTTPS مُفعّل، وما هو `CORS_ORIGINS` المطلوب
    لو كان هناك webview.
-2. **مثال `device`** — كيف تحصل على FCM token، وهل هو متاح قبل `register`؟
+2. **مثال `device`** — كيف تحصل على FCM token، وهل هو متاح قبل أول دخول؟
 3. **قرار quiz** — هل نضيف `POST /api/v1/quiz/sessions` مع حفظ المحاولات؟ هذا ما يحرر
    أكبر شاشة في التطبيق.
 4. **قرار التصحيح** — نضيف مفتاح الإجابة (يتطلب تسجيل دخول) أم نبقي بدونه؟

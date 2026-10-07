@@ -18,7 +18,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 from sqlalchemy.orm import configure_mappers
 
 from app.api.deps import get_cache
-from app.api.v1.router import api_router
+from app.api.v1.router import api_router, dev_login_router
 from app.api.v1.routes.health import router as health_router
 from app.core.config import Settings, get_settings
 from app.core.database import dispose_engine
@@ -155,6 +155,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         prefix=app_settings.api_v1_prefix,
         responses=ERROR_RESPONSES,
     )
+    # The development sign-in is mounted here rather than on ``api_router`` because
+    # the flag is read from this app's own settings: a production app object must not
+    # contain the route at all, and ``validate_environment`` has already refused to
+    # boot such a process with the flag set (see ``Settings.dev_login_enabled``).
+    if app_settings.dev_login_enabled:
+        app.include_router(
+            dev_login_router,
+            prefix=app_settings.api_v1_prefix,
+            responses=ERROR_RESPONSES,
+        )
 
     @app.get("/", include_in_schema=False)
     async def root() -> dict[str, str]:

@@ -1,14 +1,15 @@
 """Users module — SQLAlchemy models.
 
-Five tables, split along the axes that change for different reasons:
+Six tables, split along the axes that change for different reasons:
 
-- ``users`` — credentials and account lifecycle. Changes rarely; the most sensitive.
+- ``users`` — account lifecycle. Changes rarely; the most sensitive.
+- ``user_identities`` — the Google/Apple accounts linked to a learner. Append-mostly.
 - ``user_profiles`` — learning identity and calendar preferences. Changes often.
 - ``user_settings`` — behaviour switches. Changes often, and is per-device-ish later.
 - ``refresh_tokens`` — appended on every rotation. Never updated except to revoke.
 - ``user_devices`` — one row per install, used for push and per-device revocation.
 
-Splitting them means a profile edit never contends with a login, and a token table
+Splitting them means a profile edit never contends with a sign-in, and a token table
 that grows without bound never bloats a row the app reads on every request.
 """
 
@@ -20,11 +21,11 @@ from typing import Any
 
 from sqlalchemy import (
     JSON,
+    Boolean,
     CheckConstraint,
     DateTime,
     ForeignKey,
     Index,
-    Integer,
     SmallInteger,
     String,
     UniqueConstraint,
@@ -42,12 +43,10 @@ class UserModel(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     #: normalised value is what makes "duplicate email" impossible rather than
     #: merely unlikely.
     email: Mapped[str] = mapped_column(String(254), nullable=False, unique=True, index=True)
-    password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default=UserStatus.ACTIVE.value)
     roles: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=lambda: ["user"])
 
     email_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    password_changed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     #: When a soft delete happened. Null means the account was never closed, which is the
     #: only distinction that matters -- ``status`` already says whether it is closed *now*.
@@ -55,9 +54,6 @@ class UserModel(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     #: export and retention jobs need answered, and overwriting ``updated_at`` on every
     #: subsequent write would destroy the answer.
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
-
-    failed_login_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     profile: Mapped[UserProfileModel | None] = relationship(
         back_populates="user", cascade="all, delete-orphan", uselist=False, lazy="joined"
@@ -71,7 +67,39 @@ class UserModel(Base, UUIDPrimaryKeyMixin, TimestampMixin):
             "status IN ('active', 'pending_verification', 'suspended', 'deleted')",
             name="valid_status",
         ),
-        CheckConstraint("failed_login_attempts >= 0", name="non_negative_attempts"),
+    )
+
+
+class UserIdentityModel(Base, UUIDPrimaryKeyMixin, TimestampMixin):
+    """One sign-in account at a provider, linked to a learner.
+
+    A learner may hold more than one — a Google identity and an Apple identity for the
+    same person — so the ``(provider, subject)`` pair is the unique key rather than a
+    single row per account. ``subject`` is the provider's stable, opaque user id
+    (``sub``); an email is recorded for support but is deliberately not a key, because
+    it can change and it is not unique across providers.
+    """
+
+    __tablename__ = "user_identities"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    provider: Mapped[str] = mapped_column(String(20), nullable=False)
+    subject: Mapped[str] = mapped_column(String(255), nullable=False)
+    email: Mapped[str | None] = mapped_column(String(254))
+    email_verified: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    display_name: Mapped[str | None] = mapped_column(String(120))
+    picture_url: Mapped[str | None] = mapped_column(String(512))
+    last_login_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    #: Ordering metadata only — see the note on :attr:`RefreshTokenModel.user`.
+    user: Mapped[UserModel] = relationship(lazy="raise_on_sql")
+
+    __table_args__ = (
+        UniqueConstraint("provider", "subject", name="uq_identity_provider_subject"),
+        Index("ix_identity_user", "user_id"),
+        CheckConstraint("provider IN ('google', 'apple')", name="valid_provider"),
     )
 
 
@@ -194,71 +222,4 @@ class UserDeviceModel(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     __table_args__ = (
         Index("ix_device_user_active", "user_id", "revoked_at"),
         UniqueConstraint("user_id", "push_token", name="uq_device_user_push_token"),
-    )
-
-
-class PasswordResetTokenModel(Base, UUIDPrimaryKeyMixin, TimestampMixin):
-    """Single-use password-reset tokens.
-
-    A sixth table beyond the plan's five. Reset tokens deliberately do **not** share
-    the ``refresh_tokens`` table: the two have opposite lifecycles (reset is
-    single-use and short-lived, refresh is rotated and long-lived), and mixing them
-    makes "revoke all sessions on password change" ambiguous at exactly the moment it
-    matters most.
-
-    Only the SHA-256 of the opaque token is stored, so a database leak yields no
-    usable reset links.
-    """
-
-    __tablename__ = "password_reset_tokens"
-
-    user_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE"), nullable=False
-    )
-    token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
-    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    #: Recorded so a support agent can tell whether a learner reported "the link did
-    #: nothing" because it was already used or because it expired.
-    requested_ip: Mapped[str | None] = mapped_column(String(64))
-
-    #: See the note on :attr:`RefreshTokenModel.user` — ordering metadata only.
-    user: Mapped[UserModel] = relationship(lazy="raise_on_sql")
-
-    __table_args__ = (
-        Index("ix_password_reset_user", "user_id", "used_at"),
-        Index("ix_password_reset_expires", "expires_at"),
-    )
-
-
-class EmailVerificationTokenModel(Base, UUIDPrimaryKeyMixin, TimestampMixin):
-    """Single-use email-verification tokens.
-
-    A separate table from :class:`PasswordResetTokenModel` even though the two rows look
-    alike, because they answer different questions and are consumed by different code
-    paths. Sharing one table would mean a "revoke outstanding resets" call could silently
-    invalidate a verification link (or the reverse), and the two have genuinely different
-    lifetimes: a verification link is worth days because the learner may not open their
-    email for a while, a reset link is worth an hour because the alternative is being
-    locked out.
-
-    Only the SHA-256 digest is stored, so a database leak yields no usable links.
-    """
-
-    __tablename__ = "email_verification_tokens"
-
-    user_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE"), nullable=False
-    )
-    token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
-    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    requested_ip: Mapped[str | None] = mapped_column(String(64))
-
-    #: Ordering metadata only — see the note on :attr:`RefreshTokenModel.user`.
-    user: Mapped[UserModel] = relationship(lazy="raise_on_sql")
-
-    __table_args__ = (
-        Index("ix_email_verification_user", "user_id", "used_at"),
-        Index("ix_email_verification_expires", "expires_at"),
     )
