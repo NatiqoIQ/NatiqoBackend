@@ -22,10 +22,15 @@ jobs:
     runs-on: [self-hosted, linux, x64, natiqo]
     steps:
       - name: Pull latest code
+        env:
+          PAT: ${{ secrets.GH_PAT }}
         run: |
           cd /home/dev/natiqo
-          git fetch origin main
+          if [ ! -d .git ]; then git init -q; fi
+          git remote set-url origin "https://x-access-token:${PAT}@github.com/qutaibatalal/Natiqo.git"
+          git fetch --prune origin main
           git reset --hard origin/main
+          git remote set-url origin https://github.com/qutaibatalal/Natiqo.git
 
       - name: Deploy with Docker Compose
         working-directory: /home/dev/natiqo
