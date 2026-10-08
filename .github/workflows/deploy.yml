@@ -1,0 +1,46 @@
+# Deploys Natiqo to the LAN production server (192.168.69.67) via a
+# self-hosted GitHub Actions runner installed on that server. The runner runs
+# every step locally, so the private 192.168.69.67 address is reachable.
+#
+# Deploy directory on the server: /home/dev/natiqo (a git repo whose working
+# tree is `reset --hard` to origin/main). The production .env lives there as an
+# untracked file and survives every deploy.
+
+name: Deploy to production
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-prod
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: [self-hosted, linux, x64, natiqo]
+    steps:
+      - name: Pull latest code
+        run: |
+          cd /home/dev/natiqo
+          git fetch origin main
+          git reset --hard origin/main
+
+      - name: Deploy with Docker Compose
+        working-directory: /home/dev/natiqo
+        run: |
+          docker compose up -d --build
+          docker compose ps
+
+      - name: Verify health
+        run: |
+          for i in $(seq 1 20); do
+            if curl -fsS http://127.0.0.1:8000/health; then
+              echo "natiqo-api is healthy"
+              exit 0
+            fi
+            sleep 3
+          done
+          echo "natiqo-api did not become healthy after deploy" >&2
+          exit 1
