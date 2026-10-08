@@ -38,7 +38,7 @@ class CheckResult:
 class HealthReport:
     status: HealthStatus
     checks: list[CheckResult] = field(default_factory=list)
-    version: str = "0.1.0"
+    version: str = "0.1.1"
     environment: str = "development"
     checked_at: str = ""
 
