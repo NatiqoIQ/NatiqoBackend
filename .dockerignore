@@ -1,0 +1,32 @@
+# VCS / IDE
+.git
+.github
+.idea
+.vscode
+
+# Python artefacts
+.venv
+venv
+__pycache__
+*.py[cod]
+*.egg-info
+.pytest_cache
+.ruff_cache
+.mypy_cache
+htmlcov
+.coverage
+
+# Local state — never ship a dev database, dev secrets or uploaded media
+.env
+.env.*
+!.env.production.example
+local.db
+*.db
+media_local
+.freebuff
+
+# Not part of the runtime image
+tests
+postman
+docs
+scripts/__pycache__

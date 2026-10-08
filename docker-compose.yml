@@ -1,0 +1,57 @@
+# ------------------------------------------------------------------------------
+# Natiqo backend — production stack.
+#
+#   cp .env.production.example .env    # then edit secrets
+#   docker compose up -d --build
+#
+# Postgres and Redis are internal-only: neither publishes a port, so the only
+# reachable surface is the API on :8000.
+# ------------------------------------------------------------------------------
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-natiqo}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is not set — copy .env.production.example to .env}
+      POSTGRES_DB: ${POSTGRES_DB:-natiqo}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-natiqo} -d $${POSTGRES_DB:-natiqo}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+
+  app:
+    build: .
+    restart: unless-stopped
+    env_file:
+      - .env
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    volumes:
+      # Named volume, not a bind mount: it inherits the image directory's
+      # ownership (uid 10001) on first use, so the non-root app user can write.
+      - media_data:/app/media_local
+
+volumes:
+  pgdata:
+  media_data:

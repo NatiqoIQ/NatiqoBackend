@@ -45,6 +45,9 @@ class Settings(BaseSettings):
     host: str = "0.0.0.0"  # noqa: S104 - container/VM binding, overridden by reverse proxy
     port: int = 8000
     root_path: str = ""
+    # Expose the interactive API docs even in production. Defaults to False: in
+    # production /docs and /openapi.json stay hidden unless this is set.
+    docs_enabled: bool = False
 
     # ----------------------------------------------------------- database
     postgres_host: str = "127.0.0.1"
