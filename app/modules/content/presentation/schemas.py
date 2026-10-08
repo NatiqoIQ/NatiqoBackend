@@ -86,6 +86,19 @@ class LessonDetailResponse(LessonSummaryResponse):
     questions: list[QuestionResponse] = Field(default_factory=list)
 
 
+class QuestionExplanationResponse(_CatalogueWire):
+    """Why that answer is the answer — served only by the feedback endpoint.
+
+    ``explanation`` is the answer key in prose, so it is listed *here*, on a schema that
+    is only reachable after a learner has answered, and deliberately nowhere near
+    :class:`QuestionResponse`. Keeping them apart is the same omission-by-design as the
+    ``correct_index`` handling above, just at the route level.
+    """
+
+    id: uuid.UUID
+    explanation: str
+
+
 LevelsPage = Page[LevelResponse]
 UnitsPage = Page[UnitResponse]
 LessonsPage = Page[LessonSummaryResponse]
@@ -96,6 +109,7 @@ __all__ = [
     "LessonsPage",
     "LevelResponse",
     "LevelsPage",
+    "QuestionExplanationResponse",
     "QuestionResponse",
     "UnitResponse",
     "UnitsPage",

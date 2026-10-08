@@ -98,6 +98,7 @@ def _multiple_choice(**overrides: Any) -> dict[str, Any]:
         "prompt": "Which one means 'hello'?",
         "choices": ("Hello", "Goodbye", "Thank you"),
         "correct_index": 0,
+        "explanation": "A greeting.",
     }
     payload.update(overrides)
     return payload
@@ -227,6 +228,24 @@ class TestQuestionShape:
 
         assert question.kind is QuestionKind.MULTIPLE_CHOICE
         assert question.correct_index == 0
+
+    def test_a_question_carries_its_explanation(self) -> None:
+        """The explanation is part of the aggregate, not a field the seed layer happens
+        to fill in — the feedback surface is built from it."""
+        question = Question(**_multiple_choice(explanation="Bye is the farewell."))
+
+        assert question.explanation == "Bye is the farewell."
+
+    def test_a_question_must_carry_an_explanation(self) -> None:
+        """The product rule is one support aid (audio/image/explanation) per question;
+        only the written one exists yet, so it is required. Without it a learner would
+        answer and get no feedback."""
+        with pytest.raises(ValueError, match="explanation"):
+            Question(**_multiple_choice(explanation=""))
+
+    def test_a_blank_explanation_is_refused(self) -> None:
+        with pytest.raises(ValueError, match="explanation"):
+            Question(**_multiple_choice(explanation="   "))
 
     def test_multiple_choice_needs_at_least_two_choices(self) -> None:
         with pytest.raises(ValueError, match="at least 2"):

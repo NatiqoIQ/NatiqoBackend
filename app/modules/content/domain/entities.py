@@ -149,7 +149,7 @@ class Question:
     choices: tuple[str, ...] = ()
     accepted_answers: tuple[str, ...] = ()
     correct_index: int | None = None
-    explanation: str | None = None
+    explanation: str = ""
     points: int = 1
 
     def __post_init__(self) -> None:
@@ -171,6 +171,7 @@ class Question:
             choices=self.choices,
             accepted_answers=self.accepted_answers,
             correct_index=self.correct_index,
+            explanation=self.explanation,
         )
         if problems:
             raise ValueError(" ".join(problems))

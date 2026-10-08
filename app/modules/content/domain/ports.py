@@ -86,3 +86,12 @@ class QuestionRepositoryPort(Protocol):
         are published.
         """
         ...
+
+    async def get_published(self, question_id: ContentId) -> Question | None:
+        """One question, only when its lesson is published.
+
+        A question inherits its lesson's visibility, so this method carries the state
+        predicate itself — unlike :meth:`list_for_lessons` — because there is no
+        caller-side "I already checked the lesson" step on this code path.
+        """
+        ...

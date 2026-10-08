@@ -215,11 +215,13 @@ Client-facing documentation:
 | `GET` | `/api/v1/content/levels/{level_code}/units` | — | Published units of one level. Cacheable |
 | `GET` | `/api/v1/content/units/{unit_id}/lessons` | — | Published lessons of one unit. Cacheable |
 | `GET` | `/api/v1/content/lessons/{lesson_id}` | — | A lesson and its questions, with **no answer key**. Cacheable |
+| `GET` | `/api/v1/content/questions/{question_id}/explanation` | — | A single question's rationale, asked for after the learner has answered. Cacheable |
 
-The four catalogue routes are deliberately unauthenticated: an app shell has to be able to
+The five catalogue routes are deliberately unauthenticated: an app shell has to be able to
 show that a beginner course exists before anyone signs in. That is safe only because the
 question schema withholds `correct_index`, `accepted_answers` and `explanation` — the
-practisable question is readable before an attempt, the graded feedback only after one.
+practisable question is readable before an attempt, and the graded feedback, served only
+by the standalone explanation route, after one.
 
 Populate them with `uv run python -m scripts.seed_content --yes` (see `scripts/`).
 

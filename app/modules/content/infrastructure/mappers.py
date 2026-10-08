@@ -66,6 +66,6 @@ def to_question(model: QuestionModel) -> Question:
         choices=tuple(model.choices or ()),
         accepted_answers=tuple(model.accepted_answers or ()),
         correct_index=model.correct_index,
-        explanation=model.explanation,
+        explanation=model.explanation or "",
         points=model.points,
     )

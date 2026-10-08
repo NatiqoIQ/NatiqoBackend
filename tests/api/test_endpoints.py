@@ -89,6 +89,7 @@ PUBLISHED_OPERATIONS: set[tuple[str, str]] = {
     ("GET", "/api/v1/content/levels/{level_code}/units"),
     ("GET", "/api/v1/content/units/{unit_id}/lessons"),
     ("GET", "/api/v1/content/lessons/{lesson_id}"),
+    ("GET", "/api/v1/content/questions/{question_id}/explanation"),
 }
 
 
@@ -1440,6 +1441,100 @@ async def test_the_catalogue_budget_is_enforced_per_client(
     assert blocked.status_code == 429
     assert blocked.headers["retry-after"], "a client must be told when to come back"
     assert error_code(blocked) == "RATE_LIMITED"
+
+
+# ----------------------------------------------------------------- questions / explanation
+async def test_the_feedback_endpoint_reveals_the_rationale(
+    client: AsyncClient, content_db: AsyncSession
+) -> None:
+    """After a learner has answered, the client asks the dedicated endpoint for the
+    explanation — the one surface in the catalogue allowed to say why."""
+    ids = await seed_catalogue(content_db)
+    lesson = await content_db.get(LessonModel, ids["A1-lesson-1"])
+    assert lesson is not None
+    question = (
+        await content_db.scalars(select(QuestionModel).where(QuestionModel.lesson_id == lesson.id))
+    ).one()
+
+    response = await client.get(f"/api/v1/content/questions/{question.id}/explanation")
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {"id": str(question.id), "explanation": "A greeting."}
+
+
+async def test_the_feedback_endpoint_hides_a_question_under_a_draft_lesson(
+    client: AsyncClient, content_db: AsyncSession
+) -> None:
+    ids = await seed_catalogue(content_db)
+    draft = LessonModel(
+        id=uuid.uuid4(),
+        unit_id=ids["A1-unit"],
+        title="Draft",
+        summary="Not ready.",
+        position=98,
+        estimated_minutes=5,
+        state=ContentState.REVIEW.value,
+    )
+    question = QuestionModel(
+        id=uuid.uuid4(),
+        lesson_id=draft.id,
+        position=1,
+        kind=QuestionKind.MULTIPLE_CHOICE.value,
+        skill=SkillKind.VOCABULARY.value,
+        prompt="Which one means 'hello'?",
+        choices=["Hello", "Goodbye"],
+        accepted_answers=[],
+        correct_index=0,
+        explanation="A greeting.",
+        points=1,
+    )
+    content_db.add_all([draft, question])
+    await content_db.commit()
+
+    response = await client.get(f"/api/v1/content/questions/{question.id}/explanation")
+
+    assert response.status_code == 404
+    assert error_code(response) == "QUESTION_NOT_FOUND"
+
+
+async def test_the_feedback_endpoint_and_an_invented_question_are_indistinguishable(
+    client: AsyncClient, content_db: AsyncSession
+) -> None:
+    ids = await seed_catalogue(content_db)
+    draft = LessonModel(
+        id=uuid.uuid4(),
+        unit_id=ids["A1-unit"],
+        title="Draft",
+        summary="Not ready.",
+        position=99,
+        estimated_minutes=5,
+        state=ContentState.REVIEW.value,
+    )
+    question = QuestionModel(
+        id=uuid.uuid4(),
+        lesson_id=draft.id,
+        position=1,
+        kind=QuestionKind.MULTIPLE_CHOICE.value,
+        skill=SkillKind.VOCABULARY.value,
+        prompt="Which one means 'hello'?",
+        choices=["Hello", "Goodbye"],
+        accepted_answers=[],
+        correct_index=0,
+        explanation="A greeting.",
+        points=1,
+    )
+    content_db.add_all([draft, question])
+    await content_db.commit()
+
+    unpublished = await client.get(f"/api/v1/content/questions/{question.id}/explanation")
+    invented = await client.get(f"/api/v1/content/questions/{uuid.uuid4()}/explanation")
+
+    assert unpublished.status_code == invented.status_code == 404
+    assert (
+        unpublished.json()["error"]["code"]
+        == invented.json()["error"]["code"]
+        == "QUESTION_NOT_FOUND"
+    )
 
 
 # ==================================================================================== CORS

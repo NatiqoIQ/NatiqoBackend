@@ -66,6 +66,7 @@ def question_shape_problems(
     choices: Sequence[str],
     accepted_answers: Sequence[str],
     correct_index: int | None,
+    explanation: str | None,
 ) -> tuple[str, ...]:
     """Every reason this question could not be answered, in report order.
 
@@ -73,6 +74,16 @@ def question_shape_problems(
     every field that needs fixing in one pass.
     """
     problems: list[str] = []
+
+    # The product rule is "one of {audio, image, explanation} must come with every
+    # question". Audio and image aids are not implemented yet, so the only one that
+    # exists is the explanation — which currently makes it mandatory. When a second
+    # aid lands, this becomes "at least one of the three is set", not a deletion.
+    if not explanation or not explanation.strip():
+        problems.append(
+            "A question must carry an explanation; the audio and image aids are not "
+            "implemented yet."
+        )
 
     if kind is QuestionKind.MULTIPLE_CHOICE:
         if not MIN_CHOICES <= len(choices) <= MAX_CHOICES:

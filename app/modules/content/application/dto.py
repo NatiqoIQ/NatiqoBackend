@@ -73,10 +73,25 @@ class LessonDetailView(LessonSummaryView):
     questions: tuple[QuestionView, ...] = ()
 
 
+@dataclass(frozen=True, slots=True)
+class QuestionExplanationView:
+    """The rationale behind a question's answer.
+
+    Served only by the dedicated feedback endpoint, never inside a lesson payload:
+    this is the answer key made human-readable, so it must not travel with the public
+    catalogue. There is no attempt engine yet, so the *client* is the one that asks for
+    it after the learner has answered.
+    """
+
+    id: uuid.UUID
+    explanation: str
+
+
 __all__ = [
     "LessonDetailView",
     "LessonSummaryView",
     "LevelView",
+    "QuestionExplanationView",
     "QuestionView",
     "UnitView",
 ]

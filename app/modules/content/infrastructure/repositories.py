@@ -172,3 +172,21 @@ class SqlAlchemyQuestionRepository:
         )
         models = (await self._session.execute(stmt)).scalars().all()
         return [to_question(model) for model in models]
+
+    async def get_published(self, question_id: ContentId) -> Question | None:
+        """One question, and only when its lesson is published.
+
+        The join carries the state predicate, so a question under a draft lesson is as
+        invisible as one that was never created — matching the "not published" and
+        "does not exist" collapse every other repository method already guarantees.
+        """
+        stmt = (
+            select(QuestionModel)
+            .join(LessonModel, LessonModel.id == QuestionModel.lesson_id)
+            .where(
+                QuestionModel.id == question_id,
+                LessonModel.state == ContentState.PUBLISHED.value,
+            )
+        )
+        model = (await self._session.execute(stmt)).scalar_one_or_none()
+        return to_question(model) if model is not None else None

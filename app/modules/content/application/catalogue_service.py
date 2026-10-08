@@ -1,8 +1,9 @@
 """Read-only use cases for the public catalogue.
 
-Four entry points, one per screen: browse levels, browse a level's units, browse a
-unit's lessons, open a lesson. Each one applies the same two rules, so they are written
-as one rule applied four times rather than four separate rules:
+Five entry points: browse levels, browse a level's units, browse a unit's lessons, open
+a lesson, and read a question's post-attempt explanation. Each one applies the same two
+rules, so they are written as one rule applied five times rather than five separate
+rules:
 
 **Only published content is visible.** The repositories already filter on state and this
 layer never asks for anything else, so a draft cannot reach a learner. When something is
@@ -37,6 +38,7 @@ from app.modules.content.application.dto import (
     LessonDetailView,
     LessonSummaryView,
     LevelView,
+    QuestionExplanationView,
     QuestionView,
     UnitView,
 )
@@ -168,6 +170,21 @@ class CatalogueService:
             question_count=len(questions),
             questions=tuple(_question_view(question) for question in questions),
         )
+
+    async def get_question_explanation(self, question_id: uuid.UUID) -> QuestionExplanationView:
+        """The rationale behind one question — the single support aid a learner gets.
+
+        Unlike :meth:`get_lesson`, this deliberately *does* return the explanation. It
+        is the one surface that reveals an answer, so it is a separate endpoint rather
+        than a field nobody asked for on the lesson payload: the lesson stays safe
+        until the client decides the learner has answered and asks here.
+        """
+        question = await self._uow.questions.get_published(ContentId(question_id))
+        if question is None:
+            raise NotFoundError(
+                "There is no published question with that id.", code=ErrorCode.QUESTION_NOT_FOUND
+            )
+        return QuestionExplanationView(id=question.id, explanation=question.explanation)
 
 
 # ------------------------------------------------------------------- internals

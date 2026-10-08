@@ -1,6 +1,6 @@
 """Public catalogue routes.
 
-Four GET endpoints, mounted under ``/api/v1/content`` and **deliberately unauthenticated**.
+Five GET endpoints, mounted under ``/api/v1/content`` and **deliberately unauthenticated**.
 Browsing a published curriculum is not account data: an app shell has to be able to show
 "there is a beginner course" before anyone has signed in, and gating it would mean an
 authenticated empty screen instead.
@@ -11,10 +11,19 @@ serves ``LessonDetailResponse``, whose ``QuestionResponse`` carries no answer ke
 questions are readable *before* an attempt — the point of a practice catalogue — and
 unreadable *after* one without going through the attempt engine.
 
-Unpublished content does not exist here. The repositories filter on ``published``, so a
-draft level, a draft unit and an id that was never issued all produce the same 404.
+The fifth endpoint is the exception that proves the rule: ``GET .../questions/{id}/explanation``
+**does** return an explanation. That is intentional — every question ships with one, and
+a learner needs it after answering — so it lives on its own route, fetched by the client
+only once the attempt is over, instead of becoming a field on a payload that travels
+before the attempt. There is no attempt engine yet, so this server cannot *enforce* that
+ordering; it keeps the two surfaces apart and lets the client sequence them. Serving it
+in the lesson payload instead would hand every caller the answer key to a public test.
 
-All four are ``@cacheable`` and rate-limited, which are the two halves of the same
+Unpublished content does not exist here. The repositories filter on ``published``, so a
+draft level, a draft unit, a question under a draft lesson and an id that was never
+issued all produce the same 404.
+
+All five are ``@cacheable`` and rate-limited, which are the two halves of the same
 decision. They carry no user data and change only when an editor publishes, so a phone
 may reuse them; they are also unauthenticated, so nothing but a budget stops one client
 from walking the whole catalogue in a loop. ``stale_while_revalidate`` is set generously
@@ -35,6 +44,7 @@ from app.modules.content.presentation.schemas import (
     LessonDetailResponse,
     LessonSummaryResponse,
     LevelResponse,
+    QuestionExplanationResponse,
     UnitResponse,
 )
 
@@ -126,6 +136,28 @@ async def get_lesson(
     """A lesson and its questions, ready to attempt — and nothing else about them."""
     detail = await service.get_lesson(lesson_id)
     return LessonDetailResponse.model_validate(detail)
+
+
+@cacheable(max_age=60, stale_while_revalidate=600)
+@router.get(
+    "/questions/{question_id}/explanation",
+    response_model=QuestionExplanationResponse,
+    summary="Read a question's explanation after answering",
+)
+async def get_question_explanation(
+    question_id: uuid.UUID,
+    service: CatalogueServiceDep,
+    _limit_guard: CatalogueRateLimitDep,
+) -> QuestionExplanationResponse:
+    """The rationale behind a question's answer.
+
+    Every question carries one; this is the only route that reveals it, and it is kept
+    off the lesson payload so the public catalogue never hands out the answer key. The
+    client is expected to call this after the learner has answered — the attempt engine
+    that would make that ordering enforceable does not exist yet.
+    """
+    view = await service.get_question_explanation(question_id)
+    return QuestionExplanationResponse.model_validate(view)
 
 
 __all__ = ["router"]

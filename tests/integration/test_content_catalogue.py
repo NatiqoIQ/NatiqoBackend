@@ -30,7 +30,7 @@ from app.core.pagination import (
     encode_position_cursor,
 )
 from app.core.registry import import_all_models
-from app.core.types import CEFRLevel, ContentState, QuestionKind, SkillKind
+from app.core.types import CEFRLevel, ContentId, ContentState, QuestionKind, SkillKind
 from app.core.uow_sqlalchemy import SqlAlchemyUnitOfWork
 from app.modules.content.application.catalogue_service import CatalogueService
 from app.modules.content.infrastructure.models import (
@@ -546,6 +546,51 @@ class TestGetLesson:
         assert detail.question_count == 0
 
 
+class TestQuestionExplanation:
+    """The feedback surface: one question's rationale, read after an attempt.
+
+    The same visibility rules as every other read — a question is reachable exactly
+    when its lesson is published, and "does not exist" and "not published yet" collapse
+    into the same 404.
+    """
+
+    async def test_the_explanation_is_read_by_question_id(
+        self, service: CatalogueService, session: AsyncSession
+    ) -> None:
+        level = _level_row(session, code="A1")
+        unit = _unit_row(session, level.id)
+        lesson = _lesson_row(session, unit.id, position=1)
+        row = _question_row(session, lesson.id, position=1, explanation="Bye is the farewell.")
+        await session.flush()
+
+        view = await service.get_question_explanation(row.id)
+
+        assert view.id == row.id
+        assert view.explanation == "Bye is the farewell."
+
+    async def test_a_question_under_a_draft_lesson_reports_not_found(
+        self, service: CatalogueService, session: AsyncSession
+    ) -> None:
+        level = _level_row(session, code="A1")
+        unit = _unit_row(session, level.id)
+        lesson = _lesson_row(session, unit.id, state=ContentState.APPROVED.value)
+        row = _question_row(session, lesson.id, position=1)
+        await session.flush()
+
+        with pytest.raises(NotFoundError) as raised:
+            await service.get_question_explanation(row.id)
+
+        assert raised.value.code is ErrorCode.QUESTION_NOT_FOUND
+
+    async def test_an_unknown_question_reports_the_same_error(
+        self, service: CatalogueService
+    ) -> None:
+        with pytest.raises(NotFoundError) as raised:
+            await service.get_question_explanation(uuid.uuid4())
+
+        assert raised.value.code is ErrorCode.QUESTION_NOT_FOUND
+
+
 class TestQuestionRepository:
     """The repository behind ``get_lesson``, exercised on its own boundary.
 
@@ -562,3 +607,30 @@ class TestQuestionRepository:
         that is what a caller gets.
         """
         assert await uow.questions.list_for_lessons([]) == []
+
+    async def test_get_published_returns_the_aggregate_for_a_published_lesson(
+        self, uow: SqlAlchemyUnitOfWork, session: AsyncSession
+    ) -> None:
+        """The state predicate lives in the query (see the repository docstring for why
+        a ``get_published_*`` that can return a draft would be a trap)."""
+        level = _level_row(session, code="A1")
+        unit = _unit_row(session, level.id)
+        lesson = _lesson_row(session, unit.id)
+        row = _question_row(session, lesson.id, position=1, explanation="Bye is the farewell.")
+        await session.flush()
+
+        question = await uow.questions.get_published(ContentId(row.id))
+
+        assert question is not None
+        assert question.explanation == "Bye is the farewell."
+
+    async def test_get_published_hides_a_question_under_a_draft_lesson(
+        self, uow: SqlAlchemyUnitOfWork, session: AsyncSession
+    ) -> None:
+        level = _level_row(session, code="A1")
+        unit = _unit_row(session, level.id)
+        lesson = _lesson_row(session, unit.id, state=ContentState.DRAFT.value)
+        row = _question_row(session, lesson.id, position=1)
+        await session.flush()
+
+        assert await uow.questions.get_published(ContentId(row.id)) is None
