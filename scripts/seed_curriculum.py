@@ -37,6 +37,9 @@ class SeedQuestion:
     accepted_answers: tuple[str, ...] = ()
     correct_index: int | None = None
     explanation: str | None = None
+    #: Optional pre-attempt visual aid. A question may illustrate the taught word or
+    #: sentence without losing its explanation, which stays required.
+    image_url: str | None = None
     points: int = 1
 
 
@@ -97,6 +100,7 @@ _A1: SeedLevel = SeedLevel(
                             ),
                             correct_index=0,
                             explanation="'Hello' is answered with a greeting of your own.",
+                            image_url="https://picsum.photos/seed/a1-greetings-hello-q1/640/360",
                         ),
                         SeedQuestion(
                             slug="a1-greetings-hello-q2",
@@ -314,6 +318,7 @@ _A1: SeedLevel = SeedLevel(
                             choices=("uncle", "cousin", "nephew", "grandfather"),
                             correct_index=0,
                             explanation="A parent's brother is an uncle.",
+                            image_url="https://picsum.photos/seed/a1-family-people-q1/640/360",
                         ),
                         SeedQuestion(
                             slug="a1-family-people-q2",
@@ -763,6 +768,7 @@ _B1: SeedLevel = SeedLevel(
                             ),
                             correct_index=0,
                             explanation="Baggage reclaim is where luggage leaves the aircraft.",
+                            image_url="https://picsum.photos/seed/b1-travel-airport-q1/640/360",
                         ),
                         SeedQuestion(
                             slug="b1-travel-airport-q2",

@@ -247,6 +247,31 @@ class TestQuestionShape:
         with pytest.raises(ValueError, match="explanation"):
             Question(**_multiple_choice(explanation="   "))
 
+    def test_a_question_can_carry_a_visual_aid(self) -> None:
+        """The image aid is additive: it illustrates the taught word without replacing
+        the explanation, which the tests below keep requiring."""
+        question = Question(**_multiple_choice(image_url="https://cdn.test/hello.png"))
+
+        assert question.image_url == "https://cdn.test/hello.png"
+
+    def test_the_visual_aid_is_optional(self) -> None:
+        assert Question(**_multiple_choice()).image_url is None
+
+    def test_a_blank_image_url_is_refused(self) -> None:
+        """A set-but-blank value is an authoring slip, not "no image": setting the field
+        promises a resource, and a blank one renders as a broken image."""
+        with pytest.raises(ValueError, match="image_url"):
+            Question(**_multiple_choice(image_url="   "))
+
+    def test_an_image_url_must_be_an_http_resource(self) -> None:
+        with pytest.raises(ValueError, match="image_url"):
+            Question(**_multiple_choice(image_url="cdn.test/hello.png"))
+
+    def test_a_script_image_url_is_refused(self) -> None:
+        """A ``javascript:`` scheme is the classic injection through an image field."""
+        with pytest.raises(ValueError, match="image_url"):
+            Question(**_multiple_choice(image_url="javascript:alert(1)"))
+
     def test_multiple_choice_needs_at_least_two_choices(self) -> None:
         with pytest.raises(ValueError, match="at least 2"):
             Question(**_multiple_choice(choices=("Hello",), correct_index=0))

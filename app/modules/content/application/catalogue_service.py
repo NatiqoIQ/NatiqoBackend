@@ -240,7 +240,8 @@ def _question_view(question: Question) -> QuestionView:
     """Project a question aggregate onto what a learner may see *before* answering.
 
     See the docstring in ``dto.py``: this projection is a security boundary, and the
-    fields left off it are the answer key.
+    fields left off it are the answer key. ``image_url`` is left *on* it on purpose — it
+    is a visual aid that teaches the item, not a reveal of the answer.
     """
     return QuestionView(
         id=question.id,
@@ -249,6 +250,7 @@ def _question_view(question: Question) -> QuestionView:
         prompt=question.prompt,
         choices=question.choices,
         points=question.points,
+        image_url=question.image_url,
     )
 
 

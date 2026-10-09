@@ -7,10 +7,13 @@ The catalogue endpoints are unauthenticated: a published curriculum is not accou
 and requiring a token to browse it would mean an app shell with no way to show anything
 before sign-in. The consequence is that **anything omitted from a view is not leaked,
 and anything included in one is public.** So the question view is assembled by omission
-rather than by copying the aggregate: it carries the prompt, the options and the point
-value, and deliberately not ``correct_index``, ``accepted_answers`` or ``explanation``.
-Those are consumed by the attempt engine after a learner has answered, and serving them
-here would hand every caller the answer key to a public practice test.
+rather than by copying the aggregate: it carries the prompt, the options, the point value
+and the optional ``image_url`` aid, and deliberately not ``correct_index``,
+``accepted_answers`` or ``explanation``. Those are consumed by the attempt engine after a
+learner has answered, and serving them here would hand every caller the answer key to a
+public practice test. The image is different: it illustrates the word or sentence being
+taught *before* the attempt, so it teaches rather than reveals and belongs on the public
+view.
 
 ``test_the_detail_does_not_carry_the_answer_key`` guards this, and it deliberately
 asserts on ``hasattr`` rather than on values: adding a field to the aggregate must never
@@ -66,6 +69,7 @@ class QuestionView:
     prompt: str
     choices: tuple[str, ...]
     points: int
+    image_url: str | None
 
 
 @dataclass(frozen=True, slots=True)

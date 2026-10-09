@@ -170,6 +170,10 @@ class QuestionModel(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     #: Post-attempt feedback. Never sent to a learner before they have answered; see
     #: ``presentation/schemas.py``.
     explanation: Mapped[str | None] = mapped_column(Text)
+    #: Optional pre-attempt visual aid that illustrates the taught word or sentence.
+    #: Public, unlike ``explanation``: it teaches the item rather than revealing the
+    #: answer.
+    image_url: Mapped[str | None] = mapped_column(Text)
     points: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
 
     __table_args__ = (

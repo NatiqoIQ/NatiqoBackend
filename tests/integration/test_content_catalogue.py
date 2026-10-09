@@ -123,6 +123,7 @@ def _question_row(
     accepted_answers: list[str] | None = None,
     correct_index: int | None = 0,
     explanation: str | None = "A greeting.",
+    image_url: str | None = None,
     points: int = 1,
 ) -> QuestionModel:
     row = QuestionModel(
@@ -136,6 +137,7 @@ def _question_row(
         accepted_answers=accepted_answers or [],
         correct_index=correct_index,
         explanation=explanation,
+        image_url=image_url,
         points=points,
     )
     session.add(row)
@@ -484,6 +486,34 @@ class TestGetLesson:
 
         for leaked in ("correct_index", "accepted_answers", "explanation"):
             assert not hasattr(question, leaked), f"{leaked} must not reach a public payload"
+
+    async def test_the_detail_carries_the_visual_aid(
+        self, service: CatalogueService, session: AsyncSession
+    ) -> None:
+        """The image travels with the public question: it teaches the word before an
+        attempt, so unlike the explanation it is not part of the answer key."""
+        level = _level_row(session, code="A1")
+        unit = _unit_row(session, level.id)
+        lesson = _lesson_row(session, unit.id, position=1)
+        _question_row(session, lesson.id, position=1, image_url="https://cdn.test/hello.png")
+        await session.flush()
+
+        detail = await service.get_lesson(lesson.id)
+
+        assert detail.questions[0].image_url == "https://cdn.test/hello.png"
+
+    async def test_a_question_without_an_image_reports_none(
+        self, service: CatalogueService, session: AsyncSession
+    ) -> None:
+        level = _level_row(session, code="A1")
+        unit = _unit_row(session, level.id)
+        lesson = _lesson_row(session, unit.id, position=1)
+        _question_row(session, lesson.id, position=1)
+        await session.flush()
+
+        detail = await service.get_lesson(lesson.id)
+
+        assert detail.questions[0].image_url is None
 
     async def test_a_free_text_question_still_exposes_its_choices_shape(
         self, service: CatalogueService, session: AsyncSession

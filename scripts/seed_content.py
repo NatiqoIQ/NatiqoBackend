@@ -260,7 +260,8 @@ def _build_questions(
             choices=question.choices,
             accepted_answers=question.accepted_answers,
             correct_index=question.correct_index,
-            explanation=question.explanation,
+            explanation=question.explanation or "",
+            image_url=question.image_url,
             points=question.points,
         )
         for position, question in enumerate(lesson.questions, start=1)
@@ -399,6 +400,7 @@ async def run_seed(*, dry_run: bool, include_drafts: bool) -> SeedReport:
                     "accepted_answers": list(question_entity.accepted_answers),
                     "correct_index": question_entity.correct_index,
                     "explanation": question_entity.explanation,
+                    "image_url": question_entity.image_url,
                     "points": question_entity.points,
                 },
             )

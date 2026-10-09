@@ -904,7 +904,7 @@ async def test_security_headers_are_present_on_docs_as_well(client: AsyncClient)
 #: Asserting the whole set rather than "the bad keys are absent" is deliberate: a field
 #: nobody intended to publish has to fail this test, and that is the only moment it is
 #: cheap to notice.
-PUBLIC_QUESTION_FIELDS = {"id", "kind", "skill", "prompt", "choices", "points"}
+PUBLIC_QUESTION_FIELDS = {"id", "kind", "skill", "prompt", "choices", "points", "imageUrl"}
 
 #: Never crosses the wire before an attempt.
 ANSWER_KEY_FIELDS = ("correct_index", "accepted_answers", "explanation")
@@ -935,7 +935,11 @@ async def content_db(client: AsyncClient) -> AsyncIterator[AsyncSession]:
 
 
 async def seed_catalogue(
-    session: AsyncSession, *, lessons: int = 2, with_explanation: bool = True
+    session: AsyncSession,
+    *,
+    lessons: int = 2,
+    with_explanation: bool = True,
+    image_url: str | None = None,
 ) -> dict[str, uuid.UUID]:
     """Two published levels, each with a unit, lessons and one question per lesson.
 
@@ -984,6 +988,7 @@ async def seed_catalogue(
                         accepted_answers=[],
                         correct_index=0,
                         explanation="A greeting." if with_explanation else None,
+                        image_url=image_url,
                         points=1,
                     ),
                 ]
@@ -1143,6 +1148,31 @@ async def test_the_lesson_detail_carries_its_questions(
     assert body["title"] == "Lesson 1"
     assert body["questionCount"] == 1
     assert [question["prompt"] for question in body["questions"]] == ["Which one means 'hello'?"]
+
+
+async def test_the_lesson_detail_carries_the_question_image_aid(
+    client: AsyncClient, content_db: AsyncSession
+) -> None:
+    """The visual aid is public with the question: it illustrates the taught word
+    before an attempt, so unlike the explanation it is not withheld."""
+    image = "https://cdn.test/hello.png"
+    ids = await seed_catalogue(content_db, image_url=image)
+
+    body = (await client.get(f"/api/v1/content/lessons/{ids['A1-lesson-1']}")).json()
+
+    assert body["questions"][0]["imageUrl"] == image
+
+
+async def test_a_question_without_an_image_serialises_a_null(
+    client: AsyncClient, content_db: AsyncSession
+) -> None:
+    """The field is always present — ``null`` when there is no aid — so a client relies
+    on one response shape rather than probing for a missing key."""
+    ids = await seed_catalogue(content_db)
+
+    body = (await client.get(f"/api/v1/content/lessons/{ids['A1-lesson-1']}")).json()
+
+    assert body["questions"][0]["imageUrl"] is None
 
 
 async def test_the_response_never_carries_the_answer_key(

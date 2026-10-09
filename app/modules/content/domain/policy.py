@@ -67,6 +67,7 @@ def question_shape_problems(
     accepted_answers: Sequence[str],
     correct_index: int | None,
     explanation: str | None,
+    image_url: str | None,
 ) -> tuple[str, ...]:
     """Every reason this question could not be answered, in report order.
 
@@ -76,14 +77,23 @@ def question_shape_problems(
     problems: list[str] = []
 
     # The product rule is "one of {audio, image, explanation} must come with every
-    # question". Audio and image aids are not implemented yet, so the only one that
-    # exists is the explanation — which currently makes it mandatory. When a second
-    # aid lands, this becomes "at least one of the three is set", not a deletion.
+    # question". Audio is still unimplemented. The image aid now exists, but only as an
+    # *additional* visual aid that illustrates the word or sentence being taught; it is
+    # deliberately not a substitute for the explanation. The explanation stays mandatory
+    # because it is the post-attempt rationale — without it a learner answers and gets
+    # no feedback.
     if not explanation or not explanation.strip():
-        problems.append(
-            "A question must carry an explanation; the audio and image aids are not "
-            "implemented yet."
-        )
+        problems.append("A question must carry an explanation.")
+
+    # The image aid is optional, so ``None`` passes. When it is set, it has to point at
+    # a resource a client can actually fetch: a blank string or a non-http(s) scheme
+    # (a bare path, a ``javascript:`` URL) renders as a broken image on the learner's
+    # screen rather than as a caught authoring error.
+    if image_url is not None:
+        if not image_url.strip():
+            problems.append("An image_url must not be blank when it is set.")
+        elif not image_url.startswith(("http://", "https://")):
+            problems.append(f"An image_url must be an http(s) resource, got {image_url!r}.")
 
     if kind is QuestionKind.MULTIPLE_CHOICE:
         if not MIN_CHOICES <= len(choices) <= MAX_CHOICES:

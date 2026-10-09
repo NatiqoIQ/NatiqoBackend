@@ -138,6 +138,11 @@ class Question:
     Frozen because a question is not edited in place: revising a published question
     means replacing the row, which keeps the answer key that learners have already been
     marked against consistent with the one in the catalogue.
+
+    Two support aids live on the aggregate. ``explanation`` is the post-attempt
+    rationale and ``image_url`` is an optional pre-attempt visual aid that illustrates
+    the word or sentence being taught; the presentation layer decides which of the two a
+    learner may see and when (see ``presentation/schemas.py``).
     """
 
     id: ContentId
@@ -150,6 +155,7 @@ class Question:
     accepted_answers: tuple[str, ...] = ()
     correct_index: int | None = None
     explanation: str = ""
+    image_url: str | None = None
     points: int = 1
 
     def __post_init__(self) -> None:
@@ -172,6 +178,7 @@ class Question:
             accepted_answers=self.accepted_answers,
             correct_index=self.correct_index,
             explanation=self.explanation,
+            image_url=self.image_url,
         )
         if problems:
             raise ValueError(" ".join(problems))
