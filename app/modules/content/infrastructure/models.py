@@ -174,6 +174,9 @@ class QuestionModel(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     #: Public, unlike ``explanation``: it teaches the item rather than revealing the
     #: answer.
     image_url: Mapped[str | None] = mapped_column(Text)
+    #: Optional pre-attempt audio aid that pronounces the taught word or sentence.
+    #: Public for the same reason as ``image_url``.
+    audio_url: Mapped[str | None] = mapped_column(Text)
     points: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
 
     __table_args__ = (

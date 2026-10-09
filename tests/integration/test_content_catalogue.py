@@ -124,6 +124,7 @@ def _question_row(
     correct_index: int | None = 0,
     explanation: str | None = "A greeting.",
     image_url: str | None = None,
+    audio_url: str | None = None,
     points: int = 1,
 ) -> QuestionModel:
     row = QuestionModel(
@@ -138,6 +139,7 @@ def _question_row(
         correct_index=correct_index,
         explanation=explanation,
         image_url=image_url,
+        audio_url=audio_url,
         points=points,
     )
     session.add(row)
@@ -514,6 +516,34 @@ class TestGetLesson:
         detail = await service.get_lesson(lesson.id)
 
         assert detail.questions[0].image_url is None
+
+    async def test_the_detail_carries_the_audio_aid(
+        self, service: CatalogueService, session: AsyncSession
+    ) -> None:
+        """The audio aid travels with the public question for the same reason as the
+        image: it pronounces the taught word before an attempt rather than revealing it."""
+        level = _level_row(session, code="A1")
+        unit = _unit_row(session, level.id)
+        lesson = _lesson_row(session, unit.id, position=1)
+        _question_row(session, lesson.id, position=1, audio_url="https://cdn.test/hello.mp3")
+        await session.flush()
+
+        detail = await service.get_lesson(lesson.id)
+
+        assert detail.questions[0].audio_url == "https://cdn.test/hello.mp3"
+
+    async def test_a_question_without_audio_reports_none(
+        self, service: CatalogueService, session: AsyncSession
+    ) -> None:
+        level = _level_row(session, code="A1")
+        unit = _unit_row(session, level.id)
+        lesson = _lesson_row(session, unit.id, position=1)
+        _question_row(session, lesson.id, position=1)
+        await session.flush()
+
+        detail = await service.get_lesson(lesson.id)
+
+        assert detail.questions[0].audio_url is None
 
     async def test_a_free_text_question_still_exposes_its_choices_shape(
         self, service: CatalogueService, session: AsyncSession

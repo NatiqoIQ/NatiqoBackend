@@ -262,6 +262,7 @@ def _build_questions(
             correct_index=question.correct_index,
             explanation=question.explanation or "",
             image_url=question.image_url,
+            audio_url=question.audio_url,
             points=question.points,
         )
         for position, question in enumerate(lesson.questions, start=1)
@@ -401,6 +402,7 @@ async def run_seed(*, dry_run: bool, include_drafts: bool) -> SeedReport:
                     "correct_index": question_entity.correct_index,
                     "explanation": question_entity.explanation,
                     "image_url": question_entity.image_url,
+                    "audio_url": question_entity.audio_url,
                     "points": question_entity.points,
                 },
             )

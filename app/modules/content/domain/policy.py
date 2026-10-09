@@ -60,6 +60,23 @@ def normalise_accepted_answers(answers: Sequence[str]) -> tuple[str, ...]:
     return tuple(seen)
 
 
+def _media_url_problems(field: str, value: str | None) -> list[str]:
+    """Why an optional media URL is unusable, or an empty list when it is fine.
+
+    The image and audio aids are both optional, so ``None`` passes. When one is set it
+    has to point at a resource a client can actually fetch: a blank string or a
+    non-http(s) scheme (a bare path, a ``javascript:`` URL) renders as a broken image or
+    a silent player on the learner's screen rather than as a caught authoring error.
+    """
+    if value is None:
+        return []
+    if not value.strip():
+        return [f"The {field} must not be blank when it is set."]
+    if not value.startswith(("http://", "https://")):
+        return [f"The {field} must be an http(s) resource, got {value!r}."]
+    return []
+
+
 def question_shape_problems(
     kind: QuestionKind,
     *,
@@ -68,6 +85,7 @@ def question_shape_problems(
     correct_index: int | None,
     explanation: str | None,
     image_url: str | None,
+    audio_url: str | None,
 ) -> tuple[str, ...]:
     """Every reason this question could not be answered, in report order.
 
@@ -76,24 +94,18 @@ def question_shape_problems(
     """
     problems: list[str] = []
 
-    # The product rule is "one of {audio, image, explanation} must come with every
-    # question". Audio is still unimplemented. The image aid now exists, but only as an
-    # *additional* visual aid that illustrates the word or sentence being taught; it is
-    # deliberately not a substitute for the explanation. The explanation stays mandatory
-    # because it is the post-attempt rationale — without it a learner answers and gets
-    # no feedback.
+    # The product rule is "a question carries an explanation, and may also carry media
+    # aids". The image and audio aids are optional pre-attempt supports that illustrate
+    # or pronounce the taught word or sentence; neither is a substitute for the
+    # explanation. The explanation stays mandatory because it is the post-attempt
+    # rationale — without it a learner answers and gets no feedback.
     if not explanation or not explanation.strip():
         problems.append("A question must carry an explanation.")
 
-    # The image aid is optional, so ``None`` passes. When it is set, it has to point at
-    # a resource a client can actually fetch: a blank string or a non-http(s) scheme
-    # (a bare path, a ``javascript:`` URL) renders as a broken image on the learner's
-    # screen rather than as a caught authoring error.
-    if image_url is not None:
-        if not image_url.strip():
-            problems.append("An image_url must not be blank when it is set.")
-        elif not image_url.startswith(("http://", "https://")):
-            problems.append(f"An image_url must be an http(s) resource, got {image_url!r}.")
+    # Both aids are optional, so ``None`` passes; see ``_media_url_problems`` for why a
+    # blank or non-http(s) value is rejected rather than stored.
+    problems.extend(_media_url_problems("image_url", image_url))
+    problems.extend(_media_url_problems("audio_url", audio_url))
 
     if kind is QuestionKind.MULTIPLE_CHOICE:
         if not MIN_CHOICES <= len(choices) <= MAX_CHOICES:

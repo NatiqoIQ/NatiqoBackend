@@ -904,7 +904,16 @@ async def test_security_headers_are_present_on_docs_as_well(client: AsyncClient)
 #: Asserting the whole set rather than "the bad keys are absent" is deliberate: a field
 #: nobody intended to publish has to fail this test, and that is the only moment it is
 #: cheap to notice.
-PUBLIC_QUESTION_FIELDS = {"id", "kind", "skill", "prompt", "choices", "points", "imageUrl"}
+PUBLIC_QUESTION_FIELDS = {
+    "id",
+    "kind",
+    "skill",
+    "prompt",
+    "choices",
+    "points",
+    "imageUrl",
+    "audioUrl",
+}
 
 #: Never crosses the wire before an attempt.
 ANSWER_KEY_FIELDS = ("correct_index", "accepted_answers", "explanation")
@@ -940,6 +949,7 @@ async def seed_catalogue(
     lessons: int = 2,
     with_explanation: bool = True,
     image_url: str | None = None,
+    audio_url: str | None = None,
 ) -> dict[str, uuid.UUID]:
     """Two published levels, each with a unit, lessons and one question per lesson.
 
@@ -989,6 +999,7 @@ async def seed_catalogue(
                         correct_index=0,
                         explanation="A greeting." if with_explanation else None,
                         image_url=image_url,
+                        audio_url=audio_url,
                         points=1,
                     ),
                 ]
@@ -1173,6 +1184,29 @@ async def test_a_question_without_an_image_serialises_a_null(
     body = (await client.get(f"/api/v1/content/lessons/{ids['A1-lesson-1']}")).json()
 
     assert body["questions"][0]["imageUrl"] is None
+
+
+async def test_the_lesson_detail_carries_the_question_audio_aid(
+    client: AsyncClient, content_db: AsyncSession
+) -> None:
+    """The audio aid is public with the question, like the image: it pronounces the
+    taught word before an attempt rather than revealing the answer."""
+    audio = "https://cdn.test/hello.mp3"
+    ids = await seed_catalogue(content_db, audio_url=audio)
+
+    body = (await client.get(f"/api/v1/content/lessons/{ids['A1-lesson-1']}")).json()
+
+    assert body["questions"][0]["audioUrl"] == audio
+
+
+async def test_a_question_without_audio_serialises_a_null(
+    client: AsyncClient, content_db: AsyncSession
+) -> None:
+    ids = await seed_catalogue(content_db)
+
+    body = (await client.get(f"/api/v1/content/lessons/{ids['A1-lesson-1']}")).json()
+
+    assert body["questions"][0]["audioUrl"] is None
 
 
 async def test_the_response_never_carries_the_answer_key(

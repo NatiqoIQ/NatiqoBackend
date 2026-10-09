@@ -139,10 +139,10 @@ class Question:
     means replacing the row, which keeps the answer key that learners have already been
     marked against consistent with the one in the catalogue.
 
-    Two support aids live on the aggregate. ``explanation`` is the post-attempt
-    rationale and ``image_url`` is an optional pre-attempt visual aid that illustrates
-    the word or sentence being taught; the presentation layer decides which of the two a
-    learner may see and when (see ``presentation/schemas.py``).
+    Three support aids live on the aggregate. ``explanation`` is the post-attempt
+    rationale; ``image_url`` and ``audio_url`` are optional pre-attempt aids that
+    illustrate or pronounce the word or sentence being taught. The presentation layer
+    decides which of them a learner may see and when (see ``presentation/schemas.py``).
     """
 
     id: ContentId
@@ -156,6 +156,7 @@ class Question:
     correct_index: int | None = None
     explanation: str = ""
     image_url: str | None = None
+    audio_url: str | None = None
     points: int = 1
 
     def __post_init__(self) -> None:
@@ -179,6 +180,7 @@ class Question:
             correct_index=self.correct_index,
             explanation=self.explanation,
             image_url=self.image_url,
+            audio_url=self.audio_url,
         )
         if problems:
             raise ValueError(" ".join(problems))

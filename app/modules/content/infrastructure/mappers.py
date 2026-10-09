@@ -68,5 +68,6 @@ def to_question(model: QuestionModel) -> Question:
         correct_index=model.correct_index,
         explanation=model.explanation or "",
         image_url=model.image_url,
+        audio_url=model.audio_url,
         points=model.points,
     )

@@ -237,9 +237,9 @@ class TestQuestionShape:
         assert question.explanation == "Bye is the farewell."
 
     def test_a_question_must_carry_an_explanation(self) -> None:
-        """The product rule is one support aid (audio/image/explanation) per question;
-        only the written one exists yet, so it is required. Without it a learner would
-        answer and get no feedback."""
+        """The explanation is required even though a question may also carry image and
+        audio aids: those teach the item before an attempt, but only the explanation
+        tells a learner why an answer was right or wrong."""
         with pytest.raises(ValueError, match="explanation"):
             Question(**_multiple_choice(explanation=""))
 
@@ -271,6 +271,28 @@ class TestQuestionShape:
         """A ``javascript:`` scheme is the classic injection through an image field."""
         with pytest.raises(ValueError, match="image_url"):
             Question(**_multiple_choice(image_url="javascript:alert(1)"))
+
+    def test_a_question_can_carry_an_audio_aid(self) -> None:
+        """The audio aid is the counterpart of the image aid: additive, so it pronounces
+        the taught word without replacing the explanation."""
+        question = Question(**_multiple_choice(audio_url="https://cdn.test/hello.mp3"))
+
+        assert question.audio_url == "https://cdn.test/hello.mp3"
+
+    def test_the_audio_aid_is_optional(self) -> None:
+        assert Question(**_multiple_choice()).audio_url is None
+
+    def test_a_blank_audio_url_is_refused(self) -> None:
+        with pytest.raises(ValueError, match="audio_url"):
+            Question(**_multiple_choice(audio_url="   "))
+
+    def test_an_audio_url_must_be_an_http_resource(self) -> None:
+        with pytest.raises(ValueError, match="audio_url"):
+            Question(**_multiple_choice(audio_url="cdn.test/hello.mp3"))
+
+    def test_a_script_audio_url_is_refused(self) -> None:
+        with pytest.raises(ValueError, match="audio_url"):
+            Question(**_multiple_choice(audio_url="javascript:alert(1)"))
 
     def test_multiple_choice_needs_at_least_two_choices(self) -> None:
         with pytest.raises(ValueError, match="at least 2"):

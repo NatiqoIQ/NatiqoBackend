@@ -63,9 +63,10 @@ class QuestionResponse(_CatalogueWire):
     No ``correct_index``, no ``accepted_answers``, no ``explanation``. Post-attempt
     feedback belongs to the attempt engine, which is the next slice.
 
-    ``image_url`` *is* part of this pre-attempt shape, and that is a deliberate
-    exception rather than an oversight: it is a visual aid that illustrates the taught
-    word or sentence, so it teaches the item rather than revealing the answer.
+    ``image_url`` and ``audio_url`` *are* part of this pre-attempt shape, and that is a
+    deliberate exception rather than an oversight: they are aids that illustrate or
+    pronounce the taught word or sentence, so they teach the item rather than revealing
+    the answer.
     """
 
     id: uuid.UUID
@@ -75,6 +76,7 @@ class QuestionResponse(_CatalogueWire):
     choices: list[str]
     points: int = Field(ge=1)
     image_url: str | None = None
+    audio_url: str | None = None
 
 
 class LessonSummaryResponse(_CatalogueWire):
