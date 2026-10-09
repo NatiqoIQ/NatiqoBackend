@@ -11,10 +11,12 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import configure_mappers
 
 from app.api.deps import get_cache
@@ -93,7 +95,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         version="0.1.1",
         docs_url="/docs" if not app_settings.is_production or app_settings.docs_enabled else None,
         redoc_url=None,
-        openapi_url="/openapi.json" if not app_settings.is_production or app_settings.docs_enabled else None,
+        openapi_url="/openapi.json"
+        if not app_settings.is_production or app_settings.docs_enabled
+        else None,
         root_path=app_settings.root_path,
         lifespan=lifespan,
     )
@@ -165,6 +169,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             prefix=app_settings.api_v1_prefix,
             responses=ERROR_RESPONSES,
         )
+
+    # Curriculum media is content, not a per-learner upload: it is identical for every
+    # client and immutable for a given slug. Serving it same-origin — rather than through
+    # a signed URL that would expire mid-lesson — lets a client cache an aid for the life
+    # of the app. Mounted only when the directory is present so a checkout without the
+    # media tree (or a test app) still boots.
+    media_root = Path(app_settings.media_root)
+    if media_root.is_dir():
+        app.mount("/media", StaticFiles(directory=media_root), name="media")
 
     @app.get("/", include_in_schema=False)
     async def root() -> dict[str, str]:

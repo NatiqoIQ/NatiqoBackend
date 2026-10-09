@@ -294,6 +294,24 @@ class TestQuestionShape:
         with pytest.raises(ValueError, match="audio_url"):
             Question(**_multiple_choice(audio_url="javascript:alert(1)"))
 
+    def test_a_same_origin_image_path_is_accepted(self) -> None:
+        """Content this service ships itself is referenced by a rooted path, so a path
+        with no scheme is a valid aid rather than an authoring slip."""
+        question = Question(**_multiple_choice(image_url="/media/images/hello.png"))
+
+        assert question.image_url == "/media/images/hello.png"
+
+    def test_a_same_origin_audio_path_is_accepted(self) -> None:
+        question = Question(**_multiple_choice(audio_url="/media/audio/hello.mp3"))
+
+        assert question.audio_url == "/media/audio/hello.mp3"
+
+    def test_a_protocol_relative_media_url_is_refused(self) -> None:
+        """``//host`` keeps the page's scheme but is a different origin, so it is not a
+        same-origin path and must be refused like any other off-origin reference."""
+        with pytest.raises(ValueError, match="image_url"):
+            Question(**_multiple_choice(image_url="//evil.test/hello.png"))
+
     def test_multiple_choice_needs_at_least_two_choices(self) -> None:
         with pytest.raises(ValueError, match="at least 2"):
             Question(**_multiple_choice(choices=("Hello",), correct_index=0))

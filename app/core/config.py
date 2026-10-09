@@ -146,6 +146,10 @@ class Settings(BaseSettings):
     s3_force_path_style: bool = False
     signed_url_ttl_seconds: int = 900
     local_storage_path: str = "./media_local"
+    #: Directory of shipped, read-only curriculum media (image and audio aids), served
+    #: same-origin at ``/media``. This is content baked with the release, not user
+    #: uploads — those go through the object-storage port above.
+    media_root: str = "./media"
 
     # --------------------------------------------------------- push (FCM)
     fcm_credentials_json: str | None = None

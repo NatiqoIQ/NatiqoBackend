@@ -24,6 +24,7 @@ RUN uv sync --frozen --no-dev --no-install-project
 COPY app ./app
 COPY alembic ./alembic
 COPY scripts ./scripts
+COPY media ./media
 COPY alembic.ini README.md ./
 RUN uv sync --frozen --no-dev
 

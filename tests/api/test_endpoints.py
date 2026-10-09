@@ -1209,6 +1209,16 @@ async def test_a_question_without_audio_serialises_a_null(
     assert body["questions"][0]["audioUrl"] is None
 
 
+async def test_shipped_curriculum_media_is_served_same_origin(client: AsyncClient) -> None:
+    """The aids the seed references are served by this app at ``/media``, so a lesson
+    never depends on a third-party host. This is the end-to-end proof the mount and the
+    stored path agree."""
+    response = await client.get("/media/images/a1-greetings-hello-q1.jpg")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "image/jpeg"
+
+
 async def test_the_response_never_carries_the_answer_key(
     client: AsyncClient, content_db: AsyncSession
 ) -> None:

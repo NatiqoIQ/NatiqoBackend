@@ -562,15 +562,23 @@ Bearer. `204` (بلا جسم).
   "questions": [
     { "id": "...", "kind": "multiple_choice", "skill": "vocabulary",
       "prompt": "Choose the correct word.", "points": 1,
-      "choices": ["greeting", "greater", "grounded"] },
+      "choices": ["greeting", "greater", "grounded"],
+      "imageUrl": "/media/images/<question-id>.jpg",
+      "audioUrl": "/media/audio/<question-id>.mp3" },
     { "id": "...", "kind": "fill_blank", "skill": "grammar",
-      "prompt": "She ___ from Baghdad.", "points": 2, "choices": [] }
+      "prompt": "She ___ from Baghdad.", "points": 2, "choices": [],
+      "imageUrl": null, "audioUrl": null }
   ]
 }
 ```
 
 `kind`: `multiple_choice` · `true_false` · `fill_blank`
 `skill`: `vocabulary` · `grammar` · `listening` · `reading` · `writing` · `pronunciation`
+
+> `imageUrl` و`audioUrl` وسيلتان اختياريتان تُعرضان مع السؤال قبل الإجابة (توضيح/لفظ).
+> القيمة إما `null` أو **مسار نسبي على نفس أصل الـAPI** بصيغة `/media/...`. يتغيّر الاسم
+> `<question-id>` مع كل سؤال. لا تُبنَ على الوسيلة أي دلالة للإجابة، وليست بديلاً عن
+> `explanation`.
 
 > ⚠️ **الأسئلة بدون مفتاح إجابة.** لا يوجد `correctIndex` ولا `acceptedAnswers` ولا
 > `explanation` — عمداً، حتى يمكن قراءة الدرس قبل تسجيل الدخول.

@@ -61,20 +61,27 @@ def normalise_accepted_answers(answers: Sequence[str]) -> tuple[str, ...]:
 
 
 def _media_url_problems(field: str, value: str | None) -> list[str]:
-    """Why an optional media URL is unusable, or an empty list when it is fine.
+    """Why an optional media aid is unusable, or an empty list when it is fine.
 
     The image and audio aids are both optional, so ``None`` passes. When one is set it
-    has to point at a resource a client can actually fetch: a blank string or a
-    non-http(s) scheme (a bare path, a ``javascript:`` URL) renders as a broken image or
-    a silent player on the learner's screen rather than as a caught authoring error.
+    has to point at a resource a client can actually fetch: either an absolute
+    ``http(s)`` URL, or a same-origin path (``/media/...``) for content this service
+    ships itself. Anything else — a blank string, a bare path with no leading slash, a
+    protocol-relative ``//host`` (which silently changes origin), a ``javascript:`` URL
+    — renders as a broken image or a silent player on the learner's screen rather than
+    as a caught authoring error.
     """
     if value is None:
         return []
     if not value.strip():
         return [f"The {field} must not be blank when it is set."]
-    if not value.startswith(("http://", "https://")):
-        return [f"The {field} must be an http(s) resource, got {value!r}."]
-    return []
+    if value.startswith(("http://", "https://")):
+        return []
+    # Same-origin asset: a single leading slash, not a protocol-relative ``//host``, and
+    # no backslash (which a filesystem-backed static handler could read as a separator).
+    if value.startswith("/") and not value.startswith("//") and "\\" not in value:
+        return []
+    return [f"The {field} must be an http(s) URL or a same-origin path, got {value!r}."]
 
 
 def question_shape_problems(
