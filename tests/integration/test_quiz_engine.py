@@ -1,0 +1,919 @@
+"""The attempt engine against a real schema with the real repositories.
+
+What only the database can prove is here: the unique constraints that stop a double answer
+and a doubled progress row, the foreign keys that tie a session to its owner, and the
+transaction the service commits so answers, session counters and lesson progress land
+together or not at all.
+
+The other theme is the answer key. Every read that returns questions is checked to be free
+of ``correct_index``, ``accepted_answers`` and ``explanation``; the verdict appears only in
+the response to an answer.
+
+Retrying a missed question is the third theme: it is graded as a second attempt (half
+marks), and it must *replace* the stored answer rather than add a row, so a question still
+counts once towards its session.
+"""
+
+from __future__ import annotations
+
+import uuid
+from collections.abc import AsyncIterator
+
+import pytest
+import pytest_asyncio
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.config import get_settings
+from app.core.database import create_all, dispose_engine, get_session_factory
+from app.core.errors import ConflictError, ErrorCode, NotFoundError, ValidationFailed
+from app.core.registry import import_all_models
+from app.core.types import ContentState, UserId
+from app.core.uow_sqlalchemy import SqlAlchemyUnitOfWork
+from app.modules.content.infrastructure.models import (
+    LessonModel,
+    LevelModel,
+    QuestionModel,
+    UnitModel,
+)
+from app.modules.quiz.application.quiz_service import QuizService
+from app.modules.quiz.domain.entities import ProgressState, SessionMode, SessionStatus
+from app.modules.quiz.domain.policy import SubmittedAnswer
+from app.modules.users.infrastructure.models import UserModel
+
+pytestmark = pytest.mark.integration
+
+
+# ------------------------------------------------------------------------ fixtures
+@pytest_asyncio.fixture
+async def uow() -> AsyncIterator[SqlAlchemyUnitOfWork]:
+    import_all_models()
+    await create_all()
+    async with SqlAlchemyUnitOfWork(get_session_factory()) as open_uow:
+        yield open_uow
+    await dispose_engine()
+
+
+@pytest.fixture
+def service(uow: SqlAlchemyUnitOfWork) -> QuizService:
+    return QuizService(uow, get_settings())
+
+
+@pytest.fixture
+def session(uow: SqlAlchemyUnitOfWork) -> AsyncSession:
+    return uow.session
+
+
+# -------------------------------------------------------------------- row builders
+def _user_row(session: AsyncSession) -> UserModel:
+    row = UserModel(
+        id=uuid.uuid4(),
+        email=f"{uuid.uuid4().hex}@example.com",
+        status="active",
+        roles=["user"],
+    )
+    session.add(row)
+    return row
+
+
+def _question_rows(lesson_id: uuid.UUID) -> list[QuestionModel]:
+    """Three questions covering all three gradeable kinds.
+
+    Points differ per question on purpose, so a scored total cannot be right by accident.
+    """
+    return [
+        QuestionModel(
+            id=uuid.uuid4(),
+            lesson_id=lesson_id,
+            position=1,
+            kind="multiple_choice",
+            skill="vocabulary",
+            prompt="Which one means 'hello'?",
+            choices=["Hello", "Goodbye", "Thank you"],
+            accepted_answers=[],
+            correct_index=0,
+            explanation="Hello is the greeting.",
+            points=2,
+        ),
+        QuestionModel(
+            id=uuid.uuid4(),
+            lesson_id=lesson_id,
+            position=2,
+            kind="fill_blank",
+            skill="grammar",
+            prompt="She ___ to school every day.",
+            choices=[],
+            accepted_answers=["goes"],
+            correct_index=None,
+            explanation="Third person singular takes -s.",
+            points=3,
+        ),
+        QuestionModel(
+            id=uuid.uuid4(),
+            lesson_id=lesson_id,
+            position=3,
+            kind="true_false",
+            skill="grammar",
+            prompt="'He go to school' is correct.",
+            choices=["True", "False"],
+            accepted_answers=[],
+            correct_index=1,
+            explanation="It should be 'He goes'.",
+            points=1,
+        ),
+    ]
+
+
+def _lesson(
+    session: AsyncSession,
+    *,
+    code: str = "A1",
+    state: str = ContentState.PUBLISHED.value,
+    with_questions: bool = True,
+) -> tuple[LessonModel, list[QuestionModel]]:
+    """One level → unit → lesson, plus its questions.
+
+    ``code`` is unique per level, so a test that needs a second lesson must pass a
+    different CEFR code rather than colliding on the unique index.
+    """
+    level = LevelModel(
+        id=uuid.uuid4(), code=code, title=code, position=1, state=ContentState.PUBLISHED.value
+    )
+    session.add(level)
+    unit = UnitModel(
+        id=uuid.uuid4(),
+        level_id=level.id,
+        title="Introductions",
+        position=1,
+        state=ContentState.PUBLISHED.value,
+    )
+    session.add(unit)
+    lesson = LessonModel(
+        id=uuid.uuid4(),
+        unit_id=unit.id,
+        title="Greetings",
+        summary="Say hello.",
+        position=1,
+        estimated_minutes=8,
+        state=state,
+    )
+    session.add(lesson)
+    questions = _question_rows(lesson.id) if with_questions else []
+    session.add_all(questions)
+    return lesson, questions
+
+
+async def _seed(session: AsyncSession) -> tuple[UserId, uuid.UUID, list[QuestionModel]]:
+    user = _user_row(session)
+    lesson, questions = _lesson(session)
+    await session.flush()
+    return UserId(user.id), lesson.id, questions
+
+
+async def _start(service: QuizService, user_id: UserId, lesson_id: uuid.UUID) -> uuid.UUID:
+    detail = await service.start_session(user_id, mode=SessionMode.LESSON, lesson_id=lesson_id)
+    return detail.session.id
+
+
+async def _answer_all(
+    service: QuizService,
+    user_id: UserId,
+    session_id: uuid.UUID,
+    questions: list[QuestionModel],
+) -> None:
+    """Answer every seeded question correctly, in order."""
+    await service.submit_answer(
+        user_id, session_id, question_id=questions[0].id, answer=SubmittedAnswer(choice="Hello")
+    )
+    await service.submit_answer(
+        user_id, session_id, question_id=questions[1].id, answer=SubmittedAnswer(text="goes")
+    )
+    await service.submit_answer(
+        user_id, session_id, question_id=questions[2].id, answer=SubmittedAnswer(choice="False")
+    )
+
+
+# ==================================================================== start session
+class TestStartSession:
+    async def test_it_freezes_the_lesson_questions_in_order(
+        self, service: QuizService, session: AsyncSession
+    ) -> None:
+        user_id, lesson_id, _ = await _seed(session)
+
+        detail = await service.start_session(user_id, mode=SessionMode.LESSON, lesson_id=lesson_id)
+
+        assert detail.session.status == SessionStatus.ACTIVE.value
+        assert detail.session.total_count == 3
+        assert detail.session.answered_count == 0
+        assert [question.position for question in detail.questions] == [1, 2, 3]
+
+    async def test_the_questions_carry_no_answer_key(
+        self, service: QuizService, session: AsyncSession
+    ) -> None:
+        """The reason this slice exists: an uncommitted client cannot learn the answer."""
+        user_id, lesson_id, _ = await _seed(session)
+
+        detail = await service.start_session(user_id, mode=SessionMode.LESSON, lesson_id=lesson_id)
+
+        for question in detail.questions:
+            for leaked in ("correct_index", "accepted_answers", "explanation"):
+                assert not hasattr(question, leaked), f"{leaked} must not reach a session"
+
+    async def test_the_client_receives_points_and_choices(
+        self, service: QuizService, session: AsyncSession
+    ) -> None:
+        user_id, lesson_id, _ = await _seed(session)
+
+        detail = await service.start_session(user_id, mode=SessionMode.LESSON, lesson_id=lesson_id)
+
+        assert detail.questions[0].points == 2
+        assert detail.questions[0].choices == ("Hello", "Goodbye", "Thank you")
+
+    async def test_a_draft_lesson_reads_as_not_found(
+        self, service: QuizService, session: AsyncSession
+    ) -> None:
+        user = _user_row(session)
+        lesson, _ = _lesson(session, state=ContentState.DRAFT.value)
+        await session.flush()
+
+        with pytest.raises(NotFoundError) as raised:
+            await service.start_session(
+                UserId(user.id), mode=SessionMode.LESSON, lesson_id=lesson.id
+            )
+
+        assert raised.value.code is ErrorCode.LESSON_NOT_FOUND
+
+    async def test_a_lesson_with_no_questions_is_not_available(
+        self, service: QuizService, session: AsyncSession
+    ) -> None:
+        user = _user_row(session)
+        lesson, _ = _lesson(session, with_questions=False)
+        await session.flush()
+
+        with pytest.raises(NotFoundError) as raised:
+            await service.start_session(
+                UserId(user.id), mode=SessionMode.LESSON, lesson_id=lesson.id
+            )
+
+        assert raised.value.code is ErrorCode.LESSON_NOT_AVAILABLE
+
+    async def test_an_unknown_lesson_reads_as_not_found(
+        self, service: QuizService, session: AsyncSession
+    ) -> None:
+        user = _user_row(session)
+        await session.flush()
+
+        with pytest.raises(NotFoundError) as raised:
+            await service.start_session(
+                UserId(user.id), mode=SessionMode.LESSON, lesson_id=uuid.uuid4()
+            )
+
+        assert raised.value.code is ErrorCode.LESSON_NOT_FOUND
+
+    async def test_a_mode_that_does_not_exist_yet_is_refused(
+        self, service: QuizService, session: AsyncSession
+    ) -> None:
+        user_id, lesson_id, _ = await _seed(session)
+
+        with pytest.raises(ValidationFailed):
+            await service.start_session(user_id, mode=SessionMode.REVIEW, lesson_id=lesson_id)
+
+    async def test_a_lesson_session_needs_a_lesson(
+        self, service: QuizService, session: AsyncSession
+    ) -> None:
+        user = _user_row(session)
+        await session.flush()
+
+        with pytest.raises(ValidationFailed):
+            await service.start_session(UserId(user.id), mode=SessionMode.LESSON, lesson_id=None)
+
+    async def test_starting_marks_the_lesson_in_progress(
+        self, service: QuizService, session: AsyncSession, uow: SqlAlchemyUnitOfWork
+    ) -> None:
+        user_id, lesson_id, _ = await _seed(session)
+
+        await service.start_session(user_id, mode=SessionMode.LESSON, lesson_id=lesson_id)
+
+        progress = await uow.lesson_progress.get(user_id, lesson_id)
+        assert progress is not None
+        assert progress.state is ProgressState.IN_PROGRESS
+
+
+# =================================================================== grade an answer
+class TestSubmitAnswer:
+    async def test_a_correct_choice_scores_full_points(
+        self, service: QuizService, session: AsyncSession
+    ) -> None:
+        user_id, lesson_id, questions = await _seed(session)
+        session_id = await _start(service, user_id, lesson_id)
+
+        graded = await service.submit_answer(
+            user_id,
+            session_id,
+            question_id=questions[0].id,
+            answer=SubmittedAnswer(choice="Hello"),
+        )
+
+        assert graded.is_correct is True
+        assert graded.points_awarded == 2
+        assert graded.correct_answer == {"choice": "Hello"}
+        assert graded.explanation == "Hello is the greeting."
+        assert graded.answered_count == 1
+        assert graded.is_complete is False
+
+    async def test_a_wrong_choice_scores_nothing_but_still_explains(
+        self, service: QuizService, session: AsyncSession
+    ) -> None:
+        user_id, lesson_id, questions = await _seed(session)
+        session_id = await _start(service, user_id, lesson_id)
+
+        graded = await service.submit_answer(
+            user_id,
+            session_id,
+            question_id=questions[0].id,
+            answer=SubmittedAnswer(choice="Goodbye"),
+        )
+
+        assert graded.is_correct is False
+        assert graded.points_awarded == 0
+        assert graded.correct_answer == {"choice": "Hello"}
+        assert graded.explanation == "Hello is the greeting."
+
+    async def test_a_free_text_answer_is_graded_case_insensitively(
+        self, service: QuizService, session: AsyncSession
+    ) -> None:
+        user_id, lesson_id, questions = await _seed(session)
+        session_id = await _start(service, user_id, lesson_id)
+
+        graded = await service.submit_answer(
+            user_id,
+            session_id,
+            question_id=questions[1].id,
+            answer=SubmittedAnswer(text="  Goes "),
+        )
+
+        assert graded.is_correct is True
+        assert graded.points_awarded == 3
+        assert graded.correct_answer == {"text": "goes"}
+
+    async def test_the_letter_form_resolves_against_the_choices(
+        self, service: QuizService, session: AsyncSession
+    ) -> None:
+        user_id, lesson_id, questions = await _seed(session)
+        session_id = await _start(service, user_id, lesson_id)
+
+        graded = await service.submit_answer(
+            user_id,
+            session_id,
+            question_id=questions[2].id,
+            answer=SubmittedAnswer(choice="b"),
+        )
+
+        assert graded.is_correct is True  # "False" is the second choice
+        assert graded.correct_answer == {"choice": "False"}
+
+    async def test_answering_every_question_reports_completion(
+        self, service: QuizService, session: AsyncSession
+    ) -> None:
+        user_id, lesson_id, questions = await _seed(session)
+        session_id = await _start(service, user_id, lesson_id)
+
+        last = None
+        for question, answer in (
+            (questions[0], SubmittedAnswer(choice="Hello")),
+            (questions[1], SubmittedAnswer(text="goes")),
+            (questions[2], SubmittedAnswer(choice="False")),
+        ):
+            last = await service.submit_answer(
+                user_id, session_id, question_id=question.id, answer=answer
+            )
+
+        assert last is not None
+        assert last.is_complete is True
+        assert last.answered_count == 3
+        assert last.correct_count == 3
+
+    async def test_a_question_answered_correctly_is_closed(
+        self, service: QuizService, session: AsyncSession
+    ) -> None:
+        """A right answer ends the question. Retrying for another go is what half marks stops."""
+        user_id, lesson_id, questions = await _seed(session)
+        session_id = await _start(service, user_id, lesson_id)
+        await service.submit_answer(
+            user_id,
+            session_id,
+            question_id=questions[0].id,
+            answer=SubmittedAnswer(choice="Hello"),
+        )
+
+        with pytest.raises(ConflictError) as raised:
+            await service.submit_answer(
+                user_id,
+                session_id,
+                question_id=questions[0].id,
+                answer=SubmittedAnswer(choice="Hello"),
+            )
+
+        assert raised.value.code is ErrorCode.QUESTION_ALREADY_ANSWERED
+
+    async def test_a_question_from_another_lesson_is_not_in_the_session(
+        self, service: QuizService, session: AsyncSession
+    ) -> None:
+        user_id, lesson_id, _ = await _seed(session)
+        _, other_questions = _lesson(session, code="A2")
+        await session.flush()
+        session_id = await _start(service, user_id, lesson_id)
+
+        with pytest.raises(NotFoundError) as raised:
+            await service.submit_answer(
+                user_id,
+                session_id,
+                question_id=other_questions[0].id,
+                answer=SubmittedAnswer(choice="Hello"),
+            )
+
+        assert raised.value.code is ErrorCode.QUESTION_NOT_IN_SESSION
+
+    async def test_a_submission_of_the_wrong_shape_is_rejected(
+        self, service: QuizService, session: AsyncSession
+    ) -> None:
+        user_id, lesson_id, questions = await _seed(session)
+        session_id = await _start(service, user_id, lesson_id)
+
+        with pytest.raises(ValidationFailed):
+            await service.submit_answer(
+                user_id,
+                session_id,
+                question_id=questions[1].id,
+                answer=SubmittedAnswer(choice="goes"),
+            )
+
+    async def test_a_session_belonging_to_another_learner_is_not_found(
+        self, service: QuizService, session: AsyncSession
+    ) -> None:
+        owner_id, lesson_id, questions = await _seed(session)
+        other = _user_row(session)
+        await session.flush()
+        session_id = await _start(service, owner_id, lesson_id)
+
+        with pytest.raises(NotFoundError) as raised:
+            await service.submit_answer(
+                UserId(other.id),
+                session_id,
+                question_id=questions[0].id,
+                answer=SubmittedAnswer(choice="Hello"),
+            )
+
+        assert raised.value.code is ErrorCode.QUIZ_SESSION_NOT_FOUND
+
+
+# ============================================================= retry a wrong answer
+class TestRetryingAWrongAnswer:
+    """A missed question may be answered again, and a correct retry earns half.
+
+    What only the database can confirm is that the retry *replaces* the stored answer rather
+    than appending a second one: the row count stays equal to the questions the learner has
+    committed to, so completion keeps meaning "answered the lesson" instead of "answered a
+    question enough times".
+    """
+
+    async def test_a_correct_retry_earns_half_points(
+        self, service: QuizService, session: AsyncSession
+    ) -> None:
+        user_id, lesson_id, questions = await _seed(session)
+        session_id = await _start(service, user_id, lesson_id)
+        first = await service.submit_answer(
+            user_id,
+            session_id,
+            question_id=questions[0].id,
+            answer=SubmittedAnswer(choice="Goodbye"),
+        )
+
+        retry = await service.submit_answer(
+            user_id,
+            session_id,
+            question_id=questions[0].id,
+            answer=SubmittedAnswer(choice="Hello"),
+        )
+
+        assert first.is_correct is False
+        assert first.points_awarded == 0
+        assert retry.is_correct is True
+        assert retry.points_awarded == 1  # half of the question's 2
+
+    async def test_a_wrong_retry_stays_wrong(
+        self, service: QuizService, session: AsyncSession
+    ) -> None:
+        user_id, lesson_id, questions = await _seed(session)
+        session_id = await _start(service, user_id, lesson_id)
+        await service.submit_answer(
+            user_id,
+            session_id,
+            question_id=questions[0].id,
+            answer=SubmittedAnswer(choice="Goodbye"),
+        )
+
+        retry = await service.submit_answer(
+            user_id,
+            session_id,
+            question_id=questions[0].id,
+            answer=SubmittedAnswer(choice="Thank you"),
+        )
+
+        assert retry.is_correct is False
+        assert retry.points_awarded == 0
+        assert retry.correct_count == 0
+
+    async def test_a_free_text_retry_is_halved(
+        self, service: QuizService, session: AsyncSession
+    ) -> None:
+        user_id, lesson_id, questions = await _seed(session)
+        session_id = await _start(service, user_id, lesson_id)
+        await service.submit_answer(
+            user_id,
+            session_id,
+            question_id=questions[1].id,
+            answer=SubmittedAnswer(text="go"),
+        )
+
+        retry = await service.submit_answer(
+            user_id,
+            session_id,
+            question_id=questions[1].id,
+            answer=SubmittedAnswer(text="GOES"),
+        )
+
+        assert retry.is_correct is True
+        assert retry.points_awarded == 1  # 3 // 2
+
+    async def test_the_retry_replaces_the_stored_answer(
+        self, service: QuizService, session: AsyncSession, uow: SqlAlchemyUnitOfWork
+    ) -> None:
+        """One row per question: the unique constraint has to keep holding."""
+        user_id, lesson_id, questions = await _seed(session)
+        session_id = await _start(service, user_id, lesson_id)
+        await service.submit_answer(
+            user_id,
+            session_id,
+            question_id=questions[0].id,
+            answer=SubmittedAnswer(choice="Goodbye"),
+        )
+        before = await uow.quiz_answers.get(session_id, questions[0].id)
+        assert before is not None
+
+        retry = await service.submit_answer(
+            user_id,
+            session_id,
+            question_id=questions[0].id,
+            answer=SubmittedAnswer(choice="Hello"),
+        )
+
+        stored = await uow.quiz_answers.list_for_session(session_id)
+        assert len(stored) == 1
+        assert stored[0].id == before.id  # re-graded in place, not a second row
+        assert stored[0].given_answer == {"choice": "Hello"}
+        assert stored[0].is_correct is True
+        assert stored[0].points_awarded == 1
+        assert retry.answered_count == 1
+
+    async def test_the_session_counts_a_retried_question_once(
+        self, service: QuizService, session: AsyncSession
+    ) -> None:
+        """A retry cannot inflate the answered count the completion check relies on."""
+        user_id, lesson_id, questions = await _seed(session)
+        session_id = await _start(service, user_id, lesson_id)
+        await service.submit_answer(
+            user_id,
+            session_id,
+            question_id=questions[0].id,
+            answer=SubmittedAnswer(choice="Goodbye"),
+        )
+        await service.submit_answer(
+            user_id,
+            session_id,
+            question_id=questions[0].id,
+            answer=SubmittedAnswer(choice="Hello"),
+        )
+
+        resumed = await service.resume_session(user_id, session_id)
+
+        assert resumed.session.answered_count == 1
+        assert resumed.session.answered_question_ids == (questions[0].id,)
+        assert resumed.session.total_count == 3
+
+    async def test_a_retry_after_the_lease_runs_out_is_refused(
+        self, service: QuizService, session: AsyncSession, uow: SqlAlchemyUnitOfWork
+    ) -> None:
+        """The retry window is the session's lease, not an extension of it.
+
+        The lease is ended directly here rather than by shortening the TTL at start, so the
+        *first* answer is a real attempt and only the retry runs into an expired session —
+        which is the case a client that sat on a wrong answer would actually hit.
+        """
+        user_id, lesson_id, questions = await _seed(session)
+        session_id = await _start(service, user_id, lesson_id)
+        await service.submit_answer(
+            user_id,
+            session_id,
+            question_id=questions[0].id,
+            answer=SubmittedAnswer(choice="Goodbye"),
+        )
+        stored = await uow.quiz_sessions.get(session_id)
+        assert stored is not None
+        stored.mark_expired()
+        await uow.quiz_sessions.save(stored)
+        await uow.commit()
+
+        with pytest.raises(ConflictError) as raised:
+            await service.submit_answer(
+                user_id,
+                session_id,
+                question_id=questions[0].id,
+                answer=SubmittedAnswer(choice="Hello"),
+            )
+
+        assert raised.value.code is ErrorCode.QUIZ_SESSION_EXPIRED
+
+    async def test_a_retry_keeps_the_session_ordered_by_position(
+        self, service: QuizService, session: AsyncSession, uow: SqlAlchemyUnitOfWork
+    ) -> None:
+        """``position`` is what orders a session's answers, and a retry must not disturb it."""
+        user_id, lesson_id, questions = await _seed(session)
+        session_id = await _start(service, user_id, lesson_id)
+        await service.submit_answer(
+            user_id,
+            session_id,
+            question_id=questions[1].id,
+            answer=SubmittedAnswer(text="go"),
+        )
+        await service.submit_answer(
+            user_id,
+            session_id,
+            question_id=questions[0].id,
+            answer=SubmittedAnswer(choice="Hello"),
+        )
+        await service.submit_answer(
+            user_id,
+            session_id,
+            question_id=questions[1].id,
+            answer=SubmittedAnswer(text="goes"),
+        )
+
+        stored = await uow.quiz_answers.list_for_session(session_id)
+
+        assert [answer.position for answer in stored] == [1, 2]
+        assert [answer.question_id for answer in stored] == [questions[0].id, questions[1].id]
+
+    async def test_completing_after_a_retry_scores_the_halved_total(
+        self, service: QuizService, session: AsyncSession
+    ) -> None:
+        """The score the learner sees reflects the retry, not the full value of the question."""
+        user_id, lesson_id, questions = await _seed(session)
+        session_id = await _start(service, user_id, lesson_id)
+        await service.submit_answer(
+            user_id,
+            session_id,
+            question_id=questions[0].id,
+            answer=SubmittedAnswer(choice="Goodbye"),  # wrong, then corrected below: 1 of 2
+        )
+        await service.submit_answer(
+            user_id,
+            session_id,
+            question_id=questions[0].id,
+            answer=SubmittedAnswer(choice="Hello"),
+        )
+        await service.submit_answer(
+            user_id,
+            session_id,
+            question_id=questions[1].id,
+            answer=SubmittedAnswer(text="goes"),  # correct first try: 3
+        )
+        await service.submit_answer(
+            user_id,
+            session_id,
+            question_id=questions[2].id,
+            answer=SubmittedAnswer(choice="False"),  # correct first try: 1
+        )
+
+        completed = await service.complete_session(user_id, session_id)
+
+        assert completed.score_percent == 100  # every question ended up right
+        assert completed.session.xp_awarded == 5  # 1 + 3 + 1, the retry halved
+        assert completed.session.correct_count == 3
+
+
+# =================================================================== complete
+class TestCompleteSession:
+    async def test_completing_scores_the_session_and_records_progress(
+        self, service: QuizService, session: AsyncSession, uow: SqlAlchemyUnitOfWork
+    ) -> None:
+        user_id, lesson_id, questions = await _seed(session)
+        session_id = await _start(service, user_id, lesson_id)
+        await _answer_all(service, user_id, session_id, questions)
+
+        completed = await service.complete_session(user_id, session_id)
+
+        assert completed.score_percent == 100
+        assert completed.session.status == SessionStatus.COMPLETED.value
+        assert completed.session.xp_awarded == 6  # 2 + 3 + 1
+
+        progress = await uow.lesson_progress.get(user_id, lesson_id)
+        assert progress is not None
+        assert progress.state is ProgressState.COMPLETED
+        assert progress.best_score == 100
+        assert progress.attempts == 1
+        assert progress.xp_earned == 6
+
+    async def test_a_partial_session_cannot_be_completed(
+        self, service: QuizService, session: AsyncSession
+    ) -> None:
+        user_id, lesson_id, questions = await _seed(session)
+        session_id = await _start(service, user_id, lesson_id)
+        await service.submit_answer(
+            user_id,
+            session_id,
+            question_id=questions[0].id,
+            answer=SubmittedAnswer(choice="Hello"),
+        )
+
+        with pytest.raises(ConflictError) as raised:
+            await service.complete_session(user_id, session_id)
+
+        assert raised.value.code is ErrorCode.QUIZ_NOT_COMPLETED
+
+    async def test_a_mixed_result_scores_the_expected_percentage(
+        self, service: QuizService, session: AsyncSession
+    ) -> None:
+        user_id, lesson_id, questions = await _seed(session)
+        session_id = await _start(service, user_id, lesson_id)
+        await service.submit_answer(
+            user_id,
+            session_id,
+            question_id=questions[0].id,
+            answer=SubmittedAnswer(choice="Goodbye"),  # wrong: 0 of 2
+        )
+        await service.submit_answer(
+            user_id,
+            session_id,
+            question_id=questions[1].id,
+            answer=SubmittedAnswer(text="goes"),  # correct: 3
+        )
+        await service.submit_answer(
+            user_id,
+            session_id,
+            question_id=questions[2].id,
+            answer=SubmittedAnswer(choice="False"),  # correct: 1
+        )
+
+        completed = await service.complete_session(user_id, session_id)
+
+        assert completed.score_percent == 67  # 2 of 3
+        assert completed.session.xp_awarded == 4
+
+    async def test_completing_twice_is_refused(
+        self, service: QuizService, session: AsyncSession
+    ) -> None:
+        user_id, lesson_id, questions = await _seed(session)
+        session_id = await _start(service, user_id, lesson_id)
+        await _answer_all(service, user_id, session_id, questions)
+        await service.complete_session(user_id, session_id)
+
+        with pytest.raises(ConflictError) as raised:
+            await service.complete_session(user_id, session_id)
+
+        assert raised.value.code is ErrorCode.QUIZ_ALREADY_COMPLETED
+
+
+# =================================================================== resume
+class TestResumeSession:
+    async def test_resume_lists_the_answered_questions(
+        self, service: QuizService, session: AsyncSession
+    ) -> None:
+        user_id, lesson_id, questions = await _seed(session)
+        session_id = await _start(service, user_id, lesson_id)
+        await service.submit_answer(
+            user_id,
+            session_id,
+            question_id=questions[0].id,
+            answer=SubmittedAnswer(choice="Hello"),
+        )
+
+        resumed = await service.resume_session(user_id, session_id)
+
+        assert resumed.session.answered_question_ids == (questions[0].id,)
+        assert resumed.session.answered_count == 1
+        assert len(resumed.questions) == 3
+
+    async def test_resume_still_hides_the_answer_key(
+        self, service: QuizService, session: AsyncSession
+    ) -> None:
+        user_id, lesson_id, _ = await _seed(session)
+        session_id = await _start(service, user_id, lesson_id)
+
+        resumed = await service.resume_session(user_id, session_id)
+
+        for question in resumed.questions:
+            for leaked in ("correct_index", "accepted_answers", "explanation"):
+                assert not hasattr(question, leaked)
+
+    async def test_resume_after_a_full_round_of_answers_stays_active(
+        self, service: QuizService, session: AsyncSession
+    ) -> None:
+        user_id, lesson_id, questions = await _seed(session)
+        session_id = await _start(service, user_id, lesson_id)
+        await _answer_all(service, user_id, session_id, questions)
+
+        resumed = await service.resume_session(user_id, session_id)
+
+        assert resumed.session.status == SessionStatus.ACTIVE.value
+        assert resumed.session.answered_count == 3
+
+
+# =================================================================== expiry
+class TestExpiry:
+    @staticmethod
+    def _expiring(uow: SqlAlchemyUnitOfWork) -> QuizService:
+        return QuizService(uow, get_settings().model_copy(update={"quiz_session_ttl_seconds": -1}))
+
+    async def test_an_expired_session_refuses_an_answer(
+        self, uow: SqlAlchemyUnitOfWork, session: AsyncSession
+    ) -> None:
+        expiring = self._expiring(uow)
+        user_id, lesson_id, questions = await _seed(session)
+        detail = await expiring.start_session(user_id, mode=SessionMode.LESSON, lesson_id=lesson_id)
+
+        with pytest.raises(ConflictError) as raised:
+            await expiring.submit_answer(
+                user_id,
+                detail.session.id,
+                question_id=questions[0].id,
+                answer=SubmittedAnswer(choice="Hello"),
+            )
+
+        assert raised.value.code is ErrorCode.QUIZ_SESSION_EXPIRED
+
+    async def test_expiry_is_persisted_not_re_derived(
+        self, uow: SqlAlchemyUnitOfWork, session: AsyncSession
+    ) -> None:
+        expiring = self._expiring(uow)
+        user_id, lesson_id, _ = await _seed(session)
+        detail = await expiring.start_session(user_id, mode=SessionMode.LESSON, lesson_id=lesson_id)
+
+        with pytest.raises(ConflictError):
+            await expiring.resume_session(user_id, detail.session.id)
+
+        stored = await uow.quiz_sessions.get(detail.session.id)
+        assert stored is not None
+        assert stored.status is SessionStatus.EXPIRED
+
+    async def test_an_expired_session_cannot_be_resumed(
+        self, uow: SqlAlchemyUnitOfWork, session: AsyncSession
+    ) -> None:
+        expiring = self._expiring(uow)
+        user_id, lesson_id, _ = await _seed(session)
+        detail = await expiring.start_session(user_id, mode=SessionMode.LESSON, lesson_id=lesson_id)
+
+        with pytest.raises(ConflictError) as raised:
+            await expiring.resume_session(user_id, detail.session.id)
+
+        assert raised.value.code is ErrorCode.QUIZ_SESSION_EXPIRED
+
+
+# =================================================================== abandon
+class TestAbandonSession:
+    async def test_abandoning_ends_the_session(
+        self, service: QuizService, session: AsyncSession
+    ) -> None:
+        user_id, lesson_id, _ = await _seed(session)
+        session_id = await _start(service, user_id, lesson_id)
+
+        view = await service.abandon_session(user_id, session_id)
+
+        assert view.status == SessionStatus.ABANDONED.value
+
+    async def test_an_abandoned_session_refuses_a_late_answer(
+        self, service: QuizService, session: AsyncSession
+    ) -> None:
+        user_id, lesson_id, questions = await _seed(session)
+        session_id = await _start(service, user_id, lesson_id)
+        await service.abandon_session(user_id, session_id)
+
+        with pytest.raises(ConflictError) as raised:
+            await service.submit_answer(
+                user_id,
+                session_id,
+                question_id=questions[0].id,
+                answer=SubmittedAnswer(choice="Hello"),
+            )
+
+        assert raised.value.code is ErrorCode.QUIZ_SESSION_EXPIRED
+
+    async def test_abandoning_twice_is_a_no_op(
+        self, service: QuizService, session: AsyncSession
+    ) -> None:
+        user_id, lesson_id, _ = await _seed(session)
+        session_id = await _start(service, user_id, lesson_id)
+
+        first = await service.abandon_session(user_id, session_id)
+        second = await service.abandon_session(user_id, session_id)
+
+        assert first.status == second.status == SessionStatus.ABANDONED.value
