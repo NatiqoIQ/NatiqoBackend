@@ -22,6 +22,7 @@ has a test instead of silently shipping untested.
 
 from __future__ import annotations
 
+import json
 import re
 import uuid
 from collections.abc import AsyncIterator
@@ -920,8 +921,49 @@ PUBLIC_QUESTION_FIELDS = {
     "audioUrl",
 }
 
-#: Never crosses the wire before an attempt.
-ANSWER_KEY_FIELDS = ("correct_index", "accepted_answers", "explanation")
+#: Never crosses the wire before an attempt, in either spelling.
+#:
+#: Both cases matter, and the snake_case half is the one this file got wrong at first: the
+#: ORM and the read models name these fields ``correct_index`` and ``accepted_answers``,
+#: while everything a client receives is camelCase. Checking only the snake_case names
+#: therefore asserts the absence of a key that could never appear — so a real leak through a
+#: response schema, which is where a leaked field would be declared, would have passed.
+#: ``explanation`` is spelled the same on both sides of the boundary, so it appears once.
+ANSWER_KEY_FIELDS = (
+    "correctIndex",
+    "correct_index",
+    "acceptedAnswers",
+    "accepted_answers",
+    "explanation",
+)
+
+#: The rationale the seeder plants. Its *absence* from a pre-attempt payload is a separate
+#: assertion from the key check above: a rationale arriving under a name nobody listed would
+#: hand out the answer with the key list still clean.
+SEEDED_EXPLANATION = "A greeting."
+
+#: The accepted answer planted on the free-text question. Deliberately a phrase that neither
+#: the prompt nor the rationale contains, so that searching a body for it means something.
+SEEDED_ACCEPTED_ANSWER = "pleased to meet you"
+
+
+def _answer_key_keys(payload: Any) -> list[str]:
+    """Every answer-key key in a decoded payload, at any depth.
+
+    Recursive on purpose. The leak worth fearing is a nested one — a question inside a page's
+    ``items``, a question inside a session's ``questions`` — and a check that reads only the
+    top level is exactly the check a future envelope defeats.
+    """
+    found: list[str] = []
+    if isinstance(payload, dict):
+        for key, value in payload.items():
+            if key in ANSWER_KEY_FIELDS:
+                found.append(key)
+            found.extend(_answer_key_keys(value))
+    elif isinstance(payload, list):
+        for item in payload:
+            found.extend(_answer_key_keys(item))
+    return found
 
 #: Published for testing, but with nothing under it.
 DRAFT_LEVEL_CODE = "B1"
@@ -1971,3 +2013,185 @@ async def test_an_unknown_session_is_not_found(
 
     assert response.status_code == 404
     assert error_code(response) == "QUIZ_SESSION_NOT_FOUND"
+
+
+# =========================================== the answer key never crosses the wire before
+# The invariant this section exists for: until a learner has committed to an answer, no
+# endpoint may hand out ``correctIndex``, ``acceptedAnswers`` or ``explanation`` — for any
+# question, through any route, at any nesting depth. It is stated once here and checked
+# against the whole surface a client can read, rather than one route at a time, because the
+# question being asked is "is there *any* way to read the answer key early?" and only the
+# whole surface answers it.
+#
+# Three things make the check evidence rather than aspiration:
+#
+# * the sweeps walk every read available before an answer — the public catalogue, the session
+#   a client opens, and the session it re-opens — scanning each decoded payload recursively;
+# * the fixture is asserted to carry a real answer key, so "found nothing" cannot mean
+#   "there was nothing to find";
+# * the *values* are searched for as well as the keys, because the rationale is a sentence,
+#   and the failure worth catching is that sentence arriving under some other name.
+
+
+async def _question_of(session: AsyncSession, lesson_id: uuid.UUID) -> QuestionModel:
+    """The one seeded question of a lesson."""
+    return (
+        await session.scalars(select(QuestionModel).where(QuestionModel.lesson_id == lesson_id))
+    ).one()
+
+
+async def _seed_catalogue_with_a_key(session: AsyncSession) -> dict[str, uuid.UUID]:
+    """The seeder, plus a free-text question whose accepted answer is a real phrase.
+
+    Both gradeable shapes have to be present with a populated key. A multiple-choice row
+    stores ``accepted_answers = []`` by nature, so a sweep seeded with only that kind could
+    not fail the accepted-answer half of the check even if the field were leaking.
+    """
+    ids = await seed_catalogue(session)
+    question = await _question_of(session, ids["A2-lesson-1"])
+    question.kind = QuestionKind.FILL_BLANK.value
+    question.choices = []
+    question.correct_index = None
+    question.accepted_answers = [SEEDED_ACCEPTED_ANSWER]
+    await session.commit()
+    return ids
+
+
+async def test_the_seed_really_carries_an_answer_key(content_db: AsyncSession) -> None:
+    """Stops the sweeps below from passing vacuously.
+
+    "Nothing leaked" is only evidence if there was a key to leak. A renamed column or an
+    emptied seeder would leave every assertion in this section green and worthless, so the
+    fixture's own answer key — an index, a rationale and an accepted phrase — is asserted
+    first.
+    """
+    ids = await _seed_catalogue_with_a_key(content_db)
+
+    multiple_choice = await _question_of(content_db, ids["A1-lesson-1"])
+    free_text = await _question_of(content_db, ids["A2-lesson-1"])
+
+    assert multiple_choice.correct_index == 0
+    assert multiple_choice.explanation == SEEDED_EXPLANATION
+    assert free_text.accepted_answers == [SEEDED_ACCEPTED_ANSWER]
+
+
+async def test_no_pre_attempt_read_carries_the_answer_key(
+    client: AsyncClient, content_db: AsyncSession
+) -> None:
+    """Every public read available before an answer, checked as one surface.
+
+    A list rather than a test per route, because a *new* route has to be a deliberate
+    omission from this list rather than an unnoticed one: adding a question to a payload
+    somewhere in the catalogue fails here without anyone having to remember to look.
+    """
+    ids = await _seed_catalogue_with_a_key(content_db)
+    reads = (
+        ("levels", "/api/v1/content/levels"),
+        ("level units", "/api/v1/content/levels/A1/units"),
+        ("unit lessons", f"/api/v1/content/units/{ids['A1-unit']}/lessons"),
+        ("lesson detail", f"/api/v1/content/lessons/{ids['A1-lesson-1']}"),
+        ("free-text lesson detail", f"/api/v1/content/lessons/{ids['A2-lesson-1']}"),
+    )
+
+    for label, path in reads:
+        response = await client.get(path)
+
+        assert response.status_code == 200, f"{label}: {response.status_code} {response.text}"
+        assert _answer_key_keys(response.json()) == [], f"{label} leaked an answer key"
+        assert SEEDED_EXPLANATION not in response.text, f"{label} quoted the rationale"
+        assert SEEDED_ACCEPTED_ANSWER not in response.text, f"{label} quoted the accepted answer"
+
+
+async def test_no_session_read_before_an_answer_carries_the_answer_key(
+    client: AsyncClient, content_db: AsyncSession
+) -> None:
+    """The two authenticated reads a client makes before answering: open, then re-open.
+
+    A session serves the same questions the catalogue does through a different projection,
+    so it is checked separately — they are two places that can each leak on their own, and
+    the session payload is the one a client holds while the answer is still open.
+    """
+    headers, lesson_id = await _quiz_context(client, content_db)
+    started = await client.post(
+        "/api/v1/quiz/sessions",
+        json={"mode": "lesson", "lessonId": str(lesson_id)},
+        headers=headers,
+    )
+    assert started.status_code == 201, started.text
+
+    resumed = await client.get(
+        f"/api/v1/quiz/sessions/{started.json()['session']['id']}", headers=headers
+    )
+    assert resumed.status_code == 200, resumed.text
+
+    for label, response in (("session start", started), ("session resume", resumed)):
+        assert _answer_key_keys(response.json()) == [], f"{label} leaked an answer key"
+        assert SEEDED_EXPLANATION not in response.text, f"{label} quoted the rationale"
+
+
+def test_the_published_schema_declares_no_pre_attempt_answer_key_field() -> None:
+    """The spec is part of the public surface: clients are generated from it.
+
+    ``/openapi.json`` is unauthenticated, so a schema declaring ``correctIndex`` would
+    advertise the field to every caller and every generated client whether or not a response
+    ever sets it. The two pre-attempt question schemas are checked by name, and the two names
+    that never belong on the wire are checked across every schema in the document.
+    """
+    schemas = app.openapi()["components"]["schemas"]
+
+    for name in ("QuestionResponse", "SessionQuestionResponse"):
+        leaked = set(schemas[name]["properties"]) & set(ANSWER_KEY_FIELDS)
+        assert not leaked, f"{name} declares {sorted(leaked)}"
+
+    for name, schema in schemas.items():
+        rendered = json.dumps(schema)
+        for never_public in ("correctIndex", "acceptedAnswers"):
+            assert never_public not in rendered, f"{name} declares {never_public}"
+
+
+async def test_the_rationale_route_carries_the_rationale_and_nothing_else(
+    client: AsyncClient, content_db: AsyncSession
+) -> None:
+    """The one public route allowed to reveal an answer, and the narrowest shape for it.
+
+    ``explanation`` is the answer key in prose, so this route is the exception the whole
+    invariant is built around. What is pinned here is that the exception stays narrow: the
+    payload is the question id and the rationale, with no ``correctIndex`` and no
+    ``acceptedAnswers`` riding along. Contrast the lesson route above, which serves the same
+    question and quotes none of it.
+    """
+    ids = await seed_catalogue(content_db)
+    question = await _question_of(content_db, ids["A1-lesson-1"])
+
+    response = await client.get(f"/api/v1/content/questions/{question.id}/explanation")
+
+    assert response.status_code == 200, response.text
+    assert set(response.json()) == {"id", "explanation"}
+    assert response.json()["explanation"] == SEEDED_EXPLANATION
+    assert _answer_key_keys(response.json()) == ["explanation"], "only the rationale may appear"
+    assert "correctIndex" not in response.text
+    assert "acceptedAnswers" not in response.text
+
+
+async def test_the_rationale_route_answers_without_an_attempt(
+    client: AsyncClient, content_db: AsyncSession
+) -> None:
+    """Pins the one hole this file cannot close, so it is visible rather than implied.
+
+    ``GET /content/questions/{id}/explanation`` was written when no attempt engine existed:
+    the client was trusted to call it only after answering, because the server had nothing to
+    check that ordering against. That justification has expired — ``POST
+    /quiz/sessions/{id}/answers`` returns the rationale itself, and a session records exactly
+    which questions a learner answered — so the ordering the route documents as "the client is
+    expected to" is now enforceable. Until something enforces it, an unauthenticated caller
+    can read every rationale in the catalogue by walking question ids, and this test states
+    that as the current behaviour instead of leaving it unsaid.
+    """
+    ids = await seed_catalogue(content_db)
+    question = await _question_of(content_db, ids["A1-lesson-1"])
+
+    # No token, and no session has been started by anyone.
+    response = await client.get(f"/api/v1/content/questions/{question.id}/explanation")
+
+    assert response.status_code == 200
+    assert response.json()["explanation"] == SEEDED_EXPLANATION
