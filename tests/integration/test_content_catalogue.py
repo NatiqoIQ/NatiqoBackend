@@ -606,51 +606,6 @@ class TestGetLesson:
         assert detail.question_count == 0
 
 
-class TestQuestionExplanation:
-    """The feedback surface: one question's rationale, read after an attempt.
-
-    The same visibility rules as every other read — a question is reachable exactly
-    when its lesson is published, and "does not exist" and "not published yet" collapse
-    into the same 404.
-    """
-
-    async def test_the_explanation_is_read_by_question_id(
-        self, service: CatalogueService, session: AsyncSession
-    ) -> None:
-        level = _level_row(session, code="A1")
-        unit = _unit_row(session, level.id)
-        lesson = _lesson_row(session, unit.id, position=1)
-        row = _question_row(session, lesson.id, position=1, explanation="Bye is the farewell.")
-        await session.flush()
-
-        view = await service.get_question_explanation(row.id)
-
-        assert view.id == row.id
-        assert view.explanation == "Bye is the farewell."
-
-    async def test_a_question_under_a_draft_lesson_reports_not_found(
-        self, service: CatalogueService, session: AsyncSession
-    ) -> None:
-        level = _level_row(session, code="A1")
-        unit = _unit_row(session, level.id)
-        lesson = _lesson_row(session, unit.id, state=ContentState.APPROVED.value)
-        row = _question_row(session, lesson.id, position=1)
-        await session.flush()
-
-        with pytest.raises(NotFoundError) as raised:
-            await service.get_question_explanation(row.id)
-
-        assert raised.value.code is ErrorCode.QUESTION_NOT_FOUND
-
-    async def test_an_unknown_question_reports_the_same_error(
-        self, service: CatalogueService
-    ) -> None:
-        with pytest.raises(NotFoundError) as raised:
-            await service.get_question_explanation(uuid.uuid4())
-
-        assert raised.value.code is ErrorCode.QUESTION_NOT_FOUND
-
-
 class TestQuestionRepository:
     """The repository behind ``get_lesson``, exercised on its own boundary.
 

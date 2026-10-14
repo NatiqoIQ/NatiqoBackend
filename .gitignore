@@ -63,6 +63,7 @@ uploads/
 
 # ------------------------------------------------------------------- docs
 *.bak
+local.db.bak*
 
 # ------------------------------------------------------------------ postman
 # Newman is installed locally rather than committed: node_modules is large and the

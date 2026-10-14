@@ -71,8 +71,9 @@ class DevLoginRequest(WireModel):
     """Body of ``POST /auth/dev-login``.
 
     The credential check is the only one in the service: everywhere else the provider
-    owns the password and the server never sees one. That is exactly why this route
-    exists only when ``DEV_LOGIN_ENABLED`` is set, and never in production.
+    owns the password and the server never sees one. That is exactly why this route is
+    flag-guarded (``DEV_LOGIN_ENABLED``, on by default in every environment) rather
+    than always present.
     """
 
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)

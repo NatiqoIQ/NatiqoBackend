@@ -37,7 +37,12 @@ from app.modules.content.infrastructure.models import (
 )
 from app.modules.quiz.application.quiz_service import QuizService
 from app.modules.quiz.domain.entities import ProgressState, SessionMode, SessionStatus
-from app.modules.quiz.domain.policy import SubmittedAnswer
+from app.modules.quiz.domain.policy import FIRST_ATTEMPT, SubmittedAnswer
+from app.modules.quiz.domain.presentation import (
+    choice_order,
+    order_choices,
+    question_seed,
+)
 from app.modules.users.infrastructure.models import UserModel
 
 pytestmark = pytest.mark.integration
@@ -192,6 +197,22 @@ async def _answer_all(
     )
 
 
+def _expected_choices(
+    session_id: uuid.UUID, question: QuestionModel, attempt: int
+) -> tuple[str, ...]:
+    """The choices the service should serve for a question on a given attempt.
+
+    Recomputed from the same seed the service uses, so a test asserts the *wiring* — which
+    attempt feeds the order — rather than a hard-coded permutation that would only prove the
+    hash function is the hash function.
+    """
+    order = choice_order(
+        len(question.choices),
+        seed=question_seed(session_id=session_id, question_id=question.id, attempt=attempt),
+    )
+    return order_choices(tuple(question.choices), order)
+
+
 # ==================================================================== start session
 class TestStartSession:
     async def test_it_freezes_the_lesson_questions_in_order(
@@ -218,15 +239,18 @@ class TestStartSession:
             for leaked in ("correct_index", "accepted_answers", "explanation"):
                 assert not hasattr(question, leaked), f"{leaked} must not reach a session"
 
-    async def test_the_client_receives_points_and_choices(
+    async def test_the_client_receives_points_and_every_choice(
         self, service: QuizService, session: AsyncSession
     ) -> None:
+        """The options arrive shuffled per attempt, so presence — not order — is the contract."""
         user_id, lesson_id, _ = await _seed(session)
 
         detail = await service.start_session(user_id, mode=SessionMode.LESSON, lesson_id=lesson_id)
 
+        served = detail.questions[0].choices
         assert detail.questions[0].points == 2
-        assert detail.questions[0].choices == ("Hello", "Goodbye", "Thank you")
+        assert len(served) == 3
+        assert set(served) == {"Hello", "Goodbye", "Thank you"}
 
     async def test_a_draft_lesson_reads_as_not_found(
         self, service: QuizService, session: AsyncSession
@@ -355,20 +379,24 @@ class TestSubmitAnswer:
         assert graded.points_awarded == 3
         assert graded.correct_answer == {"text": "goes"}
 
-    async def test_the_letter_form_resolves_against_the_choices(
+    async def test_the_letter_form_resolves_against_the_served_choices(
         self, service: QuizService, session: AsyncSession
     ) -> None:
+        """The letter indexes the order the learner was shown, not the stored order."""
         user_id, lesson_id, questions = await _seed(session)
-        session_id = await _start(service, user_id, lesson_id)
+        detail = await service.start_session(user_id, mode=SessionMode.LESSON, lesson_id=lesson_id)
+        served = next(q for q in detail.questions if q.id == questions[2].id)
+
+        letter = "abcdefghijklmnopqrstuvwxyz"[served.choices.index("False")]
 
         graded = await service.submit_answer(
             user_id,
-            session_id,
+            detail.session.id,
             question_id=questions[2].id,
-            answer=SubmittedAnswer(choice="b"),
+            answer=SubmittedAnswer(choice=letter),
         )
 
-        assert graded.is_correct is True  # "False" is the second choice
+        assert graded.is_correct is True  # the letter points at "False" as served
         assert graded.correct_answer == {"choice": "False"}
 
     async def test_answering_every_question_reports_completion(
@@ -826,6 +854,150 @@ class TestResumeSession:
 
         assert resumed.session.status == SessionStatus.ACTIVE.value
         assert resumed.session.answered_count == 3
+
+
+# ================================================================ choice reshuffle
+class TestChoiceReshuffle:
+    """Choices are served in a per-attempt order, so a retry is not a memory test.
+
+    The order is a pure function of (session, question, attempt), which is what lets grading
+    and presentation agree without the server storing a permutation: resume recomputes what
+    it showed, and submit grades against the same recomputation.
+    """
+
+    async def test_an_untouched_question_is_shown_in_its_first_attempt_order(
+        self, service: QuizService, session: AsyncSession
+    ) -> None:
+        user_id, lesson_id, questions = await _seed(session)
+
+        detail = await service.start_session(user_id, mode=SessionMode.LESSON, lesson_id=lesson_id)
+
+        served = next(q for q in detail.questions if q.id == questions[0].id)
+        assert served.choices == _expected_choices(detail.session.id, questions[0], FIRST_ATTEMPT)
+        assert set(served.choices) == set(questions[0].choices)
+
+    async def test_resume_repeats_the_order_without_a_new_answer(
+        self, service: QuizService, session: AsyncSession
+    ) -> None:
+        """A reload must not shuffle under the learner: the same attempt is the same layout."""
+        user_id, lesson_id, _ = await _seed(session)
+        session_id = await _start(service, user_id, lesson_id)
+
+        first = await service.resume_session(user_id, session_id)
+        second = await service.resume_session(user_id, session_id)
+
+        assert [q.choices for q in first.questions] == [q.choices for q in second.questions]
+
+    async def test_a_wrong_answer_advances_the_question_to_the_next_attempt_order(
+        self, service: QuizService, session: AsyncSession
+    ) -> None:
+        user_id, lesson_id, questions = await _seed(session)
+        session_id = await _start(service, user_id, lesson_id)
+        await service.submit_answer(
+            user_id,
+            session_id,
+            question_id=questions[0].id,
+            answer=SubmittedAnswer(choice="Goodbye"),  # wrong: the question stays open
+        )
+
+        resumed = await service.resume_session(user_id, session_id)
+
+        served = next(q for q in resumed.questions if q.id == questions[0].id)
+        assert served.choices == _expected_choices(session_id, questions[0], FIRST_ATTEMPT + 1)
+
+    async def test_a_correct_answer_keeps_the_order_it_was_closed_on(
+        self, service: QuizService, session: AsyncSession
+    ) -> None:
+        """A closed question is only reviewed, so it holds the layout the learner answered."""
+        user_id, lesson_id, questions = await _seed(session)
+        session_id = await _start(service, user_id, lesson_id)
+        await service.submit_answer(
+            user_id,
+            session_id,
+            question_id=questions[0].id,
+            answer=SubmittedAnswer(choice="Hello"),  # correct: the question is closed
+        )
+
+        resumed = await service.resume_session(user_id, session_id)
+
+        served = next(q for q in resumed.questions if q.id == questions[0].id)
+        assert served.choices == _expected_choices(session_id, questions[0], FIRST_ATTEMPT)
+
+    async def test_grading_resolves_an_index_against_the_served_order(
+        self, service: QuizService, session: AsyncSession
+    ) -> None:
+        """The client's index means what the client saw, not the stored order."""
+        user_id, lesson_id, questions = await _seed(session)
+        detail = await service.start_session(user_id, mode=SessionMode.LESSON, lesson_id=lesson_id)
+        served = next(q for q in detail.questions if q.id == questions[0].id)
+
+        index = served.choices.index("Hello")
+        graded = await service.submit_answer(
+            user_id,
+            detail.session.id,
+            question_id=questions[0].id,
+            answer=SubmittedAnswer(choice=str(index)),
+        )
+
+        assert graded.is_correct is True
+        assert graded.correct_answer == {"choice": "Hello"}
+
+    async def test_a_retry_is_graded_against_the_newly_served_order_and_halved(
+        self, service: QuizService, session: AsyncSession
+    ) -> None:
+        user_id, lesson_id, questions = await _seed(session)
+        session_id = await _start(service, user_id, lesson_id)
+        await service.submit_answer(
+            user_id,
+            session_id,
+            question_id=questions[0].id,
+            answer=SubmittedAnswer(choice="Goodbye"),  # wrong
+        )
+
+        resumed = await service.resume_session(user_id, session_id)
+        served = next(q for q in resumed.questions if q.id == questions[0].id)
+        letter = "abcdefghijklmnopqrstuvwxyz"[served.choices.index("Hello")]
+
+        graded = await service.submit_answer(
+            user_id,
+            session_id,
+            question_id=questions[0].id,
+            answer=SubmittedAnswer(choice=letter),
+        )
+
+        assert graded.is_correct is True
+        assert graded.points_awarded == 1  # 2 points, halved on the retry
+        assert graded.correct_answer == {"choice": "Hello"}
+
+    async def test_each_retry_records_the_next_attempt_number(
+        self, service: QuizService, session: AsyncSession, uow: SqlAlchemyUnitOfWork
+    ) -> None:
+        """The attempt counter is the one piece of state the reshuffle is rebuilt from."""
+        user_id, lesson_id, questions = await _seed(session)
+        session_id = await _start(service, user_id, lesson_id)
+        await service.submit_answer(
+            user_id,
+            session_id,
+            question_id=questions[0].id,
+            answer=SubmittedAnswer(choice="Goodbye"),
+        )
+        await service.submit_answer(
+            user_id,
+            session_id,
+            question_id=questions[0].id,
+            answer=SubmittedAnswer(choice="Goodbye"),
+        )
+        await service.submit_answer(
+            user_id, session_id, question_id=questions[0].id, answer=SubmittedAnswer(choice="Hello")
+        )
+
+        stored = await uow.quiz_answers.list_for_session(session_id)
+        answer = next(a for a in stored if a.question_id == questions[0].id)
+
+        assert len(stored) == 1  # replaced in place, not appended
+        assert answer.attempt == 3
+        assert answer.is_correct is True
+        assert answer.points_awarded == 1
 
 
 # =================================================================== expiry

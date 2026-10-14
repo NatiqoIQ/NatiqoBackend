@@ -182,18 +182,18 @@ class TestTimeDecodeFailures:
             decode_time_cursor(raw)
 
     def test_a_foreign_version_is_refused(self) -> None:
-        raw = base64.urlsafe_b64encode(
-            b"t2:123:6f0a0f0e-0000-0000-0000-000000000000"
-        ).decode().rstrip("=")
+        raw = (
+            base64.urlsafe_b64encode(b"t2:123:6f0a0f0e-0000-0000-0000-000000000000")
+            .decode()
+            .rstrip("=")
+        )
 
         with pytest.raises(InvalidCursor, match="version"):
             decode_time_cursor(raw)
 
     def test_a_non_numeric_timestamp_is_refused(self) -> None:
         raw = (
-            base64.urlsafe_b64encode(
-                b"t1:soon:6f0a0f0e-0000-0000-0000-000000000000"
-            )
+            base64.urlsafe_b64encode(b"t1:soon:6f0a0f0e-0000-0000-0000-000000000000")
             .decode()
             .rstrip("=")
         )
@@ -212,9 +212,11 @@ class TestTimeDecodeFailures:
             decode_time_cursor(encode_time_cursor(_time_cursor())[:-6])
 
     def test_extra_fields_are_refused(self) -> None:
-        raw = base64.urlsafe_b64encode(
-            b"t1:0:6f0a0f0e-0000-0000-0000-000000000000:extra"
-        ).decode().rstrip("=")
+        raw = (
+            base64.urlsafe_b64encode(b"t1:0:6f0a0f0e-0000-0000-0000-000000000000:extra")
+            .decode()
+            .rstrip("=")
+        )
 
         with pytest.raises(InvalidCursor):
             decode_time_cursor(raw)

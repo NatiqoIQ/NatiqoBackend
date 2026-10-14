@@ -226,9 +226,7 @@ class TestUnlockMap:
         _unit_with_lessons(
             session, code="A1", lessons=[(1, "A1-L1"), (2, "A1-L2")], level_position=1
         )
-        _unit_with_lessons(
-            session, code="A2", lessons=[(1, "A2-L1")], level_position=2
-        )
+        _unit_with_lessons(session, code="A2", lessons=[(1, "A2-L1")], level_position=2)
         await session.flush()
 
         items = await service.unlock_map(UserId(user.id))
@@ -257,9 +255,7 @@ class TestUnlockMap:
         (lesson,) = _unit_with_lessons(session, code="A1", lessons=[(1, "L1")])
         questions = _questions(session, lesson)
         await session.flush()
-        await quiz.start_session(
-            UserId(user.id), mode=SessionMode.LESSON, lesson_id=lesson.id
-        )
+        await quiz.start_session(UserId(user.id), mode=SessionMode.LESSON, lesson_id=lesson.id)
 
         (item,) = await service.unlock_map(UserId(user.id))
 
@@ -364,9 +360,7 @@ class TestLessonProgress:
         self, service: ProgressService, session: AsyncSession
     ) -> None:
         user = _user_row(session)
-        (lesson,) = _unit_with_lessons(
-            session, code="A1", lessons=[(1, "L1")], lesson_state=_DRAFT
-        )
+        (lesson,) = _unit_with_lessons(session, code="A1", lessons=[(1, "L1")], lesson_state=_DRAFT)
         await session.flush()
 
         with pytest.raises(NotFoundError) as raised:
@@ -378,9 +372,7 @@ class TestLessonProgress:
         self, service: ProgressService, session: AsyncSession
     ) -> None:
         user = _user_row(session)
-        (lesson,) = _unit_with_lessons(
-            session, code="A1", lessons=[(1, "L1")], unit_state=_DRAFT
-        )
+        (lesson,) = _unit_with_lessons(session, code="A1", lessons=[(1, "L1")], unit_state=_DRAFT)
         await session.flush()
 
         with pytest.raises(NotFoundError) as raised:
@@ -532,9 +524,7 @@ class TestXpHistory:
         (lesson,) = _unit_with_lessons(session, code="A1", lessons=[(1, "L1")])
         await session.flush()
         base = datetime(2026, 2, 1, 9, 0, 0, tzinfo=UTC)
-        oldest = await _completed_session_row(
-            uow, UserId(user.id), lesson.id, at=base
-        )
+        oldest = await _completed_session_row(uow, UserId(user.id), lesson.id, at=base)
         middle = await _completed_session_row(
             uow, UserId(user.id), lesson.id, at=base + timedelta(hours=1)
         )
@@ -568,9 +558,7 @@ class TestXpHistory:
         assert first.has_more is True
         assert first.next_cursor is not None
 
-        second = await service.xp_history(
-            UserId(user.id), limit=2, cursor=first.next_cursor
-        )
+        second = await service.xp_history(UserId(user.id), limit=2, cursor=first.next_cursor)
 
         seen = [event.session_id for event in first.items] + [
             event.session_id for event in second.items

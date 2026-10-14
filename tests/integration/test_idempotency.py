@@ -119,9 +119,7 @@ def test_the_same_key_for_two_users_stores_two_different_records():
 def test_the_same_key_on_two_paths_stores_two_different_records():
     """A key is per-endpoint, so one endpoint's response cannot answer another's call."""
     start = build_key(method="POST", path="/quiz/sessions", user_id="u1", client_key="k")
-    finish = build_key(
-        method="POST", path="/quiz/sessions/s/complete", user_id="u1", client_key="k"
-    )
+    finish = build_key(method="POST", path="/quiz/sessions/s", user_id="u1", client_key="k")
     assert start != finish
 
 
@@ -369,7 +367,7 @@ async def test_a_retry_after_a_correction_is_not_rejected_forever(client: AsyncC
 
 async def test_get_requests_are_never_treated_as_idempotent_writes(client: AsyncClient):
     """A GET must not consume a key slot or be answered from the store."""
-    response = await client.get("/api/v1/content/levels", headers={"Idempotency-Key": "k"})
+    response = await client.get("/api/v1/content/tree", headers={"Idempotency-Key": "k"})
     assert response.status_code == 200
     assert "Idempotent-Replay" not in response.headers
 

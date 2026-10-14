@@ -117,3 +117,14 @@ class QuestionRepositoryPort(Protocol):
         caller-side "I already checked the lesson" step on this code path.
         """
         ...
+
+    async def list_published_by_ids(self, question_ids: Sequence[ContentId]) -> list[Question]:
+        """Several questions by id, keeping only those under a published lesson.
+
+        Unlike :meth:`list_for_lessons` this carries the state predicate itself: the
+        caller (the review queue, which holds raw question ids from a learner's cards)
+        has not necessarily checked that each lesson is still published. Ids that are
+        missing, or whose lesson has gone back to draft, are silently dropped, so the
+        returned list may be shorter than the input.
+        """
+        ...

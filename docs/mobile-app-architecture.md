@@ -44,17 +44,10 @@ POST   /api/v1/auth/refresh         POST   /api/v1/auth/logout
 GET    /api/v1/me                   PATCH  /api/v1/me
 DELETE /api/v1/me                   GET    /api/v1/me/devices
 DELETE /api/v1/me/devices/{id}
-GET    /api/v1/content/levels
-GET    /api/v1/content/levels/{code}/units
-GET    /api/v1/content/units/{id}/lessons
-GET    /api/v1/content/lessons/{id}
-GET    /api/v1/content/questions/{id}/explanation
+GET    /api/v1/content/tree          GET    /api/v1/content/lessons/{id}
 POST   /api/v1/quiz/sessions        GET    /api/v1/quiz/sessions/{id}
-POST   /api/v1/quiz/sessions/{id}/answers
-POST   /api/v1/quiz/sessions/{id}/complete
-POST   /api/v1/quiz/sessions/{id}/abandon
-GET    /api/v1/progress/summary     GET    /api/v1/progress/lessons/{id}
-GET    /api/v1/progress/unlocks     GET    /api/v1/progress/xp
+POST   /api/v1/quiz/sessions/{id}
+GET    /api/v1/progress             GET    /api/v1/progress/unlocks
 GET    /health                      GET    /ready
 ```
 
@@ -63,8 +56,9 @@ delivery, media upload, AI, vocabulary, admin. Any request to those prefixes ret
 `404`. Section 6 maps each of them to the roadmap phase that will unlock it.
 
 > The attempt engine and the progress reads both shipped: quiz sessions are **live and
-> server-graded** (§6.3), and the scores they write are served back by the four
-> `/progress` reads (§6.4) — summary, one lesson, the unlock map, and the XP history.
+> server-graded** (§6.3), and the scores they write are served back by the two `/progress`
+> reads (§6.4) — one overview that folds in the summary and the first XP page, and the
+> unlock map. The answer/complete/abandon verbs are one route, discriminated by `op`.
 
 ---
 
@@ -110,7 +104,7 @@ lib/
       bloc/         # catalogue_bloc (levels), unit_list_cubit, lesson_list_cubit
       presentation/ # levels_screen, units_screen, lessons_screen
     lesson/
-      data/         # lesson_repository (catalogue + explanation endpoints, local cache)
+      data/         # lesson_repository (catalogue endpoints, local cache)
       bloc/         # lesson_bloc, question_viewer_cubit
       presentation/ # lesson_screen, question_card.dart
     quiz/
@@ -216,7 +210,7 @@ Rules the client must honour (details in `mobile-integration-ar.md`):
   account data.
 - **Delete `cursor` when it is null** — sending `cursor=` yields `422`. This is the
   single most common integration bug.
-- No trailing slash. `/content/levels/` answers `307` and some clients drop the query
+- No trailing slash. `/content/tree/` answers `307` and some clients drop the query
   string on redirect.
 - Generate an `X-Request-ID` per request; the server echoes it — attach it to any
   error report.
@@ -278,8 +272,8 @@ milestone M3a onward:
 
 - `POST /quiz/sessions` — a lost response must replay the same `sessionId`, not open a
   second sitting.
-- `POST /quiz/sessions/{id}/answers` — a retry must not double-count an answer or
-  re-grade it as a fresh attempt.
+- `POST /quiz/sessions/{id}` with `{"op":"answer"}` — a retry must not double-count an
+  answer or re-grade it as a fresh attempt.
 
 ---
 
@@ -392,30 +386,30 @@ an existing learner's choices.
 
 | Screen | Endpoint | Design notes |
 | --- | --- | --- |
-| Levels | `GET /content/levels` | public (no auth gate!) — usable pre-sign-in; shows unit counts |
-| Units of a level | `GET /content/levels/{code}/units` | cursor pagination; infinite scroll |
-| Lessons of a unit | `GET /content/units/{id}/lessons` | cursor pagination |
+| Curriculum (levels → units → lessons) | `GET /content/tree` | public (no auth gate!) — usable pre-sign-in; nested, with `unitCount`/`lessonCount`/`questionCount`; one response, no pagination |
 | Lesson detail | `GET /content/lessons/{id}` | questions **without** `correctIndex`, `acceptedAnswers`, `explanation` — plus optional `imageUrl`/`audioUrl` aids |
-| Question explanation | `GET /content/questions/{id}/explanation` | the rationale, fetched **after** the learner answers; the one catalogue surface that reveals why |
 
-- All five are cacheable: `ETag` + `Cache-Control: max-age=60,
+- Both are cacheable: `ETag` + `Cache-Control: max-age=60,
   stale-while-revalidate=600`. Cache the body + ETag in drift; revalidate with
   `If-None-Match` and serve `304` from cache while offline.
+- The tree returns the **whole** published hierarchy at once, each level carrying its units
+  and each unit its lessons — so the app can render the curriculum from a single cached
+  response instead of walking three paginated lists.
 - Rate limit 240/min per IP — generous, but still surface `429`.
 - The catalogue is for **reading**. The lesson screen renders the lesson and its
-  questions with their image/audio aids — but it does not grade. The moment the learner
-  wants to answer for real, hand off to the **quiz player (§6.3)**; never compute a score
-  the server did not produce. (A lightweight "peek at the explanation" that calls
-  `GET /content/questions/{id}/explanation` is fine for a reader; it must not look like
-  practice with a result.)
+  questions with their image/audio aids — but it does not grade and never exposes the
+  rationale. The moment the learner wants to answer for real, hand off to the **quiz
+  player (§6.3)**, which grades on the server and returns the explanation per answer;
+  never compute a score the server did not produce.
 - `imageUrl`/`audioUrl` are same-origin `/media/...` paths (not under `/api/v1`),
-  immutable, and few — cache them for the life of the app. A `404` from the explanation
-  endpoint means the question is unpublished or unknown (`QUESTION_NOT_FOUND`), which is
-  indistinguishable on purpose.
+  immutable, and few — cache them for the life of the app. A question that is unpublished
+  or unknown is a `404` (`QUESTION_NOT_FOUND`) on the lesson endpoint, indistinguishable
+  from a never-existed question on purpose — so the catalogue cannot be used to probe the
+  un-published content pipeline.
 
 ### 6.3 Quiz — LIVE (the attempt engine)
 
-The core loop is here. Five authenticated endpoints under `/quiz`; every session is
+The core loop is here. Three authenticated endpoints under `/quiz`; every session is
 scoped to the caller and **graded on the server** — the answer key never reaches the
 client before an answer is committed.
 
@@ -423,9 +417,7 @@ client before an answer is committed.
 | --- | --- | --- |
 | Lesson → "Start practice" | `POST /quiz/sessions` | body `{ "mode": "lesson", "lessonId": "uuid" }` → `201` with the session and its questions **without** an answer key. Send an `Idempotency-Key` so a lost response replays the same `sessionId` rather than opening a second sitting |
 | Quiz player (resume) | `GET /quiz/sessions/{id}` | **resume after app kill** — the session plus the questions, and `answeredQuestionIds` so you skip exactly what is already done |
-| Answer one question | `POST /quiz/sessions/{id}/answers` | body `{ "questionId", "answer": { "choice" \| "text" } }` → `isCorrect`, `correctAnswer`, `explanation`, `pointsAwarded`, `answeredCount`, `totalCount`, `correctCount`, `isComplete` |
-| Finish | `POST /quiz/sessions/{id}/complete` | scores a **fully answered** sitting → the session + `scorePercent` |
-| Give up | `POST /quiz/sessions/{id}/abandon` | ends the sitting with no score; idempotent once abandoned |
+| Answer / finish / give up | `POST /quiz/sessions/{id}` | one route, three verbs, told apart by `op`. `{"op":"answer","questionId","answer":{"choice"\|"text"}}` → `result`: `isCorrect`, `correctAnswer`, `explanation`, `pointsAwarded`, `answeredCount`, `totalCount`, `correctCount`, `isComplete`; `{"op":"complete"}` → `result`: the session + `scorePercent`; `{"op":"abandon"}` → `result`: the ended session |
 
 Wire shapes (camelCase; field names are exact):
 
@@ -442,16 +434,19 @@ Wire shapes (camelCase; field names are exact):
                    "audioUrl":"/media/audio/….mp3" } ]   // ← no correctIndex / explanation
 }
 
-// POST /quiz/sessions/{id}/answers
-{ "questionId":"uuid", "answer": { "choice":"b" } }      // or { "text":"meet" }
+// POST /quiz/sessions/{id}   — one route, the verb is chosen by op
+{ "op":"answer", "questionId":"uuid", "answer": { "choice":"b" } }   // or { "text":"meet" }
+// or  { "op":"complete" }        // or  { "op":"abandon" }
 
-// 200
-{ "isCorrect":true, "correctAnswer":{"choice":"c"},       // only after answering
-  "explanation":"…", "pointsAwarded":1,
-  "answeredCount":1, "totalCount":6, "correctCount":1, "isComplete":false }
+// 200 (op=answer) — the result mirrors op
+{ "op":"answer",
+  "result": { "isCorrect":true, "correctAnswer":{"choice":"c"},      // only after answering
+              "explanation":"…", "pointsAwarded":1,
+              "answeredCount":1, "totalCount":6, "correctCount":1, "isComplete":false } }
 
-// POST /quiz/sessions/{id}/complete → 200
-{ "session": { … , "status":"completed", "xpAwarded":5 }, "scorePercent":100 }
+// POST /quiz/sessions/{id}  { "op":"complete" } → 200
+{ "op":"complete",
+  "result": { "session": { … , "status":"completed", "xpAwarded":5 }, "scorePercent":100 } }
 ```
 
 Client rules:
@@ -459,8 +454,8 @@ Client rules:
 - **Questions arrive without `correctIndex`, `acceptedAnswers` or `explanation`.**
   Correctness only comes back per answer, from the answers call. Never expect a key in
   the session payload.
-- **Submit answers one at a time, each with an `Idempotency-Key`.** A network retry must
-  not double-count.
+- **Submit answers one at a time, each as `{"op":"answer", …}` with an `Idempotency-Key`.**
+  A network retry must not double-count.
 - For a choice question, send the **choice's text** (`{"choice":"b"}` also accepts the
   zero-based index or the letter `a`–`f`); for `fill_blank`, send `{"text":"…"}` (graded
   case- and whitespace-insensitively). Sending the wrong shape is `422`, not a silent
@@ -494,40 +489,38 @@ and folded into `lesson_progress`, and the progress reads (§6.4) restate it.
 
 Completion **writes** durable per-lesson progress (state `in_progress` at start,
 `completed` at the end; `bestScore` keeps the maximum, `attempts` increments, `xpEarned`
-accumulates — a retry can only improve it), and four authenticated reads serve it back.
+accumulates — a retry can only improve it), and two authenticated reads serve it back.
 Every figure is **derived** from the rows the attempt engine wrote; nothing is projected or
 invented, and anything without a backing store (hearts, reviews due) is omitted rather
 than returned as a zero.
 
 | Screen | Endpoints |
 | --- | --- |
-| Home / dashboard | `GET /progress/summary` |
-| Lesson map | `GET /progress/lessons/{id}`, `GET /progress/unlocks` |
-| XP history | `GET /progress/xp?limit=&cursor=` |
+| Home / dashboard | `GET /progress` |
+| Lesson map | `GET /progress/unlocks` |
+| XP history | `GET /progress?limit=&cursor=` (the `xp` page) |
 
-`GET /progress/summary` → `totalXp`, `lessonsCompleted`, `lessonsInProgress`,
-`lessonsStarted`, `correctCount`, `answeredCount`, `accuracyPercent`,
+`GET /progress` → the summary fields plus the first page of XP history in one call, so the
+dashboard is a single request. Summary fields: `totalXp`, `lessonsCompleted`,
+`lessonsInProgress`, `lessonsStarted`, `correctCount`, `answeredCount`, `accuracyPercent`,
 `currentStreakDays`, `longestStreakDays`, `lastActivityAt`. The streak is measured in the
-learner's own timezone (profile `timezone`, `Asia/Baghdad` by default), not UTC.
-
-`GET /progress/lessons/{id}` → `lessonId`, `unitId`, `levelCode`, `title`, `position`,
-`state` (`available | in_progress | completed`), `locked`, `bestScore`, `attempts`,
-`xpEarned`, `completedAt`. A lesson whose lessons/unit/level chain is not published is a
-`404 LESSON_NOT_FOUND`; a lesson the learner has never touched still returns a view with a
-zeroed record.
+learner's own timezone (profile `timezone`, `Asia/Baghdad` by default), not UTC. The `xp`
+page is the paginated XP feed, **newest first**, one row per *completed* session:
+`sessionId`, `lessonId`, `xpAwarded`, `correctCount`, `totalCount`, `scorePercent`,
+`completedAt`. An abandoned sitting earned nothing and never appears. Cursor is opaque and
+ordered by `(completedAt, id)` — echo `meta.nextCursor` back verbatim as `?cursor=`, and
+page the feed by re-calling `/progress?limit=&cursor=` and reading `xp`.
 
 `GET /progress/unlocks` → `{ items: [{ lessonId, unitId, levelCode, title, position, state,
-locked, bestScore, completedAt }], total }`: every *published* lesson in curriculum order
-(level → unit → lesson position). Whole-map, not paginated — the published catalogue is the
-bound. **`locked` is present but always `false` today**: no gating rule is in force yet, so
-nothing blocks starting a lesson.
+locked, bestScore, attempts, xpEarned, completedAt }], total }`: every *published* lesson in
+curriculum order (level → unit → lesson position). Whole-map, not paginated — the published
+catalogue is the bound. **`locked` is present but always `false` today**: no gating rule is
+in force yet, so nothing blocks starting a lesson. A lesson the learner has never touched
+still returns a view with a zeroed record (`attempts: 0`, `xpEarned: 0`). The per-lesson
+`state` (`available | in_progress | completed`) is read straight off the map, so there is
+no separate per-lesson progress call.
 
-`GET /progress/xp` → the paginated XP feed, **newest first**, one row per *completed*
-session: `sessionId`, `lessonId`, `xpAwarded`, `correctCount`, `totalCount`, `scorePercent`,
-`completedAt`. An abandoned sitting earned nothing and never appears. Cursor is opaque and
-ordered by `(completedAt, id)` — echo `meta.nextCursor` back verbatim.
-
-All four are authenticated (`CurrentUser`), scoped to the caller, and `Cache-Control:
+Both are authenticated (`CurrentUser`), scoped to the caller, and `Cache-Control:
 no-store`. They share their own rate-limit scope, separate from the write budget.
 
 ### 6.5 Spaced repetition — PHASE 2
@@ -594,9 +587,8 @@ speaking/pronunciation answers later; do not stream audio through the API server
 | Quota display | `GET /ai/quota` |
 
 Design for failure: `AI_QUOTA_EXCEEDED`, `AI_TIMEOUT`, `AI_PROVIDER_ERROR` are normal
-outcomes — degrade to the authored explanation, already fetchable today via
-`GET /content/questions/{id}/explanation` (and returned per answer by the quiz engine),
-so the fallback path exists before the AI one.
+outcomes — degrade to the authored explanation, already returned today per answer by the
+quiz engine, so the fallback path exists before the AI one.
 
 ### 6.11 Vocabulary & grammar — PHASE 9
 
@@ -672,9 +664,10 @@ Every screen implements the same five states — build them once in `shared/widg
   "forgot password" link — they can never exist in this system. Show a loading state
   *inside* the tapped button; surface `AUTH_PROVIDER_UNAVAILABLE` as "sign-in with X
   isn't available yet".
-- **Levels/units/lessons:** list tiles with counts; prefetch the next cursor page when
-  the last visible item is within 5 of the end; keep scroll position on back
-  (ValueKey per route + `AutomaticKeepAlive`).
+- **Catalogue:** render levels → units → lessons from the single cached `GET
+  /content/tree` response, with counts on each tile. Keep scroll position on back
+  (ValueKey per route + `AutomaticKeepAlive`). Only the XP feed paginates cursor-style;
+  prefetch its next page when the last visible row is within 5 of the end.
 - **Lesson reader:** question card with choice buttons / true-false / text field per
   `kind` (`multiple_choice`, `true_false`, `fill_blank`), showing the `imageUrl`/
   `audioUrl` aid when present. The catalogue is for **reading**; the moment the learner
@@ -682,7 +675,7 @@ Every screen implements the same five states — build them once in `shared/widg
   a score the server did not produce.
 - **Quiz player:** one question at a time, with a progress indicator
   (`answeredCount`/`totalCount`). Disable the choices while an answer is in flight; show
-  the verdict, the correct answer and the explanation from the answers response in place;
+  the verdict, the correct answer and the explanation from the answer response in place;
   advance on the learner's tap, not automatically. Persist `sessionId` so an app kill
   resumes via `GET /quiz/sessions/{id}`. Enable **Finish** only when the server says
   `isComplete`. On `QUIZ_SESSION_EXPIRED`, offer "start again"; on
@@ -706,7 +699,7 @@ roadmap phase).
 | # | Scope | Depends on | Status |
 | --- | --- | --- | --- |
 | **M0** | Project scaffold: folder structure, theme, router, DI, Dio + interceptors (auth, single-flight refresh, request-id, error mapping), token store, `AuthBloc` state machine, CI lint+test | — | **buildable now** |
-| **M1** | Sign-in (Google/Apple), session restore, shell, catalogue: levels → units → lessons with cursor paging + ETag cache | live endpoints | **buildable now** |
+| **M1** | Sign-in (Google/Apple), session restore, shell, catalogue: the curriculum tree + lesson detail with ETag cache | live endpoints | **buildable now** |
 | **M2** | Lesson reader, profile (view/edit), devices, settings + notification preference toggles, close account | live endpoints | **buildable now** |
 | **M3a** | **Quiz player (the core loop):** start / resume / answer / complete / abandon, server-graded feedback with explanation, session resume across app kill | live quiz endpoints | **buildable now** |
 | **M3b** | Home dashboard, lesson map, XP history, progress tab | live progress reads (§6.4) | **buildable now** |
@@ -782,7 +775,8 @@ Rules:
 - [ ] `429` respects `Retry-After`; auth calls not auto-retried in a loop
 - [ ] Catalogue browsable offline from cache; offline banner shown honestly
 - [ ] Quiz grades only through the server: the session payload never supplies an answer
-      key, and no score is shown that `POST .../answers` / `.../complete` did not return
+      key, and no score is shown that `POST /quiz/sessions/{id}` (`op: answer|complete`)
+      did not return
 - [ ] A quiz session started twice (retry after a lost response) reuses the same
       `sessionId` via `Idempotency-Key`; answers carry one too
 - [ ] Quiz session `sessionId` is persisted and `GET /quiz/sessions/{id}` resumes after

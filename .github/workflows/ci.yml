@@ -1,0 +1,52 @@
+# Quality gates for Natiqo. Runs on every push and pull request.
+#
+# deploy.yml deploys to production on every push to main, so these checks are the
+# only thing standing between a broken commit and production. Keep this workflow's
+# required status checks enabled as a branch-protection rule on main.
+#
+# Gates mirror the local commands documented in README.md:
+#   uv run ruff check .            (includes the "S" bandit rule set)
+#   uv run ruff format --check app tests scripts
+#   uv run pyright
+#   uv run pytest --cov=app --cov-fail-under=80
+
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Sync dependencies
+        run: uv sync --frozen
+
+      - name: Lint (ruff, includes bandit "S" rules)
+        run: uv run ruff check .
+
+      - name: Format check
+        run: uv run ruff format --check app tests scripts
+
+      - name: Type check (pyright)
+        run: uv run pyright
+
+      - name: Tests + coverage gate
+        run: uv run pytest --cov=app --cov-report=term-missing --cov-fail-under=80

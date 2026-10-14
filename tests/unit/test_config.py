@@ -78,24 +78,29 @@ class TestCorsOrigins:
         )
 
 
-class TestDevLoginGuard:
-    """The development sign-in must be impossible to ship by accident."""
+class TestDevLogin:
+    """The development sign-in is available in every environment, production included.
 
-    def test_production_refuses_the_flag(self) -> None:
+    The flag defaults to on, and no environment refuses to boot because of it; the
+    only way it disappears is by explicitly setting ``DEV_LOGIN_ENABLED=false``.
+    """
+
+    def test_on_by_default(self) -> None:
+        """Read the shipped default off the model: the test env forces the flag off."""
+        assert Settings.model_fields["dev_login_enabled"].default is True
+
+    def test_production_does_not_flag_the_default(self) -> None:
+        settings = build(app_env="production")
+        assert not any(
+            "DEV_LOGIN_ENABLED" in problem for problem in settings.validate_environment()
+        )
+
+    def test_production_accepts_the_flag_explicitly(self) -> None:
         settings = build(app_env="production", dev_login_enabled=True)
-        assert any(
+        assert not any(
             "DEV_LOGIN_ENABLED" in problem for problem in settings.validate_environment()
         )
 
-    def test_production_is_clean_without_the_flag(self) -> None:
+    def test_can_still_be_switched_off(self) -> None:
         settings = build(app_env="production", dev_login_enabled=False)
-        assert not any(
-            "DEV_LOGIN_ENABLED" in problem for problem in settings.validate_environment()
-        )
-
-    def test_development_may_enable_the_flag(self) -> None:
-        """The guard is a production rule, not a ban: local development needs it."""
-        settings = build(app_env="development", dev_login_enabled=True)
-        assert not any(
-            "DEV_LOGIN_ENABLED" in problem for problem in settings.validate_environment()
-        )
+        assert settings.dev_login_enabled is False

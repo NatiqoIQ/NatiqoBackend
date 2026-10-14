@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import Annotated, Literal
 
 from pydantic import Field
 
@@ -22,14 +23,21 @@ from app.core.types import QuestionKind, SkillKind
 from app.modules.quiz.domain.entities import SessionMode
 
 __all__ = [
+    "AbandonCommand",
+    "AbandonCommandResult",
+    "AnswerCommand",
+    "AnswerCommandResult",
     "AnswerPayload",
+    "CompleteCommand",
+    "CompleteCommandResult",
     "CompletedSessionResponse",
     "GradedAnswerResponse",
+    "SessionCommand",
+    "SessionCommandResponse",
     "SessionDetailResponse",
     "SessionQuestionResponse",
     "SessionResponse",
     "StartSessionRequest",
-    "SubmitAnswerRequest",
 ]
 
 
@@ -45,11 +53,6 @@ class AnswerPayload(WireModel):
 
     choice: str | None = None
     text: str | None = None
-
-
-class SubmitAnswerRequest(WireModel):
-    question_id: uuid.UUID
-    answer: AnswerPayload
 
 
 class SessionQuestionResponse(WireModel):
@@ -102,3 +105,64 @@ class GradedAnswerResponse(WireModel):
 class CompletedSessionResponse(WireModel):
     session: SessionResponse
     score_percent: int = Field(ge=0, le=100)
+
+
+# ----------------------------------------------------------------- commands
+#
+# One route, three verbs. Answering, finishing and abandoning a sitting are all "do
+# something to an open session", so they share ``POST /quiz/sessions/{id}`` and are told
+# apart by an ``op`` discriminator rather than by three sibling paths. The union is the
+# contract: FastAPI publishes it as a ``oneOf`` with ``op`` as the discriminator, so a
+# client (and the generated Dart model) sees the three shapes and their fields up front
+# instead of discovering them across three endpoints.
+#
+# The ``op`` default exists so the handlers can build a result by naming the class alone;
+# a request must still carry ``op`` — a discriminated union will not extract a tag that
+# is absent, so an unlabelled body is a 422 rather than a silent guess.
+
+
+class AnswerCommand(WireModel):
+    """Grade one answer and return the verdict, the correct answer and the rationale."""
+
+    op: Literal["answer"] = "answer"
+    question_id: uuid.UUID
+    answer: AnswerPayload
+
+
+class CompleteCommand(WireModel):
+    """Score a fully answered sitting and record it against the lesson."""
+
+    op: Literal["complete"] = "complete"
+
+
+class AbandonCommand(WireModel):
+    """End a sitting without scoring it. Idempotent once abandoned."""
+
+    op: Literal["abandon"] = "abandon"
+
+
+SessionCommand = Annotated[
+    AnswerCommand | CompleteCommand | AbandonCommand,
+    Field(discriminator="op"),
+]
+
+
+class AnswerCommandResult(WireModel):
+    op: Literal["answer"] = "answer"
+    result: GradedAnswerResponse
+
+
+class CompleteCommandResult(WireModel):
+    op: Literal["complete"] = "complete"
+    result: CompletedSessionResponse
+
+
+class AbandonCommandResult(WireModel):
+    op: Literal["abandon"] = "abandon"
+    result: SessionResponse
+
+
+SessionCommandResponse = Annotated[
+    AnswerCommandResult | CompleteCommandResult | AbandonCommandResult,
+    Field(discriminator="op"),
+]

@@ -1,8 +1,8 @@
 """Read-only use cases for the public catalogue.
 
-Five entry points: browse levels, browse a level's units, browse a unit's lessons, open
-a lesson, and read a question's post-attempt explanation. Each one applies the same two
-rules, so they are written as one rule applied five times rather than five separate
+Five entry points: browse levels, browse a level's units, browse a unit's lessons, open a
+lesson, and compose the whole tree. The three paged reads and the tree each apply the same
+two rules, so they are written as one rule applied repeatedly rather than several separate
 rules:
 
 **Only published content is visible.** The repositories already filter on state and this
@@ -32,14 +32,16 @@ from app.core.pagination import (
     decode_position_cursor,
     paginate,
 )
+from app.core.responses import MAX_PAGE_SIZE
 from app.core.types import CEFRLevel, ContentId
 from app.core.uow import UnitOfWorkProtocol
 from app.modules.content.application.dto import (
     LessonDetailView,
     LessonSummaryView,
+    LevelNodeView,
     LevelView,
-    QuestionExplanationView,
     QuestionView,
+    UnitNodeView,
     UnitView,
 )
 from app.modules.content.domain.entities import Lesson, Level, Question, Unit
@@ -171,20 +173,49 @@ class CatalogueService:
             questions=tuple(_question_view(question) for question in questions),
         )
 
-    async def get_question_explanation(self, question_id: uuid.UUID) -> QuestionExplanationView:
-        """The rationale behind one question — the single support aid a learner gets.
+    # ------------------------------------------------------------------- tree
+    async def tree(self) -> tuple[LevelNodeView, ...]:
+        """The whole published catalogue as one nested tree: levels → units → lessons.
 
-        Unlike :meth:`get_lesson`, this deliberately *does* return the explanation. It
-        is the one surface that reveals an answer, so it is a separate endpoint rather
-        than a field nobody asked for on the lesson payload: the lesson stays safe
-        until the client decides the learner has answered and asks here.
+        This composes the three paged reads rather than reaching past them, so the
+        published-only and 404 rules keep living in exactly one place. It is *not* a
+        request to the per-level or per-unit endpoints: those are gone, and this is what
+        replaced them — one response an app shell can hold whole instead of a walk.
+
+        Each level of nesting is capped at ``MAX_PAGE_SIZE``. A curriculum that exceeds
+        one page of levels, or one page of units inside a level, is truncated here; that
+        is a deliberate ceiling on a single cached response, not a paging affordance, and
+        the real curriculum is far below it. The result is cached for a minute upstream,
+        so the handful of composition queries cost once per cache window, not per caller.
         """
-        question = await self._uow.questions.get_published(ContentId(question_id))
-        if question is None:
-            raise NotFoundError(
-                "There is no published question with that id.", code=ErrorCode.QUESTION_NOT_FOUND
+        level_page = await self.list_levels(limit=MAX_PAGE_SIZE)
+        nodes: list[LevelNodeView] = []
+        for level in level_page.items:
+            unit_page = await self.list_units(level.code, limit=MAX_PAGE_SIZE)
+            nodes.append(
+                LevelNodeView(
+                    id=level.id,
+                    code=level.code,
+                    title=level.title,
+                    description=level.description,
+                    position=level.position,
+                    unit_count=level.unit_count,
+                    units=tuple([await self._unit_node(unit) for unit in unit_page.items]),
+                )
             )
-        return QuestionExplanationView(id=question.id, explanation=question.explanation)
+        return tuple(nodes)
+
+    async def _unit_node(self, unit: UnitView) -> UnitNodeView:
+        lesson_page = await self.list_lessons(unit.id, limit=MAX_PAGE_SIZE)
+        return UnitNodeView(
+            id=unit.id,
+            level_code=unit.level_code,
+            title=unit.title,
+            description=unit.description,
+            position=unit.position,
+            lesson_count=unit.lesson_count,
+            lessons=tuple(lesson_page.items),
+        )
 
 
 # ------------------------------------------------------------------- internals

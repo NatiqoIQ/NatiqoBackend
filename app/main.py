@@ -160,9 +160,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         responses=ERROR_RESPONSES,
     )
     # The development sign-in is mounted here rather than on ``api_router`` because
-    # the flag is read from this app's own settings: a production app object must not
-    # contain the route at all, and ``validate_environment`` has already refused to
-    # boot such a process with the flag set (see ``Settings.dev_login_enabled``).
+    # the flag is read from this app's own settings, so the route can be omitted from
+    # the router and the OpenAPI document entirely — not merely refused at request
+    # time. The flag defaults to on in every environment (see ``Settings``); set
+    # ``DEV_LOGIN_ENABLED=false`` to keep the route out of the app object.
     if app_settings.dev_login_enabled:
         app.include_router(
             dev_login_router,

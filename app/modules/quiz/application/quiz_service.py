@@ -46,6 +46,13 @@ from app.modules.quiz.domain.policy import (
     SubmittedAnswer,
     grade_answer,
 )
+from app.modules.quiz.domain.presentation import (
+    choice_order,
+    order_choices,
+    order_correct_index,
+    question_seed,
+)
+from app.modules.quiz.domain.review import new_card
 
 __all__ = ["QuizService"]
 
@@ -112,7 +119,10 @@ class QuizService:
 
         return SessionDetailView(
             session=_session_view(session, answered_question_ids=()),
-            questions=tuple(_question_view(question) for question in questions),
+            questions=tuple(
+                _question_view(question, order=_choice_order(session.id, question, FIRST_ATTEMPT))
+                for question in questions
+            ),
         )
 
     # =============================================================== resume
@@ -122,6 +132,11 @@ class QuizService:
         A completed or abandoned session is returned as it stands so the client can render
         its result; only an expired lease is refused, because there is nothing left to
         resume.
+
+        The choices are re-served in the order the learner is on: the first attempt's order
+        for an untouched question, and the *next* attempt's order for one that was missed —
+        so a client that reloads after a wrong answer sees a fresh layout, and a client that
+        only reloads sees the one it already had.
         """
         session = await self._require_owned(user_id, session_id)
         await self._expire_if_due(session)
@@ -129,10 +144,19 @@ class QuizService:
         questions = await self._load_session_questions(session)
         answers = await self._uow.quiz_answers.list_for_session(session.id)
         answered = tuple(answer.question_id for answer in answers)
+        by_question = {answer.question_id: answer for answer in answers}
 
         return SessionDetailView(
             session=_session_view(session, answered_question_ids=answered),
-            questions=tuple(_question_view(question) for question in questions),
+            questions=tuple(
+                _question_view(
+                    question,
+                    order=_choice_order(
+                        session.id, question, _display_attempt(by_question.get(question.id))
+                    ),
+                )
+                for question in questions
+            ),
         )
 
     # =============================================================== answer
@@ -177,10 +201,13 @@ class QuizService:
                 code=ErrorCode.QUESTION_NOT_FOUND,
             )
 
-        # A first answer is attempt one; re-answering a question that was missed is a retry,
-        # and a correct retry is worth half (see ``domain.policy.points_awarded``).
-        attempt = FIRST_ATTEMPT if prior is None else FIRST_ATTEMPT + 1
-        graded = grade_answer(_gradeable(question), answer, attempt=attempt)
+        # A first answer is attempt one; every re-answer of a missed question is one more.
+        # The attempt number decides two things: a correct retry is worth half (see
+        # ``domain.policy.points_awarded``), and the choices are served in that attempt's
+        # order, so grading is done against exactly the layout the learner is looking at.
+        attempt = _next_attempt(prior)
+        order = _choice_order(session.id, question, attempt)
+        graded = grade_answer(_gradeable(question, order=order), answer, attempt=attempt)
 
         resolved = QuizAnswer(
             id=prior.id if prior is not None else new_id(),
@@ -191,6 +218,7 @@ class QuizService:
             is_correct=graded.is_correct,
             points_awarded=graded.points_awarded,
             explanation=graded.explanation,
+            attempt=attempt,
         )
         if prior is None:
             await self._uow.quiz_answers.add(resolved)
@@ -200,6 +228,7 @@ class QuizService:
             await self._uow.quiz_answers.save(resolved)
         if graded.is_correct and (prior is None or not prior.is_correct):
             session.register_correct()
+            await self._ensure_review_card(user_id, question_id)
         await self._uow.quiz_sessions.save(session)
         await self._uow.commit()
 
@@ -336,6 +365,20 @@ class QuizService:
         progress.record_completion(score_percent=score_percent, xp=xp)
         await self._uow.lesson_progress.save(progress)
 
+    async def _ensure_review_card(self, user_id: UserId, question_id: uuid.UUID) -> None:
+        """Seed a spaced-repetition card the first time a question is answered correctly.
+
+        Idempotent: the lookup by ``(user, question)`` is checked before inserting, so
+        answering the same question correctly in a later lesson does not open a second card
+        — and the unique constraint backs that up at the database if two requests race. The
+        card is left ``NEW`` with a due date one day out; the SM-2 schedule only starts when
+        the learner reviews it.
+        """
+        existing = await self._uow.review_cards.get_for_question(user_id, question_id)
+        if existing is not None:
+            return
+        await self._uow.review_cards.add(new_card(user_id, question_id))
+
 
 # ------------------------------------------------------------------ helpers
 def _require_answerable(session: QuizSession) -> None:
@@ -375,22 +418,68 @@ def _given_answer(answer: SubmittedAnswer) -> dict[str, str]:
     return {"text": answer.text or ""}
 
 
-def _gradeable(question: Question) -> GradeableQuestion:
+def _next_attempt(prior: QuizAnswer | None) -> int:
+    """Which try the learner is about to make: the first, or one past what they have done."""
+    return FIRST_ATTEMPT if prior is None else prior.attempt + 1
+
+
+def _display_attempt(prior: QuizAnswer | None) -> int:
+    """The attempt whose choice order to serve for a question in a session view.
+
+    An untouched question is shown for the first attempt. A question that was missed is
+    shown for the retry that follows, so reloading after a wrong answer hands back the fresh
+    layout rather than the one already seen. A question already answered correctly is closed
+    and keeps the order it was closed on, so a review screen matches what the learner saw.
+    """
+    if prior is None:
+        return FIRST_ATTEMPT
+    if prior.is_correct:
+        return prior.attempt
+    return prior.attempt + 1
+
+
+def _choice_order(session_id: uuid.UUID, question: Question, attempt: int) -> tuple[int, ...]:
+    """The display order for a question's choices on a given attempt.
+
+    Free-text questions carry no choices, so there is no order to compute; the empty tuple
+    flows through :func:`order_choices` unchanged.
+    """
+    if not question.choices:
+        return ()
+    seed = question_seed(session_id=session_id, question_id=question.id, attempt=attempt)
+    return choice_order(len(question.choices), seed=seed)
+
+
+def _gradeable(question: Question, *, order: tuple[int, ...]) -> GradeableQuestion:
+    """Project a question onto grading, in the order the learner was shown.
+
+    Choice questions are translated into display space — the choices permuted and the
+    correct index remapped — so a letter or index the client derived from what it saw
+    resolves correctly. Free-text items have no order and pass through untouched.
+    """
+    if order and question.choices:
+        choices = order_choices(question.choices, order)
+        correct_index = order_correct_index(order, question.correct_index)
+    else:
+        choices = question.choices
+        correct_index = question.correct_index
     return GradeableQuestion(
         kind=question.kind,
-        choices=question.choices,
-        correct_index=question.correct_index,
+        choices=choices,
+        correct_index=correct_index,
         accepted_answers=question.accepted_answers,
         points=question.points,
         explanation=question.explanation,
     )
 
 
-def _question_view(question: Question) -> QuestionView:
+def _question_view(question: Question, *, order: tuple[int, ...]) -> QuestionView:
     """Project a question onto what a learner may see *before* answering.
 
     Built by omission: no ``correct_index``, no ``accepted_answers``, no ``explanation``.
-    The media aids stay, because they teach the item rather than reveal the answer.
+    The media aids stay, because they teach the item rather than reveal the answer. Choices
+    are served in ``order``, a per-attempt permutation, so the correct option's position is
+    not the stable thing a learner could carry from one try to the next.
     """
     return QuestionView(
         id=question.id,
@@ -398,7 +487,7 @@ def _question_view(question: Question) -> QuestionView:
         kind=question.kind,
         skill=question.skill,
         prompt=question.prompt,
-        choices=question.choices,
+        choices=order_choices(question.choices, order),
         points=question.points,
         image_url=question.image_url,
         audio_url=question.audio_url,

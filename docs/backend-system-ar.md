@@ -5,6 +5,12 @@
 > و[`backend-roadmap-ar.md`](backend-roadmap-ar.md). وهذان مستندان للعقد والخطة؛ أما هذا المستند
 > فهو للبنية الداخلية.
 
+> ⚠️ **لقطة مرحلة (snapshot).** يصف هذا المستند سطح الـAPI في **المرحلة الأولى**
+> (حسابات + كتالوج محتوى للقراءة). الـquiz والتقدّم بُنيا لاحقًا، ومسار كتالوج الشرح
+> `GET /content/questions/{id}/explanation` **حُذف** — صار الشرح يُعاد مع إجابة الـquiz.
+> للحالة الحالية راجع [`mobile-app-architecture.md`](mobile-app-architecture.md)
+> و[`client-contract.md`](client-contract.md).
+
 ---
 
 ## 0. الملخّص في سطرين
@@ -14,7 +20,7 @@
 بتقسيم **Clean Architecture داخل كل وحدة**. لا توجد كلمة مرور في النظام إطلاقًا: الدخول
 عبر Google أو Apple فقط.
 
-الحالة اليوم: **حسابات + كتالوج محتوى للقراءة + شرح السؤال بعد الإجابة**. الـquiz والتقدّم
+حالة هذه المرحلة: **حسابات + كتالوج محتوى للقراءة**. الـquiz والتقدّم
 والمراجعة المتباعدة لم تُبنَ بعد (كل طلباتها تُرجع `404`).
 
 ---
@@ -107,18 +113,18 @@ presentation  →  application  →  domain   ←  infrastructure
 ```python
 @asynccontextmanager
 async def lifespan(app):
-    _check_config(settings)      # 1) ارفض الإقلاع بإعداد غير آمن قبل أي شيء
-    configure_logging(...)       # 2) فعّل التسجيل
-    import_all_models()          # 3) سجّل كل جداول الـORM
-    configure_mappers()          # 4) تحقّق من العلاقات قبل الخدمة (الفشل عند الإقلاع لا عند أول طلب)
+    _check_config(settings)  # 1) ارفض الإقلاع بإعداد غير آمن قبل أي شيء
+    configure_logging(...)  # 2) فعّل التسجيل
+    import_all_models()  # 3) سجّل كل جداول الـORM
+    configure_mappers()  # 4) تحقّق من العلاقات قبل الخدمة (الفشل عند الإقلاع لا عند أول طلب)
     yield
-    await drain_ai_usage()       # 5) فرّغ كتابات استخدام الـAI
-    await dispose_engine()       # 6) أغلق وصلات قاعدة البيانات
+    await drain_ai_usage()  # 5) فرّغ كتابات استخدام الـAI
+    await dispose_engine()  # 6) أغلق وصلات قاعدة البيانات
 ```
 
 - **التحقّق أولًا:** `Settings.validate_environment()` (في [`config.py`](../app/core/config.py))
   يرفض الإقلاع في الإنتاج إذا كان `JWT_SECRET` ما زال قيمة تطوير، أو الأسرار متطابقة، أو
-  `REDIS_URL` غير مضبوط، أو لم يُضبط أي مزوّد دخول، أو `DEV_LOGIN_ENABLED` مفعّلًا.
+  `REDIS_URL` غير مضبوط، أو لم يُضبط أي مزوّد دخول.
 - **تسجيل النماذج:** [`registry.py`](../app/core/registry.py) يسرد كل ملفات النماذج يدويًا،
   لأن نموذجًا غير مُستورَد لا يظهر في `Base.metadata` فيكتب Alembic هجرة **تحذف** الجدول،
   أو يفشل توليد الـDDL بخطأ مفتاح أجنبي.
@@ -230,9 +236,10 @@ SDK على الجهاز (google_sign_in / sign_in_with_apple)
 
 - `DELETE /me` = **إغلاق فوري لا رجعة فيه** (soft delete يحفظ الصف للسجل)، ويُبطل كل سلاسل
   الـrefresh في نفس المعاملة.
-- **`dev-login`** (`admin/admin`) مسار تطويري يُركَّب **فقط** عند `DEV_LOGIN_ENABLED`؛ يرفض
-  الإنتاج الإقلاع بمفعّله، والمسار **غير موجود** في كائن التطبيق إنتاجيًا (لا في الراوتر ولا
-  في OpenAPI).
+- **`dev-login`** (`admin/admin`) باب خلفي ثابت يُركَّب متى كان `DEV_LOGIN_ENABLED` مفعّلًا،
+  وهو **مفعّل افتراضيًا في كل البيئات بما فيها الإنتاج**. لتعطيله ضع (`DEV_LOGIN_ENABLED=false`)
+  فيغيب المسار كليًا من كائن التطبيق (لا في الراوتر ولا في OpenAPI). اعتماد `admin`/`admin`
+  في الإنتاج يعني أن أي شخص يعرفها قادر على الدخول.
 
 ---
 
@@ -257,23 +264,23 @@ Level (A1..C2) → Unit → Lesson → Question
 - طبقتان مستقلّتان للحماية: (أ) كائن القراءة `QuestionView` **لا يذكر** الحقول، (ب) مخطط
   الأسلاك `QuestionResponse` **لا يعلنها** ([`schemas.py`](../app/modules/content/presentation/schemas.py)).
   إضافة حقل للكيان لا تكفي لنشره.
-- الشيء الوحيد الذي يكشف الإجابة هو مسار منفصل: `GET /content/questions/{id}/explanation`.
+- الشيء الوحيد الذي يعيد الإجابة (الصحّ + الشرح) هو محرّك المحاولات:
+  `POST /quiz/sessions/{id}` بأمر `{"op":"answer"}`. (سابقًا كان هناك مسار كتالوج منفصل
+  `GET /content/questions/{id}/explanation` وقد **حُذف** فلم يبقَ للكتالوج سطح يكشفها.)
 - **غير المنشور وغير الموجود = نفس `404`**؛ لا `403` (لئلا يصبح الـAPI شريط تقدّم لخطّة التحرير).
 
 ### 8.3 نقاط النهاية (عامة بلا مصادقة)
 
 | المسار | الوصف |
 | --- | --- |
-| `GET /content/levels` | المستويات + عدد الوحدات |
-| `GET /content/levels/{code}/units` | وحدات مستوى (مؤشّر) |
-| `GET /content/units/{id}/lessons` | دروس وحدة (مؤشّر) |
+| `GET /content/tree` | الشجرة كاملة في ردّ واحد: المستويات ← الوحدات ← الدروس، مع العدّادات |
 | `GET /content/lessons/{id}` | درس + أسئلته **بلا مفتاح إجابة** |
-| `GET /content/questions/{id}/explanation` | الشرح (بعد الإجابة) |
 
-- **الترقيم بـ`keyset` لا `OFFSET`:** المؤشّر يُبنى من آخر صف **سُلِّم فعلًا** (مفتاح
-  `(position, id)`)، فإدراج عنصر بين الطلبات لا يُسقط عنصرًا. المؤشّر **معتِم** ولا يُرمَّم
-  إن كان تالفًا (بل `422`).
-- **العدّ باستعلام مجمَّع واحد** لكل صفحة، لا استعلام لكل صف.
+- **الشجرة كاملة بلا ترقيم:** مسار واحد غير مصفّح يعيد الهيكل كله (nest) بعدّادات
+  `unitCount`/`lessonCount`/`questionCount`، فلا يوجد مؤشّر يتنقّل العميل عبره. الدروس تُترك
+  للتفاصيل عبر `/content/lessons/{id}`. (سابقًا كان ثلاثة مسارات مصفّحة
+  `/content/levels`، `/content/levels/{code}/units`، `/content/units/{id}/lessons` **وقد حُذفت**.)
+- **العدّ باستعلام مجمَّع واحد** لكل شجرة، لا استعلام لكل صف.
 - **قابل للكاش:** `ETag` + `Cache-Control: max-age=60, stale-while-revalidate=600`، وإعادة
   التحقق بـ`If-None-Match` تردّ `304` بلا جسم. `404` لا تُوضع في الكاش.
 
@@ -403,7 +410,7 @@ uv run uvicorn app.main:app --reload --port 8100
 
 ---
 
-## 16. النقاط الحيّة اليوم (16 عملية)
+## 16. النقاط الحيّة اليوم (18 عملية)
 
 ```
 POST   /api/v1/auth/google          POST   /api/v1/auth/apple
@@ -411,13 +418,20 @@ POST   /api/v1/auth/refresh         POST   /api/v1/auth/logout
 GET    /api/v1/me                   PATCH  /api/v1/me
 DELETE /api/v1/me                   GET    /api/v1/me/devices
 DELETE /api/v1/me/devices/{id}
-GET    /api/v1/content/levels
-GET    /api/v1/content/levels/{code}/units
-GET    /api/v1/content/units/{id}/lessons
-GET    /api/v1/content/lessons/{id}
-GET    /api/v1/content/questions/{id}/explanation
+GET    /api/v1/content/tree         GET    /api/v1/content/lessons/{id}
+POST   /api/v1/quiz/sessions        GET    /api/v1/quiz/sessions/{id}
+POST   /api/v1/quiz/sessions/{id}
+GET    /api/v1/progress             GET    /api/v1/progress/unlocks
 GET    /health                      GET    /ready
 ```
+
+> الـquiz والتقدّم يظهران هنا لأنهما مبنيّان فعلًا: `POST /quiz/sessions/{id}` مسار **موحَّد**
+> لأوامر الإجابة/الإنهاء/الإلغاء عبر حقل `op` (discriminated union)، و`GET /progress` يجمع
+> النظرة العامّة مع أوّل صفحة من سجل الـXP، و`GET /progress/unlocks` خريطة الفتح.
+>
+> **`POST /auth/dev-login` مستثنى من هذه القائمة عن قصد**: يُركَّب متى كان `DEV_LOGIN_ENABLED`
+> مفعّلًا (وهو الافتراضي في كل البيئات)، فمساره اختياري ولا يُحتسب ضمن الـ18. فعّله أو عطّله
+> بالمفتاح (انظر §7).
 
 ---
 
@@ -425,11 +439,13 @@ GET    /health                      GET    /ready
 
 | مبني اليوم | مُخطَّط (لا مسارات له بعد → `404`) |
 | --- | --- |
-| الحسابات والدخول الاجتماعي وإدارة الأجهزة | quiz + progress (المرحلة 1) |
-| كتالوج المحتوى (قراءة فقط) | SRS / مراجعة متباعدة (المرحلة 2) |
-| شرح السؤال بعد الإجابة | قلوب/سلسلة/إنجازات (المرحلة 3) |
-| مقياس استخدام الـAI والخلفيات البديلة | اشتراكات ودفع (المرحلة 4) |
-| الكاش وETag والتقييد وعدم التكرار | إشعارات دفع، وسائط مستخدم، AI، مفردات (5–9) |
+| الحسابات والدخول الاجتماعي وإدارة الأجهزة | مراجعة متباعدة / SRS (المرحلة 2) |
+| كتالوج المحتوى (قراءة فقط: الشجرة + تفاصيل الدرس) | قلوب/سلسلة/إنجازات متقدّمة (المرحلة 3) |
+| محرّك المحاولات (quiz): بدء/استئناف/إجابة/إنهاء/إلغاء | اشتراكات ودفع (المرحلة 4) |
+| التقدّم وXP (النظرة العامّة + خريطة الفتح) | إشعارات دفع، وسائط مستخدم، AI، مفردات (5–9) |
+| ~~شرح السؤال بعد الإجابة~~ (حُذف مسار الكتالوج؛ الشرح الآن مع إجابة الـquiz) | |
+| مقياس استخدام الـAI والخلفيات البديلة | |
+| الكاش وETag والتقييد وعدم التكرار | |
 
 أكواد الأخطاء والثوابت والأحداث (`QuizCompleted`, `QuestionAnswered` …) **محجوزة مسبقًا**
 لكنها ليست موصولة بأي مسار أو تخزين حتى الآن.

@@ -125,13 +125,11 @@ async def test_a_wrong_credential_is_rejected(
 async def test_the_route_is_not_mounted_without_the_flag() -> None:
     """The suite's default app has the flag off: the path must not exist at all.
 
-    Not a 401 — an absent route. That is the state production runs in, and it is the
-    point of the guard: nothing is refused at request time because nothing is there
-    to refuse.
+    Not a 401 — an absent route. That is the state a deployment chooses by setting
+    ``DEV_LOGIN_ENABLED=false``, and it is the point of the flag: nothing is refused
+    at request time because nothing is there to refuse.
     """
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://api.test"
-    ) as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://api.test") as client:
         response = await client.post("/api/v1/auth/dev-login", json=DEV_CREDENTIALS)
 
     assert response.status_code == 404, response.text

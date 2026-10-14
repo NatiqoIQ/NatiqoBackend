@@ -69,8 +69,11 @@ class LessonProgressView:
 class UnlockMapItemView:
     """One node of the curriculum-ordered progress map.
 
-    Leaner than :class:`LessonProgressView` because the map draws the whole course at
-    once and only needs enough per lesson to colour the node.
+    Carries the learner's record for the lesson — ``best_score``, ``attempts`` and
+    ``xp_earned`` — not just enough to colour the node. The map is the only place a
+    single lesson's record is read now that the per-lesson endpoint is gone, so the
+    record travels with it rather than needing a second request the client would have to
+    join back onto the map itself.
     """
 
     lesson_id: uuid.UUID
@@ -81,6 +84,8 @@ class UnlockMapItemView:
     state: str
     locked: bool
     best_score: int
+    attempts: int
+    xp_earned: int
     completed_at: datetime | None
 
 

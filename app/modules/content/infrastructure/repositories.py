@@ -188,14 +188,11 @@ class SqlAlchemyLessonRepository:
         The whole chain is filtered in one query: a lesson under a draft unit or level is
         not published, because visibility is inherited and not stored redundantly.
         """
-        stmt = (
-            _placement_select()
-            .order_by(
-                LevelModel.position,
-                UnitModel.position,
-                LessonModel.position,
-                LessonModel.id,
-            )
+        stmt = _placement_select().order_by(
+            LevelModel.position,
+            UnitModel.position,
+            LessonModel.position,
+            LessonModel.id,
         )
         rows = (await self._session.execute(stmt)).all()
         return [_to_placement(row) for row in rows]
@@ -244,3 +241,25 @@ class SqlAlchemyQuestionRepository:
         )
         model = (await self._session.execute(stmt)).scalar_one_or_none()
         return to_question(model) if model is not None else None
+
+    async def list_published_by_ids(self, question_ids: Sequence[ContentId]) -> list[Question]:
+        """Several questions by id, only those under a published lesson.
+
+        The join carries the state predicate, so a question that is gone, or whose
+        lesson has slipped back to draft, simply does not come back. A review card can
+        outlive the published state of the question it points at, and this is where that
+        is made safe rather than being the caller's problem.
+        """
+        if not question_ids:
+            return []
+        stmt = (
+            select(QuestionModel)
+            .join(LessonModel, LessonModel.id == QuestionModel.lesson_id)
+            .where(
+                QuestionModel.id.in_(list(question_ids)),
+                LessonModel.state == ContentState.PUBLISHED.value,
+            )
+            .order_by(QuestionModel.lesson_id, QuestionModel.position, QuestionModel.id)
+        )
+        models = (await self._session.execute(stmt)).scalars().all()
+        return [to_question(model) for model in models]

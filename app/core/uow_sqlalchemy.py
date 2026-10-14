@@ -27,6 +27,10 @@ if TYPE_CHECKING:  # pragma: no cover
         QuizAnswerRepositoryPort,
         QuizSessionRepositoryPort,
     )
+    from app.modules.quiz.domain.review_ports import (
+        ReviewCardRepositoryPort,
+        ReviewLogRepositoryPort,
+    )
     from app.modules.users.domain.ports import (
         ExternalIdentityRepositoryPort,
         RefreshTokenRepositoryPort,
@@ -224,6 +228,22 @@ class SqlAlchemyUnitOfWork:
         )
 
         return self._repo("lesson_progress", SqlAlchemyLessonProgressRepository)
+
+    @property
+    def review_cards(self) -> ReviewCardRepositoryPort:
+        from app.modules.quiz.infrastructure.review_repositories import (
+            SqlAlchemyReviewCardRepository,
+        )
+
+        return self._repo("review_cards", SqlAlchemyReviewCardRepository)
+
+    @property
+    def review_logs(self) -> ReviewLogRepositoryPort:
+        from app.modules.quiz.infrastructure.review_repositories import (
+            SqlAlchemyReviewLogRepository,
+        )
+
+        return self._repo("review_logs", SqlAlchemyReviewLogRepository)
 
     def _repo(self, key: str, factory: Any) -> Any:
         if key not in self._repositories:

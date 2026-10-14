@@ -30,6 +30,10 @@ if TYPE_CHECKING:  # pragma: no cover
         QuizAnswerRepositoryPort,
         QuizSessionRepositoryPort,
     )
+    from app.modules.quiz.domain.review_ports import (
+        ReviewCardRepositoryPort,
+        ReviewLogRepositoryPort,
+    )
     from app.modules.users.domain.ports import (
         ExternalIdentityRepositoryPort,
         RefreshTokenRepositoryPort,
@@ -84,6 +88,12 @@ class UnitOfWorkProtocol(Protocol):
 
     @property
     def lesson_progress(self) -> LessonProgressRepositoryPort: ...
+
+    @property
+    def review_cards(self) -> ReviewCardRepositoryPort: ...
+
+    @property
+    def review_logs(self) -> ReviewLogRepositoryPort: ...
 
     async def commit(self) -> None: ...
 
