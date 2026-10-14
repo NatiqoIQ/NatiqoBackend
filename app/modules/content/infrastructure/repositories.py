@@ -23,14 +23,15 @@ from __future__ import annotations
 import uuid
 from collections.abc import Mapping, Sequence
 
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import Select, and_, func, or_, select
+from sqlalchemy.engine import Row
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import InstrumentedAttribute
 from sqlalchemy.sql.elements import ColumnElement
 
 from app.core.pagination import PositionCursor
 from app.core.types import CEFRLevel, ContentId, ContentState
-from app.modules.content.domain.entities import Lesson, Level, Question, Unit
+from app.modules.content.domain.entities import Lesson, LessonPlacement, Level, Question, Unit
 from app.modules.content.infrastructure.mappers import (
     to_lesson,
     to_level,
@@ -62,6 +63,35 @@ def _keyset_predicate(
     return or_(
         position_column > after.position,
         and_(position_column == after.position, id_column > after.id),
+    )
+
+
+def _placement_select() -> Select[LessonModel, str, int, int]:
+    """Lessons joined to their unit and level, restricted to published rows throughout.
+
+    Visibility is inherited, so a lesson is only listed when all three of lesson, unit
+    and level are published. Selects the level code and both ancestor positions so the
+    caller can order the curriculum without a second query per lesson.
+    """
+    return (
+        select(LessonModel, LevelModel.code, LevelModel.position, UnitModel.position)
+        .join(UnitModel, UnitModel.id == LessonModel.unit_id)
+        .join(LevelModel, LevelModel.id == UnitModel.level_id)
+        .where(
+            LessonModel.state == _PUBLISHED,
+            UnitModel.state == _PUBLISHED,
+            LevelModel.state == _PUBLISHED,
+        )
+    )
+
+
+def _to_placement(row: Row[LessonModel, str, int, int]) -> LessonPlacement:
+    model, level_code, level_position, unit_position = row
+    return LessonPlacement(
+        lesson=to_lesson(model),
+        level_code=CEFRLevel(level_code),
+        level_position=level_position,
+        unit_position=unit_position,
     )
 
 
@@ -151,6 +181,30 @@ class SqlAlchemyLessonRepository:
         )
         rows = (await self._session.execute(stmt)).all()
         return {ContentId(unit_id): int(count) for unit_id, count in rows}
+
+    async def list_published_ordered(self) -> list[LessonPlacement]:
+        """See :meth:`LessonRepositoryPort.list_published_ordered`.
+
+        The whole chain is filtered in one query: a lesson under a draft unit or level is
+        not published, because visibility is inherited and not stored redundantly.
+        """
+        stmt = (
+            _placement_select()
+            .order_by(
+                LevelModel.position,
+                UnitModel.position,
+                LessonModel.position,
+                LessonModel.id,
+            )
+        )
+        rows = (await self._session.execute(stmt)).all()
+        return [_to_placement(row) for row in rows]
+
+    async def get_published_placement(self, lesson_id: ContentId) -> LessonPlacement | None:
+        """See :meth:`LessonRepositoryPort.get_published_placement`."""
+        stmt = _placement_select().where(LessonModel.id == lesson_id)
+        row = (await self._session.execute(stmt)).first()
+        return _to_placement(row) if row is not None else None
 
 
 class SqlAlchemyQuestionRepository:

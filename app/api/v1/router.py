@@ -12,6 +12,7 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from app.modules.content.presentation.routes import router as content_router
+from app.modules.quiz.presentation.progress_routes import router as progress_router
 from app.modules.quiz.presentation.routes import router as quiz_router
 from app.modules.users.presentation.routes import (
     dev_router as dev_login_router,
@@ -30,6 +31,10 @@ api_router.include_router(content_router, prefix="/content", tags=["content"])
 #: The attempt engine. Authenticated, unlike the catalogue: a session is account data and
 #: every route is scoped to the caller's own sessions.
 api_router.include_router(quiz_router, prefix="/quiz", tags=["quiz"])
+
+#: The progress read surface. Authenticated and scoped to the caller's own record: a
+#: summary, one lesson's progress, the curriculum-ordered unlock map, and the XP history.
+api_router.include_router(progress_router, prefix="/progress", tags=["progress"])
 
 #: The development sign-in deliberately stays *off* ``api_router``: ``create_app``
 #: mounts it only when ``DEV_LOGIN_ENABLED`` is set, so a production app object never

@@ -129,6 +129,9 @@ class Settings(BaseSettings):
     #: Grading an answer is a write per question, so a lesson costs a burst of them. The
     #: default scope (120/min) is the right order of magnitude for a normal lesson.
     rate_limit_quiz_requests_per_minute: int = 120
+    #: Progress reads are authenticated but read-only, and a client polling a summary after
+    #: every lesson should not have to share the write budget. Separate scope, own allowance.
+    rate_limit_progress_requests_per_minute: int = 240
     max_request_body_bytes: int = 1_048_576
     #: How long a client-supplied ``Idempotency-Key`` is honoured. 24h covers a client
     #: retrying after a night of no signal, which is the realistic mobile failure.

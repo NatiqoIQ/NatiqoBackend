@@ -22,11 +22,18 @@ import binascii
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Final
+
+from app.core.time import to_utc
 
 #: Bumped only when the payload layout changes. A cursor stamped with any other
 #: version is refused rather than misread.
 CURSOR_VERSION: Final = "v1"
+
+#: Version tag for time-ordered cursors. Kept distinct from ``CURSOR_VERSION`` so a token
+#: from one family can never be misread as the other, even though both are opaque.
+TIME_CURSOR_VERSION: Final = "t1"
 
 
 class InvalidCursor(ValueError):
@@ -93,6 +100,74 @@ def decode_position_cursor(raw: str) -> PositionCursor:
 
 
 @dataclass(frozen=True, slots=True)
+class TimeCursor:
+    """The last row delivered on the previous page of a time-ordered list.
+
+    The catalogue pages by ``(position, id)`` because editorial rows are reordered while a
+    learner browses. Streams that are *appended to* instead — a learner's XP history, the
+    audit trail — have no meaningful ``position``; their natural order is the instant the
+    event happened, so the sort key is ``(timestamp, id)``. The ``id`` half still matters
+    for the same reason: two events can share a millisecond, and without a tiebreaker the
+    page boundary could serve one of them twice or skip it.
+    """
+
+    timestamp: datetime
+    id: uuid.UUID
+
+    def __post_init__(self) -> None:
+        if self.timestamp.tzinfo is None:
+            raise InvalidCursor("Cursor timestamp must be timezone-aware.")
+
+
+def encode_time_cursor(cursor: TimeCursor) -> str:
+    """Render a time cursor as an unpadded URL-safe token.
+
+    The instant is stored as integer microseconds since the epoch rather than an ISO
+    string, so the token stays fixed-width and the round trip cannot lose or reorder
+    sub-second precision through a text format.
+    """
+    micros = int(cursor.timestamp.astimezone(UTC).timestamp() * 1_000_000)
+    raw = f"{TIME_CURSOR_VERSION}:{micros}:{cursor.id}".encode()
+    return base64.urlsafe_b64encode(raw).decode().rstrip("=")
+
+
+def decode_time_cursor(raw: str) -> TimeCursor:
+    """Parse a token produced by :func:`encode_time_cursor`.
+
+    Every failure mode raises :class:`InvalidCursor`; nothing is repaired or defaulted.
+    """
+    if not raw:
+        raise InvalidCursor("Cursor must not be empty.")
+
+    padded = raw + "=" * (-len(raw) % 4)
+    try:
+        decoded = base64.urlsafe_b64decode(padded.encode()).decode()
+    except (binascii.Error, UnicodeDecodeError, ValueError) as exc:
+        raise InvalidCursor("Cursor is not readable.") from exc
+
+    parts = decoded.split(":")
+    if len(parts) != 3:
+        raise InvalidCursor("Cursor is not readable.")
+
+    version, micros_text, id_text = parts
+
+    if version != TIME_CURSOR_VERSION:
+        raise InvalidCursor(f"Unsupported cursor version: {version!r}.")
+
+    try:
+        micros = int(micros_text)
+    except ValueError as exc:
+        raise InvalidCursor("Cursor timestamp is not a number.") from exc
+
+    try:
+        identifier = uuid.UUID(id_text)
+    except ValueError as exc:
+        raise InvalidCursor("Cursor id is not a UUID.") from exc
+
+    return TimeCursor(timestamp=datetime.fromtimestamp(micros / 1_000_000, tz=UTC), id=identifier)
+
+
+@dataclass(frozen=True, slots=True)
 class PageResult[T]:
     """What a use case hands back: the page, plus what a client needs to ask for the next.
 
@@ -129,4 +204,25 @@ def paginate[T](
     if has_more and items:
         position, row_id = key_of(items[-1])
         next_cursor = encode_position_cursor(PositionCursor(position=position, id=row_id))
+    return PageResult(items=items, has_more=has_more, next_cursor=next_cursor)
+
+
+def paginate_time[T](
+    rows: list[T],
+    *,
+    limit: int,
+    key_of: Callable[[T], tuple[datetime, uuid.UUID]],
+) -> PageResult[T]:
+    """Turn ``limit + 1`` time-ordered rows into a page.
+
+    The time-ordered twin of :func:`paginate`, and it carries the same rule: the cursor is
+    built from the last row *actually delivered*, never from the first row of the next
+    page. ``key_of`` returns ``(timestamp, id)`` in the descending order the query uses.
+    """
+    items = rows[:limit]
+    has_more = len(rows) > limit
+    next_cursor = None
+    if has_more and items:
+        timestamp, row_id = key_of(items[-1])
+        next_cursor = encode_time_cursor(TimeCursor(timestamp=to_utc(timestamp), id=row_id))
     return PageResult(items=items, has_more=has_more, next_cursor=next_cursor)

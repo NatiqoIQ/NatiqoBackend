@@ -53,17 +53,18 @@ POST   /api/v1/quiz/sessions        GET    /api/v1/quiz/sessions/{id}
 POST   /api/v1/quiz/sessions/{id}/answers
 POST   /api/v1/quiz/sessions/{id}/complete
 POST   /api/v1/quiz/sessions/{id}/abandon
+GET    /api/v1/progress/summary     GET    /api/v1/progress/lessons/{id}
+GET    /api/v1/progress/unlocks     GET    /api/v1/progress/xp
 GET    /health                      GET    /ready
 ```
 
-**What does not exist yet:** progress (the read endpoints), SRS review,
-hearts/streaks/XP display, subscriptions, push delivery, media upload, AI, vocabulary,
-admin. Any request to those prefixes returns `404`. Section 6 maps each of them to the
-roadmap phase that will unlock it.
+**What does not exist yet:** SRS review, hearts (as a consumable), subscriptions, push
+delivery, media upload, AI, vocabulary, admin. Any request to those prefixes returns
+`404`. Section 6 maps each of them to the roadmap phase that will unlock it.
 
-> The attempt engine shipped: quiz sessions are **live and server-graded** (§6.3). What is
-> still missing around the core loop is the *progress* read surface — the session records
-> its score and XP, but nothing serves them back yet (§6.4).
+> The attempt engine and the progress reads both shipped: quiz sessions are **live and
+> server-graded** (§6.3), and the scores they write are served back by the four
+> `/progress` reads (§6.4) — summary, one lesson, the unlock map, and the XP history.
 
 ---
 
@@ -485,26 +486,49 @@ Errors: `QUIZ_SESSION_NOT_FOUND` · `QUIZ_SESSION_EXPIRED` · `QUIZ_ALREADY_COMP
 `QUESTION_ALREADY_ANSWERED` · `QUESTION_TYPE_UNSUPPORTED` · `LESSON_NOT_FOUND` ·
 `LESSON_NOT_AVAILABLE` (a lesson with no questions cannot be started).
 
-**Not yet in the loop:** hearts (`INSUFFICIENT_HEARTS`), streak and XP *display*, and the
-progress read endpoints below. `xpAwarded` is recorded on the session and folded into
-`lesson_progress`, but nothing serves it back to the client yet.
+**Not yet in the loop:** hearts (`INSUFFICIENT_HEARTS`) and reviews due — neither has a
+backing store yet. Streaks and XP *are* now served: `xpAwarded` is recorded on the session
+and folded into `lesson_progress`, and the progress reads (§6.4) restate it.
 
-### 6.4 Progress — PHASE 1
+### 6.4 Progress — PHASE 1 — LIVE
 
 Completion **writes** durable per-lesson progress (state `in_progress` at start,
 `completed` at the end; `bestScore` keeps the maximum, `attempts` increments, `xpEarned`
-accumulates — a retry can only improve it), but **no read endpoint is mounted yet**, so
-these are `404` today.
+accumulates — a retry can only improve it), and four authenticated reads serve it back.
+Every figure is **derived** from the rows the attempt engine wrote; nothing is projected or
+invented, and anything without a backing store (hearts, reviews due) is omitted rather
+than returned as a zero.
 
 | Screen | Endpoints |
 | --- | --- |
-| Home / dashboard | `GET /progress/summary` (streak, xp, accuracy, reviews due) |
-| Lesson map | `GET /progress/lessons/{id}` (locked / available / completed), `GET /progress/unlocks` |
-| XP history | `GET /progress/xp` |
+| Home / dashboard | `GET /progress/summary` |
+| Lesson map | `GET /progress/lessons/{id}`, `GET /progress/unlocks` |
+| XP history | `GET /progress/xp?limit=&cursor=` |
 
-Until then, derive what you can from the session you just finished (`correctCount`,
-`totalCount`, `xpAwarded`, `scorePercent`); do not build a progress screen on invented
-data.
+`GET /progress/summary` → `totalXp`, `lessonsCompleted`, `lessonsInProgress`,
+`lessonsStarted`, `correctCount`, `answeredCount`, `accuracyPercent`,
+`currentStreakDays`, `longestStreakDays`, `lastActivityAt`. The streak is measured in the
+learner's own timezone (profile `timezone`, `Asia/Baghdad` by default), not UTC.
+
+`GET /progress/lessons/{id}` → `lessonId`, `unitId`, `levelCode`, `title`, `position`,
+`state` (`available | in_progress | completed`), `locked`, `bestScore`, `attempts`,
+`xpEarned`, `completedAt`. A lesson whose lessons/unit/level chain is not published is a
+`404 LESSON_NOT_FOUND`; a lesson the learner has never touched still returns a view with a
+zeroed record.
+
+`GET /progress/unlocks` → `{ items: [{ lessonId, unitId, levelCode, title, position, state,
+locked, bestScore, completedAt }], total }`: every *published* lesson in curriculum order
+(level → unit → lesson position). Whole-map, not paginated — the published catalogue is the
+bound. **`locked` is present but always `false` today**: no gating rule is in force yet, so
+nothing blocks starting a lesson.
+
+`GET /progress/xp` → the paginated XP feed, **newest first**, one row per *completed*
+session: `sessionId`, `lessonId`, `xpAwarded`, `correctCount`, `totalCount`, `scorePercent`,
+`completedAt`. An abandoned sitting earned nothing and never appears. Cursor is opaque and
+ordered by `(completedAt, id)` — echo `meta.nextCursor` back verbatim.
+
+All four are authenticated (`CurrentUser`), scoped to the caller, and `Cache-Control:
+no-store`. They share their own rate-limit scope, separate from the write budget.
 
 ### 6.5 Spaced repetition — PHASE 2
 
@@ -609,7 +633,7 @@ final router = GoRouter(
       branches: [
         GoRoute(path: '/learn', ...),       // levels → units → lessons
         GoRoute(path: '/review', ...),      // PHASE 2 — hide tab until then
-        GoRoute(path: '/progress', ...),    // PHASE 1 — hide tab until then
+        GoRoute(path: '/progress', ...),    // LIVE — the progress reads of §6.4
         GoRoute(path: '/profile', ...),
       ],
     ),
@@ -685,7 +709,7 @@ roadmap phase).
 | **M1** | Sign-in (Google/Apple), session restore, shell, catalogue: levels → units → lessons with cursor paging + ETag cache | live endpoints | **buildable now** |
 | **M2** | Lesson reader, profile (view/edit), devices, settings + notification preference toggles, close account | live endpoints | **buildable now** |
 | **M3a** | **Quiz player (the core loop):** start / resume / answer / complete / abandon, server-graded feedback with explanation, session resume across app kill | live quiz endpoints | **buildable now** |
-| **M3b** | Home dashboard, lesson map, XP history, progress tab | **backend Phase 1** (progress reads) | blocked |
+| **M3b** | Home dashboard, lesson map, XP history, progress tab | live progress reads (§6.4) | **buildable now** |
 | **M4** | Daily review (SRS) + review tab | **Phase 2** | blocked |
 | **M5** | Gamification hub, achievements, streak detail | **Phase 3** | blocked |
 | **M6** | Notification inbox + FCM push + media upload for speaking tasks | **Phases 5–6** | blocked |

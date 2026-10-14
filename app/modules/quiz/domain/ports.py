@@ -9,10 +9,13 @@ indivisible change rather than three that can half-succeed.
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 from typing import Protocol, runtime_checkable
 
+from app.core.pagination import TimeCursor
 from app.core.types import UserId
 from app.modules.quiz.domain.entities import (
+    AnswerTally,
     LessonProgress,
     QuizAnswer,
     QuizSession,
@@ -44,6 +47,26 @@ class QuizSessionRepositoryPort(Protocol):
         """Persist a mutated session. Inserts when the row is not there yet."""
         ...
 
+    async def list_completed_for_user(
+        self, user_id: UserId, *, limit: int, after: TimeCursor | None
+    ) -> list[QuizSession]:
+        """The learner's completed sessions, newest first, starting after ``after``.
+
+        Ordered by ``(completed_at, id)`` descending — the order XP history reads in.
+        Fetches ``limit + 1`` rows so the service can decide whether another page exists.
+        """
+        ...
+
+    async def list_completion_times(self, user_id: UserId) -> list[datetime]:
+        """Every completed session's ``completed_at``, newest first.
+
+        The streak is a calendar question, so this returns instants and lets the service
+        convert them to the learner's local dates. Answering it in SQL would mean
+        hard-coding a timezone into the query, which is exactly the coupling
+        ``app/core/time.py`` exists to avoid.
+        """
+        ...
+
 
 @runtime_checkable
 class QuizAnswerRepositoryPort(Protocol):
@@ -71,6 +94,14 @@ class QuizAnswerRepositoryPort(Protocol):
 
     async def count_for_session(self, session_id: uuid.UUID) -> int: ...
 
+    async def tally_for_user(self, user_id: UserId) -> AnswerTally:
+        """Answered and correct counts across every answer in the learner's sessions.
+
+        Spans all sessions, including abandoned ones, because accuracy is a property of
+        the learner's practice rather than of any one sitting.
+        """
+        ...
+
 
 @runtime_checkable
 class LessonProgressRepositoryPort(Protocol):
@@ -78,4 +109,12 @@ class LessonProgressRepositoryPort(Protocol):
 
     async def save(self, progress: LessonProgress) -> None:
         """Insert or update the learner's row for one lesson."""
+        ...
+
+    async def list_for_user(self, user_id: UserId) -> list[LessonProgress]:
+        """Every progress row the learner owns.
+
+        Unpaginated: it backs the summary roll-up and the unlock map, both of which need
+        the whole set at once, and a learner can have at most one row per published lesson.
+        """
         ...

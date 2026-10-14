@@ -18,7 +18,7 @@ from typing import Protocol, runtime_checkable
 
 from app.core.pagination import PositionCursor
 from app.core.types import CEFRLevel, ContentId
-from app.modules.content.domain.entities import Lesson, Level, Question, Unit
+from app.modules.content.domain.entities import Lesson, LessonPlacement, Level, Question, Unit
 
 
 @runtime_checkable
@@ -72,6 +72,28 @@ class LessonRepositoryPort(Protocol):
 
     async def count_published_by_unit(self) -> Mapping[ContentId, int]:
         """Published lesson count per unit id, in a single grouped query."""
+        ...
+
+    async def list_published_ordered(self) -> list[LessonPlacement]:
+        """Every published lesson in curriculum order, with its placement.
+
+        Ordered by ``(level position, unit position, lesson position, id)``. A lesson
+        counts as published only when its lesson, unit *and* level are all published —
+        visibility is inherited down the tree, so a lesson under a draft unit is not
+        reachable and must not appear in a learner's map.
+
+        This is deliberately unpaginated: the caller is a progress screen that draws the
+        whole course at once, and the published catalogue is the bound. If it ever grows
+        past a page, this is the method to revisit.
+        """
+        ...
+
+    async def get_published_placement(self, lesson_id: ContentId) -> LessonPlacement | None:
+        """One published lesson with its placement, or ``None``.
+
+        Used where a caller needs a lesson's level code and curriculum position alongside
+        the lesson itself, and where the full chain must be published.
+        """
         ...
 
 

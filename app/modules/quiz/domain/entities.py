@@ -29,6 +29,7 @@ from app.core.time import ensure_aware, utc_now
 from app.core.types import UserId
 
 __all__ = [
+    "AnswerTally",
     "LessonProgress",
     "ProgressState",
     "QuizAnswer",
@@ -200,3 +201,24 @@ class LessonProgress:
         self.best_score = max(self.best_score, score_percent)
         self.state = ProgressState.COMPLETED
         self.completed_at = at or utc_now()
+
+
+@dataclass(frozen=True, slots=True)
+class AnswerTally:
+    """How many questions a learner has answered, and how many they got right.
+
+    A read-only roll-up rather than a stored counter: the session row already keeps its
+    own ``correct_count``, but an "accuracy" figure has to span every session including
+    abandoned ones, so it is counted from the answers themselves. The percentage lives
+    here, next to the two numbers it is derived from, so no caller can divide by zero.
+    """
+
+    answered: int = 0
+    correct: int = 0
+
+    @property
+    def accuracy_percent(self) -> int:
+        if self.answered <= 0:
+            return 0
+        return round(self.correct / self.answered * 100)
+

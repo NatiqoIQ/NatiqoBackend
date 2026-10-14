@@ -96,6 +96,10 @@ PUBLISHED_OPERATIONS: set[tuple[str, str]] = {
     ("POST", "/api/v1/quiz/sessions/{session_id}/answers"),
     ("POST", "/api/v1/quiz/sessions/{session_id}/complete"),
     ("POST", "/api/v1/quiz/sessions/{session_id}/abandon"),
+    ("GET", "/api/v1/progress/summary"),
+    ("GET", "/api/v1/progress/lessons/{lesson_id}"),
+    ("GET", "/api/v1/progress/unlocks"),
+    ("GET", "/api/v1/progress/xp"),
 }
 
 
@@ -2195,3 +2199,338 @@ async def test_the_rationale_route_answers_without_an_attempt(
 
     assert response.status_code == 200
     assert response.json()["explanation"] == SEEDED_EXPLANATION
+
+
+# ==================================================================== progress
+# The read-only progress surface: the auth gate, the wire shape, and the property that
+# ties it to the attempt engine — every figure is restated from a session the learner
+# actually finished. The use cases are exercised in ``tests/integration``; what is pinned
+# here is the HTTP contract a mobile client is generated from.
+
+
+async def _learner_with_catalogue(
+    client: AsyncClient, content_db: AsyncSession
+) -> tuple[dict[str, str], dict[str, uuid.UUID]]:
+    """A signed-in learner and the seeded published curriculum."""
+    account = await sign_in(client)
+    headers = auth_headers(account["tokens"]["accessToken"])
+    ids = await seed_catalogue(content_db)
+    return headers, ids
+
+
+async def _complete_a_lesson(
+    client: AsyncClient, headers: dict[str, str], lesson_id: uuid.UUID
+) -> uuid.UUID:
+    """Attempt a lesson end to end and return the completed session's id.
+
+    Driven through the real endpoints rather than seeded rows: the point of these tests is
+    that the progress a client reads is the progress the engine wrote.
+    """
+    started = await _start_quiz(client, headers, lesson_id)
+    session_id = started["session"]["id"]
+    for question in started["questions"]:
+        answered = await client.post(
+            f"/api/v1/quiz/sessions/{session_id}/answers",
+            json={"questionId": question["id"], "answer": {"choice": "Hello"}},
+            headers=headers,
+        )
+        assert answered.status_code == 200, answered.text
+    completed = await client.post(
+        f"/api/v1/quiz/sessions/{session_id}/complete", headers=headers
+    )
+    assert completed.status_code == 200, completed.text
+    return uuid.UUID(session_id)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/api/v1/progress/summary",
+        f"/api/v1/progress/lessons/{uuid.uuid4()}",
+        "/api/v1/progress/unlocks",
+        "/api/v1/progress/xp",
+    ],
+)
+async def test_progress_reads_need_a_token(client: AsyncClient, path: str) -> None:
+    """Progress is account data, so the whole prefix is gated like ``/me``."""
+    response = await client.get(path)
+
+    assert response.status_code == 401, response.text
+    assert error_code(response) == "AUTH_TOKEN_INVALID"
+
+
+@pytest.mark.asyncio
+async def test_a_brand_new_learner_has_an_all_zero_summary(client: AsyncClient) -> None:
+    """The zeros are derived from an empty record, not defaulted into place."""
+    account = await sign_in(client)
+    headers = auth_headers(account["tokens"]["accessToken"])
+
+    response = await client.get("/api/v1/progress/summary", headers=headers)
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {
+        "totalXp": 0,
+        "lessonsCompleted": 0,
+        "lessonsInProgress": 0,
+        "lessonsStarted": 0,
+        "correctCount": 0,
+        "answeredCount": 0,
+        "accuracyPercent": 0,
+        "currentStreakDays": 0,
+        "longestStreakDays": 0,
+        "lastActivityAt": None,
+    }
+
+
+@pytest.mark.asyncio
+async def test_progress_responses_are_never_cached(
+    client: AsyncClient, content_db: AsyncSession
+) -> None:
+    """A progress body on a shared phone's HTTP cache is the next user's problem."""
+    headers, _ = await _learner_with_catalogue(client, content_db)
+
+    response = await client.get("/api/v1/progress/summary", headers=headers)
+
+    assert response.status_code == 200, response.text
+    assert response.headers["cache-control"] == "no-store"
+
+
+@pytest.mark.asyncio
+async def test_the_unlock_map_lists_the_published_curriculum_in_order(
+    client: AsyncClient, content_db: AsyncSession
+) -> None:
+    """Every published lesson, in curriculum order, with the drafts gone."""
+    headers, _ = await _learner_with_catalogue(client, content_db)
+
+    response = await client.get("/api/v1/progress/unlocks", headers=headers)
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["total"] == 4
+    assert [item["levelCode"] for item in body["items"]] == ["A1", "A1", "A2", "A2"]
+    assert [item["title"] for item in body["items"]] == [
+        "Lesson 1",
+        "Lesson 2",
+        "Lesson 1",
+        "Lesson 2",
+    ]
+    assert all(item["state"] == "available" for item in body["items"])
+    # No gating rule exists yet, so ``locked`` is present but always false.
+    assert all(item["locked"] is False for item in body["items"])
+
+
+@pytest.mark.asyncio
+async def test_a_lesson_with_no_record_reads_available(
+    client: AsyncClient, content_db: AsyncSession
+) -> None:
+    headers, ids = await _learner_with_catalogue(client, content_db)
+
+    response = await client.get(
+        f"/api/v1/progress/lessons/{ids['A1-lesson-1']}", headers=headers
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["lessonId"] == str(ids["A1-lesson-1"])
+    assert body["levelCode"] == "A1"
+    assert body["title"] == "Lesson 1"
+    assert body["state"] == "available"
+    assert body["locked"] is False
+    assert (body["bestScore"], body["attempts"], body["xpEarned"]) == (0, 0, 0)
+    assert body["completedAt"] is None
+
+
+@pytest.mark.asyncio
+async def test_an_unknown_lesson_progress_is_not_found(client: AsyncClient) -> None:
+    account = await sign_in(client)
+    headers = auth_headers(account["tokens"]["accessToken"])
+
+    response = await client.get(f"/api/v1/progress/lessons/{uuid.uuid4()}", headers=headers)
+
+    assert response.status_code == 404, response.text
+    assert error_code(response) == "LESSON_NOT_FOUND"
+
+
+@pytest.mark.asyncio
+async def test_a_draft_lesson_progress_is_not_found(
+    client: AsyncClient, content_db: AsyncSession
+) -> None:
+    """Draft visibility is inherited, so a lesson under an unpublished unit is a 404."""
+    headers, ids = await _learner_with_catalogue(client, content_db)
+    draft = LessonModel(
+        id=uuid.uuid4(),
+        unit_id=ids["A1-unit"],
+        title="Draft",
+        summary="Not ready.",
+        position=50,
+        estimated_minutes=5,
+        state=ContentState.REVIEW.value,
+    )
+    content_db.add(draft)
+    await content_db.commit()
+
+    response = await client.get(f"/api/v1/progress/lessons/{draft.id}", headers=headers)
+
+    assert response.status_code == 404, response.text
+    assert error_code(response) == "LESSON_NOT_FOUND"
+
+
+@pytest.mark.asyncio
+async def test_completing_a_lesson_flows_into_the_summary_and_the_feed(
+    client: AsyncClient, content_db: AsyncSession
+) -> None:
+    """One finished attempt, read back through every progress endpoint.
+
+    The single question is worth one point, so the full total is one: a figure that could
+    only be right if the score were read from the engine's own row.
+    """
+    headers, ids = await _learner_with_catalogue(client, content_db)
+    await _complete_a_lesson(client, headers, ids["A1-lesson-1"])
+
+    summary = (await client.get("/api/v1/progress/summary", headers=headers)).json()
+    assert summary["totalXp"] == 1
+    assert summary["lessonsStarted"] == 1
+    assert summary["lessonsCompleted"] == 1
+    assert summary["lessonsInProgress"] == 0
+    assert summary["answeredCount"] == 1
+    assert summary["correctCount"] == 1
+    assert summary["accuracyPercent"] == 100
+    assert summary["currentStreakDays"] == 1
+    assert summary["longestStreakDays"] == 1
+    assert summary["lastActivityAt"] is not None
+
+    lesson = (
+        await client.get(f"/api/v1/progress/lessons/{ids['A1-lesson-1']}", headers=headers)
+    ).json()
+    assert lesson["state"] == "completed"
+    assert lesson["bestScore"] == 100
+    assert lesson["attempts"] == 1
+    assert lesson["xpEarned"] == 1
+
+    unlocks = (await client.get("/api/v1/progress/unlocks", headers=headers)).json()
+    first = next(item for item in unlocks["items"] if item["lessonId"] == str(ids["A1-lesson-1"]))
+    assert first["state"] == "completed"
+    assert first["bestScore"] == 100
+
+    feed = (await client.get("/api/v1/progress/xp", headers=headers)).json()
+    assert len(feed["items"]) == 1
+    event = feed["items"][0]
+    assert event["lessonId"] == str(ids["A1-lesson-1"])
+    assert event["xpAwarded"] == 1
+    assert event["scorePercent"] == 100
+    assert event["totalCount"] == 1
+
+
+@pytest.mark.asyncio
+async def test_an_abandoned_session_is_not_xp_history(
+    client: AsyncClient, content_db: AsyncSession
+) -> None:
+    """An abandoned sitting earned nothing, so it is neither activity nor a feed row."""
+    headers, ids = await _learner_with_catalogue(client, content_db)
+    started = await _start_quiz(client, headers, ids["A1-lesson-1"])
+    abandoned = await client.post(
+        f"/api/v1/quiz/sessions/{started['session']['id']}/abandon", headers=headers
+    )
+    assert abandoned.status_code == 200, abandoned.text
+
+    summary = (await client.get("/api/v1/progress/summary", headers=headers)).json()
+    assert summary["lastActivityAt"] is None
+    assert summary["totalXp"] == 0
+    # Starting the lesson still counts it as begun, though it is not finished.
+    assert summary["lessonsInProgress"] == 1
+    assert summary["lessonsCompleted"] == 0
+
+    feed = (await client.get("/api/v1/progress/xp", headers=headers)).json()
+    assert feed["items"] == []
+    assert feed["meta"]["hasMore"] is False
+
+
+@pytest.mark.asyncio
+async def test_the_xp_feed_pages_with_a_cursor_without_overlap(
+    client: AsyncClient, content_db: AsyncSession
+) -> None:
+    """Two completions, read one per page, must each appear exactly once."""
+    headers, ids = await _learner_with_catalogue(client, content_db)
+    first = await _complete_a_lesson(client, headers, ids["A1-lesson-1"])
+    second = await _complete_a_lesson(client, headers, ids["A2-lesson-1"])
+
+    page_one = (
+        await client.get("/api/v1/progress/xp", params={"limit": 1}, headers=headers)
+    ).json()
+    assert len(page_one["items"]) == 1
+    assert page_one["meta"]["hasMore"] is True
+    cursor = page_one["meta"]["nextCursor"]
+    assert cursor
+
+    page_two = (
+        await client.get(
+            "/api/v1/progress/xp", params={"limit": 1, "cursor": cursor}, headers=headers
+        )
+    ).json()
+    assert page_two["meta"]["hasMore"] is False
+    assert page_two["meta"]["nextCursor"] is None
+
+    seen = [page_one["items"][0]["sessionId"], page_two["items"][0]["sessionId"]]
+    assert set(seen) == {str(first), str(second)}
+    assert len(set(seen)) == 2
+
+
+@pytest.mark.asyncio
+async def test_a_useless_progress_cursor_is_a_validation_error(
+    client: AsyncClient,
+) -> None:
+    """Returning page one would look like a working feed, which is the trap."""
+    account = await sign_in(client)
+    headers = auth_headers(account["tokens"]["accessToken"])
+
+    response = await client.get(
+        "/api/v1/progress/xp", params={"cursor": "not-a-cursor"}, headers=headers
+    )
+
+    assert response.status_code == 422, response.text
+    assert error_code(response) == "VALIDATION_ERROR"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("limit", [0, -1, 101])
+async def test_the_progress_page_size_is_bounded(client: AsyncClient, limit: int) -> None:
+    account = await sign_in(client)
+    headers = auth_headers(account["tokens"]["accessToken"])
+
+    response = await client.get(
+        "/api/v1/progress/xp", params={"limit": limit}, headers=headers
+    )
+
+    assert response.status_code == 422, response.text
+
+
+@pytest.mark.asyncio
+async def test_progress_is_scoped_to_the_caller(
+    client: AsyncClient, content_db: AsyncSession
+) -> None:
+    """One learner's finished lesson must not colour another learner's map."""
+    owner = await sign_in(client)
+    owner_headers = auth_headers(owner["tokens"]["accessToken"])
+    ids = await seed_catalogue(content_db)
+    await _complete_a_lesson(client, owner_headers, ids["A1-lesson-1"])
+
+    other = await sign_in(
+        client,
+        token="other-learner-token",
+        subject="other-learner",
+        email="other-learner@natiqo.app",
+    )
+    other_headers = auth_headers(other["tokens"]["accessToken"])
+
+    summary = (await client.get("/api/v1/progress/summary", headers=other_headers)).json()
+    assert summary["totalXp"] == 0
+    assert summary["lessonsCompleted"] == 0
+
+    lesson = (
+        await client.get(f"/api/v1/progress/lessons/{ids['A1-lesson-1']}", headers=other_headers)
+    ).json()
+    assert lesson["state"] == "available"
+
+    feed = (await client.get("/api/v1/progress/xp", headers=other_headers)).json()
+    assert feed["items"] == []

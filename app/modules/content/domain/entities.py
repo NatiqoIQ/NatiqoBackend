@@ -31,6 +31,7 @@ from app.modules.content.domain.policy import (
 __all__ = [
     "InvalidContentState",
     "Lesson",
+    "LessonPlacement",
     "Level",
     "Question",
     "Unit",
@@ -129,6 +130,23 @@ class Lesson:
             raise InvalidContentState("A lesson cannot be published before its unit.")
         assert_transition_allowed(self.state, ContentState.PUBLISHED)
         self.state = ContentState.PUBLISHED
+
+
+@dataclass(frozen=True, slots=True)
+class LessonPlacement:
+    """A published lesson together with where it sits in the curriculum.
+
+    A read-only projection rather than a field bolted onto :class:`Lesson`, because the
+    curriculum order — ``(level position, unit position, lesson position)`` — spans three
+    aggregates and no single one of them owns it. A learner-facing "map" of the course has
+    to be ordered by it, and deriving it in the caller would mean every consumer repeating
+    the same three joins.
+    """
+
+    lesson: Lesson
+    level_code: CEFRLevel
+    level_position: int
+    unit_position: int
 
 
 @dataclass(frozen=True, slots=True)

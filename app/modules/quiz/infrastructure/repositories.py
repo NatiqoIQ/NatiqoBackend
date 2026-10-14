@@ -14,12 +14,21 @@ all.
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 
-from sqlalchemy import func, select
+from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql.elements import ColumnElement
 
+from app.core.pagination import TimeCursor
 from app.core.types import UserId
-from app.modules.quiz.domain.entities import LessonProgress, QuizAnswer, QuizSession
+from app.modules.quiz.domain.entities import (
+    AnswerTally,
+    LessonProgress,
+    QuizAnswer,
+    QuizSession,
+    SessionStatus,
+)
 from app.modules.quiz.domain.ports import (
     LessonProgressRepositoryPort,
     QuizAnswerRepositoryPort,
@@ -41,6 +50,25 @@ from app.modules.quiz.infrastructure.models import (
     QuizAnswerModel,
     QuizSessionModel,
 )
+
+_COMPLETED = SessionStatus.COMPLETED.value
+
+
+def _completed_keyset_predicate(after: TimeCursor) -> ColumnElement[bool]:
+    """``(completed_at, id) < (after.timestamp, after.id)`` for the newest-first order.
+
+    The mirror of the catalogue's ascending keyset: the history reads newest first, so a
+    further page is everything strictly older, and a tie on the instant is broken by id in
+    the same descending direction.
+    """
+    return or_(
+        QuizSessionModel.completed_at < after.timestamp,
+        and_(
+            QuizSessionModel.completed_at == after.timestamp,
+            QuizSessionModel.id < after.id,
+        ),
+    )
+
 
 
 class SqlAlchemyQuizSessionRepository(QuizSessionRepositoryPort):
@@ -68,6 +96,36 @@ class SqlAlchemyQuizSessionRepository(QuizSessionRepositoryPort):
             self._session.add(to_session_model(session))
             return
         apply_session(session, model)
+
+    async def list_completed_for_user(
+        self, user_id: UserId, *, limit: int, after: TimeCursor | None
+    ) -> list[QuizSession]:
+        stmt = select(QuizSessionModel).where(
+            QuizSessionModel.user_id == user_id,
+            QuizSessionModel.status == _COMPLETED,
+            QuizSessionModel.completed_at.is_not(None),
+        )
+        if after is not None:
+            stmt = stmt.where(_completed_keyset_predicate(after))
+        stmt = stmt.order_by(
+            QuizSessionModel.completed_at.desc(),
+            QuizSessionModel.id.desc(),
+        ).limit(limit)
+        models = (await self._session.execute(stmt)).scalars().all()
+        return [to_session(model) for model in models]
+
+    async def list_completion_times(self, user_id: UserId) -> list[datetime]:
+        stmt = (
+            select(QuizSessionModel.completed_at)
+            .where(
+                QuizSessionModel.user_id == user_id,
+                QuizSessionModel.status == _COMPLETED,
+                QuizSessionModel.completed_at.is_not(None),
+            )
+            .order_by(QuizSessionModel.completed_at.desc())
+        )
+        rows = (await self._session.execute(stmt)).scalars().all()
+        return [moment for moment in rows if moment is not None]
 
 
 class SqlAlchemyQuizAnswerRepository(QuizAnswerRepositoryPort):
@@ -109,6 +167,22 @@ class SqlAlchemyQuizAnswerRepository(QuizAnswerRepositoryPort):
         )
         return int((await self._session.execute(stmt)).scalar_one())
 
+    async def tally_for_user(self, user_id: UserId) -> AnswerTally:
+        stmt = (
+            select(
+                func.count(),
+                func.coalesce(
+                    func.sum(case((QuizAnswerModel.is_correct.is_(True), 1), else_=0)),
+                    0,
+                ),
+            )
+            .select_from(QuizAnswerModel)
+            .join(QuizSessionModel, QuizSessionModel.id == QuizAnswerModel.session_id)
+            .where(QuizSessionModel.user_id == user_id)
+        )
+        answered, correct = (await self._session.execute(stmt)).one()
+        return AnswerTally(answered=int(answered), correct=int(correct))
+
 
 class SqlAlchemyLessonProgressRepository(LessonProgressRepositoryPort):
     def __init__(self, session: AsyncSession) -> None:
@@ -128,6 +202,15 @@ class SqlAlchemyLessonProgressRepository(LessonProgressRepositoryPort):
             self._session.add(to_progress_model(progress))
             return
         apply_progress(progress, model)
+
+    async def list_for_user(self, user_id: UserId) -> list[LessonProgress]:
+        stmt = (
+            select(LessonProgressModel)
+            .where(LessonProgressModel.user_id == user_id)
+            .order_by(LessonProgressModel.id)
+        )
+        models = (await self._session.execute(stmt)).scalars().all()
+        return [to_progress(model) for model in models]
 
 
 __all__ = [

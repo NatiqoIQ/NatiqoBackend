@@ -148,6 +148,10 @@ lesson_progress(
 
 ### الـEndpoints
 
+> **الحالة: منفّذ.** كتابة التقدّم (`lesson_progress`) وقراءاته الأربعة تحت `/progress`
+> تعمل الآن. كل رقم مُشتقّ من صفوف كتبها محرّك المحاولة، ولا شيء بلا مخزن (القلوب، review
+> due) يظهر — يُحذف بدل أن يُعاد صفراً.
+
 | Method | Path |_jobs | ملاحظات |
 | --- | --- | --- | --- |
 | `POST` | `/api/v1/quiz/sessions` | ابدأ درس | يعيد sessionId + الأسئلة **بلا** مفتاح + `hearts` |
@@ -155,10 +159,10 @@ lesson_progress(
 | `POST` | `/api/v1/quiz/sessions/{id}/answers` | إجابة واحدة | يُصحّح، يعيد `correct` + `explanation` |
 | `POST` | `/api/v1/quiz/sessions/{id}/complete` | إنهاء | XP، فتح الدرس التالي، تحديث الـstreak |
 | `POST` | `/api/v1/quiz/sessions/{id}/abandon` | إلغاء | يعيد الـhearts |
-| `GET` | `/api/v1/progress/summary` | شاشة البداية | streak، xp، دقة، hearts، review due |
-| `GET` | `/api/v1/progress/lessons/{id}` | حالة درس | locked/available/completed |
-| `GET` | `/api/v1/progress/unlocks` | ما يفتح بعد ماذا | للـUI التخطيطي |
-| `GET` | `/api/v1/progress/xp` | سجل XP | لشاشة السجل فقط |
+| `GET` | `/api/v1/progress/summary` | شاشة البداية | **منفّذ** — xp، عدد الدروس، الدقة، streak، آخر نشاط. القلوب/review due مؤجّلة |
+| `GET` | `/api/v1/progress/lessons/{id}` | حالة درس | **منفّذ** — available/in_progress/completed |
+| `GET` | `/api/v1/progress/unlocks` | ما يفتح بعد ماذا | **منفّذ** — كامل المنهج مرتّباً؛ `locked` دائماً `false` (بلا قاعدة فتح بعد) |
+| `GET` | `/api/v1/progress/xp` | سجل XP | **منفّذ** — صفحة مرتّبة بالأحدث، الجلسات المكتملة فقط |
 
 ### الطلب/الاستجابة
 
