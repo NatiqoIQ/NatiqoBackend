@@ -36,7 +36,7 @@ It complements, and never repeats:
                      PostgreSQL     Redis    S3
 ```
 
-**What the backend gives you today (16 operations):**
+**What the backend gives you today (21 operations):**
 
 ```
 POST   /api/v1/auth/google          POST   /api/v1/auth/apple
@@ -49,13 +49,21 @@ GET    /api/v1/content/levels/{code}/units
 GET    /api/v1/content/units/{id}/lessons
 GET    /api/v1/content/lessons/{id}
 GET    /api/v1/content/questions/{id}/explanation
+POST   /api/v1/quiz/sessions        GET    /api/v1/quiz/sessions/{id}
+POST   /api/v1/quiz/sessions/{id}/answers
+POST   /api/v1/quiz/sessions/{id}/complete
+POST   /api/v1/quiz/sessions/{id}/abandon
 GET    /health                      GET    /ready
 ```
 
-**What does not exist yet:** quiz, progress, SRS review, hearts/streaks/XP,
-subscriptions, push delivery, media upload, AI, vocabulary, admin. Any request to those
-prefixes returns `404`. Section 6 maps each of them to the roadmap phase that will
-unlock it.
+**What does not exist yet:** progress (the read endpoints), SRS review,
+hearts/streaks/XP display, subscriptions, push delivery, media upload, AI, vocabulary,
+admin. Any request to those prefixes returns `404`. Section 6 maps each of them to the
+roadmap phase that will unlock it.
+
+> The attempt engine shipped: quiz sessions are **live and server-graded** (§6.3). What is
+> still missing around the core loop is the *progress* read surface — the session records
+> its score and XP, but nothing serves them back yet (§6.4).
 
 ---
 
@@ -104,6 +112,11 @@ lib/
       data/         # lesson_repository (catalogue + explanation endpoints, local cache)
       bloc/         # lesson_bloc, question_viewer_cubit
       presentation/ # lesson_screen, question_card.dart
+    quiz/
+      data/         # quiz_repository (session lifecycle, resume, answer grading)
+      bloc/         # quiz_bloc (start → answer → feedback → next → complete),
+                    # session_resume_cubit (survives app kill)
+      presentation/ # quiz_screen, answer_feedback.dart, result_screen
     profile/
       data/         # me_repository
       bloc/         # profile_bloc
@@ -113,7 +126,7 @@ lib/
       bloc/         # settings_bloc
       presentation/ # settings_screen, notification_prefs_sheet
     # --- future features, same shape (see §6) ---
-    quiz/ progress/ review/ gamification/ subscription/
+    progress/ review/ gamification/ subscription/
     notifications/ media/ ai/ vocabulary/
 ```
 
@@ -148,6 +161,9 @@ class AuthFailure      extends Failure { final String code; }
 class ValidationFailure extends Failure { final Map<String, String> fields; } // 422
 class RateLimitedFailure extends Failure { final Duration retryAfter; }        // 429
 class NotFoundFailure  extends Failure { final String code; }                  // 404
+class ConflictFailure  extends Failure { final String code; }                  // 409
+  // QUIZ_ALREADY_COMPLETED, QUIZ_NOT_COMPLETED, QUESTION_ALREADY_ANSWERED,
+  // QUIZ_SESSION_EXPIRED, IDEMPOTENCY_KEY_REUSED …
 class ServerFailure    extends Failure { }             // 5xx
 ```
 
@@ -167,9 +183,11 @@ Every non-2xx response is exactly:
 
 Map by **`code` first, HTTP status second.** `401` + `AUTH_TOKEN_EXPIRED` means
 "refresh"; `401` + `AUTH_REFRESH_REUSED` means "revoke everything and sign in again";
-`401` + `USER_DELETED` means the same, permanently. Never parse `message` for logic —
-it is human text and may be localised later. Always keep `requestId` for the
-"report a problem" flow.
+`401` + `USER_DELETED` means the same, permanently. `409` from the quiz engine is a
+*state* condition, not a failure to retry blindly: `QUIZ_ALREADY_COMPLETED` and
+`QUESTION_ALREADY_ANSWERED` mean the UI is out of date — refresh the session, do not
+retry. Never parse `message` for logic — it is human text and may be localised later.
+Always keep `requestId` for the "report a problem" flow.
 
 ---
 
@@ -193,7 +211,8 @@ final dio = Dio(BaseOptions(
 Rules the client must honour (details in `mobile-integration-ar.md`):
 
 - Send `Authorization: Bearer <access token>` on every call except
-  `/auth/google`, `/auth/apple`, `/health`.
+  `/auth/google`, `/auth/apple`, `/health`. **`/quiz/*` requires it** — a session is
+  account data.
 - **Delete `cursor` when it is null** — sending `cursor=` yields `422`. This is the
   single most common integration bug.
 - No trailing slash. `/content/levels/` answers `307` and some clients drop the query
@@ -202,7 +221,7 @@ Rules the client must honour (details in `mobile-integration-ar.md`):
   error report.
 - GZip is transparent; do not decompress manually.
 - On `429`, read `Retry-After` and surface it to the UI — do **not** auto-retry in a
-  loop. Auth endpoints are limited to 10/min per IP.
+  loop. Auth endpoints are limited to 10/min per IP; the quiz scope to 120/min.
 
 ### 4.2 Token storage
 
@@ -248,13 +267,18 @@ request once. If refresh fails with `AUTH_REFRESH_INVALID`/`AUTH_REFRESH_REUSED`
 clear both tokens → navigate to sign-in. **Never retry twice; never refresh in
 parallel.** (Full sequence: `mobile-integration-ar.md` §5.5.)
 
-### 4.4 Idempotency (future writes)
+### 4.4 Idempotency
 
 The backend accepts an `Idempotency-Key` header on unsafe methods: a repeat of the
 same key + body replays the stored 2xx response for 24 hours; the same key with a
 *different* body returns `409 IDEMPOTENCY_KEY_REUSED`. Generate one UUID per user
-action (submit answer, checkout) and reuse it on network retries. This matters from
-milestone 3 (quiz submissions) onward.
+action and reuse it **verbatim** on network retries. This is live and matters from
+milestone M3a onward:
+
+- `POST /quiz/sessions` — a lost response must replay the same `sessionId`, not open a
+  second sitting.
+- `POST /quiz/sessions/{id}/answers` — a retry must not double-count an answer or
+  re-grade it as a fresh attempt.
 
 ---
 
@@ -263,8 +287,8 @@ milestone 3 (quiz submissions) onward.
 **Choice: `flutter_bloc`.** Rule of thumb in this app:
 
 - **Cubit** for single-flow screens: catalogue lists, lesson loading, settings form.
-- **Bloc** for multi-event lifecycles: `AuthBloc`, future `QuizBloc` (answer →
-  feedback → next), future `SubscriptionBloc`.
+- **Bloc** for multi-event lifecycles: `AuthBloc`, `QuizBloc` (start → answer →
+  feedback → next → complete), future `SubscriptionBloc`.
 
 ### 5.1 Auth state machine
 
@@ -292,20 +316,46 @@ class SessionExpired extends AuthState {}   // show sign-in, keep nothing
   `GET /me`. Do not flash the sign-in screen while this runs: keep the splash until
   the state is decided.
 
-### 5.2 Server state vs. client state
+### 5.2 Quiz state machine
+
+`QuizBloc` owns one sitting end-to-end and is **the only place a score is decided** (by
+reading the server's verdict, never by grading locally):
+
+```
+        start(lessonId)              answer(questionId, payload)
+idle ─────────────────► presenting ─────────────────────► grading ──► feedback
+        │                   ▲                                   │
+        │                   └────────── next ────────────────────┘
+        │                                                       │
+        └── resume(sessionId) ──► (rebuild from GET /sessions/{id})
+                                                                 ▼
+                                            complete ──► completed (scorePercent)
+                                            abandon  ──► abandoned
+                                            expiry   ──► expired (QUIZ_SESSION_EXPIRED)
+```
+
+- Persist `sessionId` (secure storage or drift) the moment `POST /quiz/sessions`
+  returns; on relaunch, resume instead of starting a new session.
+- `isComplete` on each graded answer is what enables the **Finish** action — never
+  enable it on `answeredCount == totalCount` you computed yourself.
+- A `409 QUESTION_ALREADY_ANSWERED` means the local view was stale: call
+  `GET /quiz/sessions/{id}` and reconcile rather than surfacing an error toast.
+
+### 5.3 Server state vs. client state
 
 | Kind | Owner | Example |
 | --- | --- | --- |
-| Server truth | repository + bloc | profile, catalogue, devices |
+| Server truth | repository + bloc | profile, catalogue, devices, quiz session |
 | Session | `AuthBloc` | tokens, current user |
 | UI/local | plain `Cubit` or `ValueNotifier` | scroll position, selected tab, form drafts |
 | Cached server data | drift + `etag` | catalogue pages for offline reading |
 
 Never mirror server data into `shared_preferences`; `GET /me` is the single source of
 truth for profile and preferences (the server refuses `currentLevel` on `PATCH /me` on
-purpose — the placement test owns it).
+purpose — the placement test owns it). A quiz session lives on the server: the client
+holds only its id and what it has been told, and re-reads on resume.
 
-### 5.3 Hygiene
+### 5.4 Hygiene
 
 - One `BlocObserver` in debug that logs transitions and errors with the current
   `requestId`.
@@ -351,31 +401,112 @@ an existing learner's choices.
   stale-while-revalidate=600`. Cache the body + ETag in drift; revalidate with
   `If-None-Match` and serve `304` from cache while offline.
 - Rate limit 240/min per IP — generous, but still surface `429`.
-- The lesson screen today is a **reader with a local reveal**, not a quiz: questions
-  render with their image/audio aids, the learner may pick an answer, and you may then
-  call the explanation endpoint to show why — but **the server cannot grade it**, so do
-  not show a score. Label it honestly ("practice coming soon") rather than faking
-  correctness.
+- The catalogue is for **reading**. The lesson screen renders the lesson and its
+  questions with their image/audio aids — but it does not grade. The moment the learner
+  wants to answer for real, hand off to the **quiz player (§6.3)**; never compute a score
+  the server did not produce. (A lightweight "peek at the explanation" that calls
+  `GET /content/questions/{id}/explanation` is fine for a reader; it must not look like
+  practice with a result.)
 - `imageUrl`/`audioUrl` are same-origin `/media/...` paths (not under `/api/v1`),
   immutable, and few — cache them for the life of the app. A `404` from the explanation
   endpoint means the question is unpublished or unknown (`QUESTION_NOT_FOUND`), which is
   indistinguishable on purpose.
 
-### 6.3 Quiz + progress — PHASE 1 (unlocks the app's core loop)
+### 6.3 Quiz — LIVE (the attempt engine)
+
+The core loop is here. Five authenticated endpoints under `/quiz`; every session is
+scoped to the caller and **graded on the server** — the answer key never reaches the
+client before an answer is committed.
+
+| Screen | Endpoints | Notes |
+| --- | --- | --- |
+| Lesson → "Start practice" | `POST /quiz/sessions` | body `{ "mode": "lesson", "lessonId": "uuid" }` → `201` with the session and its questions **without** an answer key. Send an `Idempotency-Key` so a lost response replays the same `sessionId` rather than opening a second sitting |
+| Quiz player (resume) | `GET /quiz/sessions/{id}` | **resume after app kill** — the session plus the questions, and `answeredQuestionIds` so you skip exactly what is already done |
+| Answer one question | `POST /quiz/sessions/{id}/answers` | body `{ "questionId", "answer": { "choice" \| "text" } }` → `isCorrect`, `correctAnswer`, `explanation`, `pointsAwarded`, `answeredCount`, `totalCount`, `correctCount`, `isComplete` |
+| Finish | `POST /quiz/sessions/{id}/complete` | scores a **fully answered** sitting → the session + `scorePercent` |
+| Give up | `POST /quiz/sessions/{id}/abandon` | ends the sitting with no score; idempotent once abandoned |
+
+Wire shapes (camelCase; field names are exact):
+
+```jsonc
+// POST /quiz/sessions        → 201
+{
+  "session": { "id":"uuid", "mode":"lesson", "lessonId":"uuid", "status":"active",
+               "startedAt":"…", "expiresAt":"…", "completedAt":null,
+               "totalCount":6, "answeredCount":0, "correctCount":0, "xpAwarded":0,
+               "answeredQuestionIds":[] },
+  "questions": [ { "id":"uuid", "position":0, "kind":"multiple_choice",
+                   "skill":"vocabulary", "prompt":"…", "choices":["a","b","c"],
+                   "points":1, "imageUrl":"/media/images/….jpg",
+                   "audioUrl":"/media/audio/….mp3" } ]   // ← no correctIndex / explanation
+}
+
+// POST /quiz/sessions/{id}/answers
+{ "questionId":"uuid", "answer": { "choice":"b" } }      // or { "text":"meet" }
+
+// 200
+{ "isCorrect":true, "correctAnswer":{"choice":"c"},       // only after answering
+  "explanation":"…", "pointsAwarded":1,
+  "answeredCount":1, "totalCount":6, "correctCount":1, "isComplete":false }
+
+// POST /quiz/sessions/{id}/complete → 200
+{ "session": { … , "status":"completed", "xpAwarded":5 }, "scorePercent":100 }
+```
+
+Client rules:
+
+- **Questions arrive without `correctIndex`, `acceptedAnswers` or `explanation`.**
+  Correctness only comes back per answer, from the answers call. Never expect a key in
+  the session payload.
+- **Submit answers one at a time, each with an `Idempotency-Key`.** A network retry must
+  not double-count.
+- For a choice question, send the **choice's text** (`{"choice":"b"}` also accepts the
+  zero-based index or the letter `a`–`f`); for `fill_blank`, send `{"text":"…"}` (graded
+  case- and whitespace-insensitively). Sending the wrong shape is `422`, not a silent
+  "wrong".
+- **The session survives process death.** Persist `sessionId`; on relaunch call
+  `GET /quiz/sessions/{id}` and skip exactly `answeredQuestionIds`.
+- A **wrong** answer can be re-answered: a correct retry is worth half (integer
+  division, rounded down — a one-point question earns nothing on a retry). Re-answering
+  overwrites the same answer slot, so a question counts once. A question already answered
+  **correctly** is closed — re-answering it is `409 QUESTION_ALREADY_ANSWERED`; reconcile
+  by re-reading the session.
+- `complete` refuses a partial sitting with `409 QUIZ_NOT_COMPLETED`; enable **Finish**
+  only when the last answer came back `isComplete: true`.
+- The session is a **lease**: it expires after `QUIZ_SESSION_TTL_SECONDS` (**7200 s**).
+  Once expired, answering or completing returns `409 QUIZ_SESSION_EXPIRED`; start again.
+  A completed or abandoned session can still be read back for its result.
+- Rate limit **120/min per IP** for the quiz scope — surface `429` with `Retry-After`.
+- Session questions still carry `imageUrl`/`audioUrl` aids (same as the catalogue); render
+  them — they teach the item, they do not reveal the answer.
+
+Errors: `QUIZ_SESSION_NOT_FOUND` · `QUIZ_SESSION_EXPIRED` · `QUIZ_ALREADY_COMPLETED` ·
+`QUIZ_NOT_COMPLETED` · `QUESTION_NOT_FOUND` · `QUESTION_NOT_IN_SESSION` ·
+`QUESTION_ALREADY_ANSWERED` · `QUESTION_TYPE_UNSUPPORTED` · `LESSON_NOT_FOUND` ·
+`LESSON_NOT_AVAILABLE` (a lesson with no questions cannot be started).
+
+**Not yet in the loop:** hearts (`INSUFFICIENT_HEARTS`), streak and XP *display*, and the
+progress read endpoints below. `xpAwarded` is recorded on the session and folded into
+`lesson_progress`, but nothing serves it back to the client yet.
+
+### 6.4 Progress — PHASE 1
+
+Completion **writes** durable per-lesson progress (state `in_progress` at start,
+`completed` at the end; `bestScore` keeps the maximum, `attempts` increments, `xpEarned`
+accumulates — a retry can only improve it), but **no read endpoint is mounted yet**, so
+these are `404` today.
 
 | Screen | Endpoints |
 | --- | --- |
-| Quiz session player | `POST /quiz/sessions` (start), `GET /quiz/sessions/{id}` (**resume after app kill**), `POST .../answers` (one per question, returns `correct` + `explanation`), `POST .../complete` (XP, unlock, streak), `POST .../abandon` (returns hearts) |
-| Home / dashboard | `GET /progress/summary` (streak, xp, accuracy, hearts, reviews due) |
+| Home / dashboard | `GET /progress/summary` (streak, xp, accuracy, reviews due) |
 | Lesson map | `GET /progress/lessons/{id}` (locked / available / completed), `GET /progress/unlocks` |
 | XP history | `GET /progress/xp` |
 
-Client rules: submit answers **one at a time** with an idempotency key; the session
-must survive process death (persist `sessionId`, call `GET /quiz/sessions/{id}` on
-resume); question objects arrive with **no answer key** — correctness only comes back
-per answer.
+Until then, derive what you can from the session you just finished (`correctCount`,
+`totalCount`, `xpAwarded`, `scorePercent`); do not build a progress screen on invented
+data.
 
-### 6.4 Spaced repetition — PHASE 2
+### 6.5 Spaced repetition — PHASE 2
 
 | Screen | Endpoints |
 | --- | --- |
@@ -383,9 +514,10 @@ per answer.
 | Review stats | `GET /review/stats`, `GET /review/preview` |
 
 Empty state matters: "nothing due today" is a success, not an error
-(`REVIEW_NOTHING_DUE` exists for the answer path).
+(`REVIEW_NOTHING_DUE` exists for the answer path). Review is a session mode the engine
+already reserves (`mode: "review"`), so the player can be reused once the endpoints land.
 
-### 6.5 Gamification — PHASE 3
+### 6.6 Gamification — PHASE 3
 
 | Screen | Endpoints |
 | --- | --- |
@@ -393,7 +525,7 @@ Empty state matters: "nothing due today" is a success, not an error
 | Achievements | `GET /achievements`, `POST /achievements/{code}/claim` (`ALREADY_CLAIMED` → refresh list, not an error toast) |
 | Streak detail | `GET /streak`, `POST /streak/freeze` (premium only → `PREMIUM_REQUIRED` opens paywall) |
 
-### 6.6 Subscriptions — PHASE 4
+### 6.7 Subscriptions — PHASE 4
 
 | Screen | Endpoints |
 | --- | --- |
@@ -407,7 +539,7 @@ Never build a client-side "is premium" flag: read `GET /subscription` (or the
 `premium` field on summary) on app start and after every purchase flow. The webhook
 (Stripe → server) is the source of truth; the app only reflects it.
 
-### 6.7 Notifications — PHASE 5
+### 6.8 Notifications — PHASE 5
 
 | Screen | Endpoints |
 | --- | --- |
@@ -420,16 +552,16 @@ Preference switches already exist today under `PATCH /me`
 `weeklyReport`, `quietHoursStart/End`): build the toggles now, wire them to `/me`;
 delivery itself waits for phase 5.
 
-### 6.8 Media — PHASE 6
+### 6.9 Media — PHASE 6
 
 Two different things share the name. **Catalogue aids already work today:** question
-`imageUrl`/`audioUrl` are public, same-origin `/media/...` files (§6.2) — read them
-directly and cache them. **Learner uploads are phase 6:** presigned upload
-`POST /media/presign` → upload directly to S3 → `POST /media/confirm` → read via
-`GET /media/{id}` (signed URL, 15 min). Relevant for speaking/pronunciation answers
-later; do not stream audio through the API server.
+`imageUrl`/`audioUrl` are public, same-origin `/media/...` files (§6.2), and the quiz
+session serves them too (§6.3) — read them directly and cache them. **Learner uploads
+are phase 6:** presigned upload `POST /media/presign` → upload directly to S3 →
+`POST /media/confirm` → read via `GET /media/{id}` (signed URL, 15 min). Relevant for
+speaking/pronunciation answers later; do not stream audio through the API server.
 
-### 6.9 AI — PHASE 7
+### 6.10 AI — PHASE 7
 
 | Screen | Endpoints |
 | --- | --- |
@@ -439,14 +571,15 @@ later; do not stream audio through the API server.
 
 Design for failure: `AI_QUOTA_EXCEEDED`, `AI_TIMEOUT`, `AI_PROVIDER_ERROR` are normal
 outcomes — degrade to the authored explanation, already fetchable today via
-`GET /content/questions/{id}/explanation`, so the fallback path exists before the AI one.
+`GET /content/questions/{id}/explanation` (and returned per answer by the quiz engine),
+so the fallback path exists before the AI one.
 
-### 6.10 Vocabulary & grammar — PHASE 9
+### 6.11 Vocabulary & grammar — PHASE 9
 
 `GET /vocabulary`, `GET /vocabulary/{word}`, `POST /vocabulary/{word}/favorite`,
 `GET /grammar/topics`, `GET /grammar/topics/{id}`.
 
-### 6.11 Not for the phone app
+### 6.12 Not for the phone app
 
 - **Admin content authoring** (`/admin/content/*`) — web only, role-gated
   (`content_editor`, `admin`). Do not build it into the learner app.
@@ -481,7 +614,7 @@ final router = GoRouter(
       ],
     ),
     GoRoute(path: '/lesson/:id', ...),
-    GoRoute(path: '/quiz/:sessionId', ...), // PHASE 1
+    GoRoute(path: '/quiz/:sessionId', ...), // LIVE — the quiz player of §6.3
   ],
 );
 ```
@@ -489,9 +622,11 @@ final router = GoRouter(
 - **Public routes:** `/splash`, `/sign-in`, `/learn` catalogue browsing. The catalogue
   is deliberately unauthenticated — a new learner can see the course before signing in.
 - **Future tabs are hidden, not disabled** — a greyed "Review" tab implies a feature
-  that does not exist yet.
+  that does not exist yet. (The quiz player is not a tab: it is pushed from a lesson.)
 - Deep link `natiqo://lesson/{id}` → resolve through the same router; guard with the
-  auth redirect so a cold deep link cannot bypass sign-in for protected screens.
+  auth redirect so a cold deep link cannot bypass sign-in for protected screens. A
+  `natiqo://quiz/{sessionId}` link must be auth-guarded too, and should resume the
+  session via `GET /quiz/sessions/{id}`.
 
 ---
 
@@ -518,9 +653,16 @@ Every screen implements the same five states — build them once in `shared/widg
   (ValueKey per route + `AutomaticKeepAlive`).
 - **Lesson reader:** question card with choice buttons / true-false / text field per
   `kind` (`multiple_choice`, `true_false`, `fill_blank`), showing the `imageUrl`/
-  `audioUrl` aid when present. Let the learner answer, then fetch
-  `/content/questions/{id}/explanation` and show it — but submit nothing and show no
-  score until phase 1 ships (the server cannot grade yet).
+  `audioUrl` aid when present. The catalogue is for **reading**; the moment the learner
+  wants to answer for a result, hand off to the quiz player — never grade locally or show
+  a score the server did not produce.
+- **Quiz player:** one question at a time, with a progress indicator
+  (`answeredCount`/`totalCount`). Disable the choices while an answer is in flight; show
+  the verdict, the correct answer and the explanation from the answers response in place;
+  advance on the learner's tap, not automatically. Persist `sessionId` so an app kill
+  resumes via `GET /quiz/sessions/{id}`. Enable **Finish** only when the server says
+  `isComplete`. On `QUIZ_SESSION_EXPIRED`, offer "start again"; on
+  `QUESTION_ALREADY_ANSWERED`, re-read the session instead of erroring.
 - **Profile:** `currentLevel` shown read-only; `PATCH` sends only changed fields —
   never send the whole object back (that is how `422` on `currentLevel` happens).
 - **Destructive actions** (revoke device, close account): confirm dialog that names
@@ -541,8 +683,9 @@ roadmap phase).
 | --- | --- | --- | --- |
 | **M0** | Project scaffold: folder structure, theme, router, DI, Dio + interceptors (auth, single-flight refresh, request-id, error mapping), token store, `AuthBloc` state machine, CI lint+test | — | **buildable now** |
 | **M1** | Sign-in (Google/Apple), session restore, shell, catalogue: levels → units → lessons with cursor paging + ETag cache | live endpoints | **buildable now** |
-| **M2** | Lesson reader (+ post-answer explanation reveal), profile (view/edit), devices, settings + notification preference toggles, close account | live endpoints | **buildable now** |
-| **M3** | Quiz player + home dashboard + lesson map + XP history (**the core loop**) | **backend Phase 1** | blocked |
+| **M2** | Lesson reader, profile (view/edit), devices, settings + notification preference toggles, close account | live endpoints | **buildable now** |
+| **M3a** | **Quiz player (the core loop):** start / resume / answer / complete / abandon, server-graded feedback with explanation, session resume across app kill | live quiz endpoints | **buildable now** |
+| **M3b** | Home dashboard, lesson map, XP history, progress tab | **backend Phase 1** (progress reads) | blocked |
 | **M4** | Daily review (SRS) + review tab | **Phase 2** | blocked |
 | **M5** | Gamification hub, achievements, streak detail | **Phase 3** | blocked |
 | **M6** | Notification inbox + FCM push + media upload for speaking tasks | **Phases 5–6** | blocked |
@@ -550,9 +693,9 @@ roadmap phase).
 | **M8** | AI explanations / writing feedback with graceful fallback | **Phase 7** | blocked |
 | **M9** | Vocabulary & grammar sections | **Phase 9** | blocked |
 
-**Parallel work while blocked (M3+):** finish M0–M2 to production polish; build the
-UI for quiz screens against fixture JSON with the repository interface already
-defined — swapping fixtures for HTTP later is a one-file change — but do **not**
+**Parallel work while blocked (M3b+):** finish M0–M3a to production polish; build the
+UI for progress/gamification screens against fixture JSON with the repository interface
+already defined — swapping fixtures for HTTP later is a one-file change — but do **not**
 ship dead screens.
 
 ---
@@ -570,8 +713,9 @@ flutter test --coverage            # fail-under 70% for features/, 0 for generat
 | Bloc/Cubit | `bloc_test` | every state transition incl. Failure branches |
 | Repositories | `mocktail` + fake Dio (`http_mock_adapter`) | envelope → Failure mapping, cursor handling, cache fallback |
 | Interceptors | pure unit tests | **single-flight refresh**: N concurrent 401s → exactly 1 refresh call; retry-once; no retry after `AUTH_REFRESH_REUSED` |
+| Quiz player | `bloc_test` + fake Dio | start → answer → feedback → next → complete; resume rebuilds from `answeredQuestionIds`; `isComplete` gates Finish; `QUIZ_SESSION_EXPIRED` and `QUESTION_ALREADY_ANSWERED` handled |
 | Widgets | `flutter_test` + golden | the five screen states; RTL layout |
-| E2E | `integration_test` against staging | sign-in → browse → lesson → post-answer explanation reveal; token expiry across 15 min (fast-forward via injected clock) |
+| E2E | `integration_test` against staging | sign-in → browse → lesson → **start a quiz, answer every question, see the score**; token expiry across 15 min (fast-forward via injected clock) |
 
 Rules:
 
@@ -594,8 +738,10 @@ Rules:
   aids are served same-origin from `/media` and are immutable, so cache them
   aggressively. Audio via just_audio with pre-buffering — stream the `/media/...` aid
   directly; user uploads (phase 6) come via signed S3 URLs, never through the API.
+- Quiz answers are tiny and one-at-a-time; keep the response handling synchronous and do
+  **not** optimistically show a verdict — the score is the server's to give.
 - Parse large payloads off the main isolate (`compute`) only after profiling —
-  lesson JSON here is < 1 KB.
+  lesson and session JSON here is < 1 KB.
 - Keep the widget tree shallow under the quiz player; animate with implicit
   animations, not rebuild-heavy controllers.
 - Profile on a mid-range Android device, not only an iPhone simulator.
@@ -611,8 +757,14 @@ Rules:
 - [ ] `requestId` visible in error details and attached to support reports
 - [ ] `429` respects `Retry-After`; auth calls not auto-retried in a loop
 - [ ] Catalogue browsable offline from cache; offline banner shown honestly
-- [ ] Lesson reader reveals the explanation only after the learner answers, and never
-      shows a score (no grading endpoint exists)
+- [ ] Quiz grades only through the server: the session payload never supplies an answer
+      key, and no score is shown that `POST .../answers` / `.../complete` did not return
+- [ ] A quiz session started twice (retry after a lost response) reuses the same
+      `sessionId` via `Idempotency-Key`; answers carry one too
+- [ ] Quiz session `sessionId` is persisted and `GET /quiz/sessions/{id}` resumes after
+      an app kill; **Finish** enabled only when the server returns `isComplete`
+- [ ] `QUIZ_SESSION_EXPIRED` offers "start again"; `QUESTION_ALREADY_ANSWERED` reconciles
+      by re-reading the session, not by an error toast
 - [ ] No screen for a feature that is still `404` (tabs hidden, not disabled)
 - [ ] `PATCH /me` sends only changed fields; `currentLevel` never sent
 - [ ] RTL layout verified for Arabic; both locales in the store listing
@@ -627,8 +779,9 @@ Rules:
   exact endpoints it adds, their error codes and the product decisions pending.
 - Treat `GET /openapi.json` as the contract: diff it in CI (a breaking change there
   should fail the mobile build before it fails a user).
-- Error codes are already reserved for future phases (`QUIZ_*`, `INSUFFICIENT_HEARTS`,
-  `PREMIUM_REQUIRED`, `AI_QUOTA_EXCEEDED`, `REVIEW_NOTHING_DUE`, …) — see
-  `app/core/errors.py`; handle unknown codes defensively (map to a generic
+- Error codes are reserved ahead of the phases that use them; the `QUIZ_*` and
+  `QUESTION_*` sets are **live now**, while `INSUFFICIENT_HEARTS`, `PREMIUM_REQUIRED`,
+  `AI_QUOTA_EXCEEDED`, `REVIEW_NOTHING_DUE`, … still land with later phases — see
+  `app/core/errors.py`. Handle unknown codes defensively (map to a generic
   `ServerFailure` with the raw code kept for logs) so a new backend code never crashes
   an old app build.
