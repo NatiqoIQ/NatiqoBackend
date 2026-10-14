@@ -42,8 +42,8 @@ Every error has the same shape. Branch on `code`; `message` is for humans and ma
 ```json
 {
   "error": {
-    "code": "LEVEL_NOT_FOUND",
-    "message": "There is no published level with that code.",
+    "code": "LESSON_NOT_FOUND",
+    "message": "There is no published lesson with that id.",
     "requestId": "fb11336eeb1745bf82510f84206fdf39"
   }
 }
@@ -57,24 +57,23 @@ sanitised first, so you can correlate your own trace id with ours.
 
 | Situation | Status | Code |
 | --- | --- | --- |
-| Published level does not exist | `404` | `LEVEL_NOT_FOUND` |
-| Level exists but is not published | `404` | `LEVEL_NOT_FOUND` |
-| `level_code` is not a CEFR code at all (`/levels/Z9/units`) | `404` | `LEVEL_NOT_FOUND` |
-| `unit_id` is not a valid UUID | `422` | `VALIDATION_ERROR` |
-| `unit_id` is a valid UUID with no published unit | `404` | `UNIT_NOT_FOUND` |
+| A published lesson does not exist | `404` | `LESSON_NOT_FOUND` |
+| The lesson exists but is not published | `404` | `LESSON_NOT_FOUND` |
+| A lesson id is not a valid UUID (`/content/lessons/not-a-uuid`) | `422` | `VALIDATION_ERROR` |
 | Rate limited | `429` | `RATE_LIMITED` |
 
-The asymmetry in the middle is on purpose. A malformed **code** is answered exactly like an
-unknown one, so the endpoint cannot be used to probe which lessons exist but are
-unpublished. A malformed **UUID** is rejected as validation, because it cannot be a row id
-at all and there is nothing to probe — the `422` saves you a pointless retry.
+A malformed **UUID** is rejected as validation, because it cannot be a row id at all and
+there is nothing to probe. A well-formed UUID that names an unpublished lesson is answered
+exactly like one that names nothing at all, so the endpoint cannot be used to probe which
+lessons exist but are not published.
 
 So: treat `404` as "ask the user for something else" and `422` as "you built the request
 wrong". Do not retry a `404`; do not show it as an error when a page simply has no content.
 
 ## Caching
 
-Only the four catalogue routes are cacheable. **Everything else is `no-store`** — including
+Only the two catalogue routes (`/content/tree` and `/content/lessons/{id}`) are cacheable.
+**Everything else is `no-store`** — including
 every authenticated response, so a profile is never left in a shared phone's HTTP cache.
 
 A cacheable `200` carries:
@@ -120,10 +119,11 @@ never spend the allowance of a token refresh happening at the same time.
 
 ## Responses worth knowing about
 
-**A trailing slash redirects.** `GET /api/v1/content/levels/` answers `307` to
-`/api/v1/content/levels`, **preserving the query string**. Build paths without the trailing
+**A trailing slash redirects.** `GET /api/v1/content/tree/` answers `307` to
+`/api/v1/content/tree`, **preserving the query string**. Build paths without the trailing
 slash; if you do hit the redirect, make sure your HTTP client re-sends the query string, or
-`limit` and `cursor` are dropped and you land on page one of a list you were paging through.
+`limit` and `cursor` are dropped and you land on page one of a collection you were paging
+through.
 
 **Responses are gzipped** above 400 bytes when the client advertises `Accept-Encoding: gzip`.
 Handle it transparently — Flutter's `http` package does.

@@ -52,6 +52,7 @@ def to_answer(model: QuizAnswerModel) -> QuizAnswer:
         given_answer=dict(model.given_answer or {}),
         is_correct=model.is_correct,
         points_awarded=model.points_awarded,
+        attempt=model.attempt,
         explanation=model.explanation or "",
         answered_at=model.answered_at,
     )
@@ -112,6 +113,7 @@ def to_answer_model(answer: QuizAnswer) -> QuizAnswerModel:
         given_answer=dict(answer.given_answer),
         is_correct=answer.is_correct,
         points_awarded=answer.points_awarded,
+        attempt=answer.attempt,
         explanation=answer.explanation,
         answered_at=answer.answered_at,
     )
@@ -128,6 +130,7 @@ def apply_answer(answer: QuizAnswer, model: QuizAnswerModel) -> None:
     model.given_answer = dict(answer.given_answer)
     model.is_correct = answer.is_correct
     model.points_awarded = answer.points_awarded
+    model.attempt = answer.attempt
     model.explanation = answer.explanation
     model.answered_at = answer.answered_at
 

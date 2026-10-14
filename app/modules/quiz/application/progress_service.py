@@ -115,7 +115,9 @@ class ProgressService:
         placements = await self._uow.lessons.list_published_ordered()
         rows = await self._uow.lesson_progress.list_for_user(user_id)
         by_lesson = {row.lesson_id: row for row in rows}
-        return [_map_item(placement, by_lesson.get(placement.lesson.id)) for placement in placements]
+        return [
+            _map_item(placement, by_lesson.get(placement.lesson.id)) for placement in placements
+        ]
 
     # ============================================================= xp history
     async def xp_history(
@@ -199,9 +201,7 @@ def _longest_run(days: list[date]) -> int:
     return longest
 
 
-def _lesson_view(
-    placement: LessonPlacement, row: LessonProgress | None
-) -> LessonProgressView:
+def _lesson_view(placement: LessonPlacement, row: LessonProgress | None) -> LessonProgressView:
     lesson = placement.lesson
     return LessonProgressView(
         lesson_id=lesson.id,
@@ -229,6 +229,8 @@ def _map_item(placement: LessonPlacement, row: LessonProgress | None) -> UnlockM
         state=row.state.value if row is not None else "available",
         locked=_LOCKED,
         best_score=row.best_score if row is not None else 0,
+        attempts=row.attempts if row is not None else 0,
+        xp_earned=row.xp_earned if row is not None else 0,
         completed_at=row.completed_at if row is not None else None,
     )
 

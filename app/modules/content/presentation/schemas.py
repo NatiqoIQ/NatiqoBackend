@@ -23,7 +23,7 @@ import uuid
 
 from pydantic import ConfigDict, Field
 
-from app.core.responses import Page, WireModel
+from app.core.responses import WireModel
 from app.core.types import QuestionKind, SkillKind
 
 
@@ -61,7 +61,7 @@ class QuestionResponse(_CatalogueWire):
     """A practice item as it appears *before* an attempt.
 
     No ``correct_index``, no ``accepted_answers``, no ``explanation``. Post-attempt
-    feedback belongs to the attempt engine, which is the next slice.
+    feedback belongs to the attempt engine, which returns it from the answer endpoint.
 
     ``image_url`` and ``audio_url`` *are* part of this pre-attempt shape, and that is a
     deliberate exception rather than an oversight: they are aids that illustrate or
@@ -93,31 +93,36 @@ class LessonDetailResponse(LessonSummaryResponse):
     questions: list[QuestionResponse] = Field(default_factory=list)
 
 
-class QuestionExplanationResponse(_CatalogueWire):
-    """Why that answer is the answer — served only by the feedback endpoint.
+class UnitNodeResponse(UnitResponse):
+    """A unit inside the catalogue tree, with its published lessons."""
 
-    ``explanation`` is the answer key in prose, so it is listed *here*, on a schema that
-    is only reachable after a learner has answered, and deliberately nowhere near
-    :class:`QuestionResponse`. Keeping them apart is the same omission-by-design as the
-    ``correct_index`` handling above, just at the route level.
+    lessons: list[LessonSummaryResponse] = Field(default_factory=list)
+
+
+class LevelNodeResponse(LevelResponse):
+    """A level inside the catalogue tree, with its units."""
+
+    units: list[UnitNodeResponse] = Field(default_factory=list)
+
+
+class CatalogueTreeResponse(_CatalogueWire):
+    """The whole published catalogue in one response.
+
+    A wrapper object rather than a bare JSON array: a top-level array cannot grow a sibling
+    (a ``meta`` or a schema version) without becoming a breaking change, and every other
+    collection on this API is an object for the same reason.
     """
 
-    id: uuid.UUID
-    explanation: str
+    items: list[LevelNodeResponse] = Field(default_factory=list)
 
-
-LevelsPage = Page[LevelResponse]
-UnitsPage = Page[UnitResponse]
-LessonsPage = Page[LessonSummaryResponse]
 
 __all__ = [
+    "CatalogueTreeResponse",
     "LessonDetailResponse",
     "LessonSummaryResponse",
-    "LessonsPage",
+    "LevelNodeResponse",
     "LevelResponse",
-    "LevelsPage",
-    "QuestionExplanationResponse",
     "QuestionResponse",
+    "UnitNodeResponse",
     "UnitResponse",
-    "UnitsPage",
 ]

@@ -221,7 +221,8 @@ class _DevVerifier:
     Same trick as the seeder's: sign in through the real use case so account creation,
     the identity row and the refresh chain all travel the production code path, with
     no provider round-trip. The router that exposes it is mounted only when
-    ``DEV_LOGIN_ENABLED`` is set, so no request can reach this class otherwise.
+    ``DEV_LOGIN_ENABLED`` is set (on by default in every environment), so clearing the
+    flag keeps the route out of the app entirely.
     """
 
     provider = IdentityProvider.GOOGLE
@@ -253,12 +254,12 @@ async def dev_login(
     settings: SettingsDep,
     _limit: AuthRateLimitDep,
 ) -> AuthResponse:
-    """The one username/password sign-in this service has, for development only.
+    """The one username/password sign-in this service has, for development and QA.
 
     Every other sign-in delegates the credential check to a provider; this one cannot,
-    so it exists only while ``DEV_LOGIN_ENABLED`` is true. Production refuses to boot
-    with the flag set, and the route is not mounted at all without it — the guard is
-    the server's, not the caller's.
+    so it is guarded by a flag instead of a provider. The flag defaults to on in every
+    environment, production included, and the route is not mounted at all when the flag
+    is false — the guard is the server's, not the caller's.
 
     Sessions issued here live ``DEV_LOGIN_TOKEN_TTL_SECONDS`` (10 years by default)
     so a test run is never cut short by a 15-minute expiry. Every other sign-in keeps

@@ -25,7 +25,7 @@ def build_request(method: str = "GET", endpoint: object | None = None) -> Reques
         {
             "type": "http",
             "method": method,
-            "path": "/api/v1/content/levels",
+            "path": "/api/v1/content/tree",
             "headers": Headers({}).raw,
             "endpoint": endpoint,
         }

@@ -70,7 +70,6 @@ def _completed_keyset_predicate(after: TimeCursor) -> ColumnElement[bool]:
     )
 
 
-
 class SqlAlchemyQuizSessionRepository(QuizSessionRepositoryPort):
     def __init__(self, session: AsyncSession) -> None:
         self._session = session

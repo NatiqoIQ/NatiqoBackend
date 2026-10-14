@@ -6,51 +6,61 @@
 كل مثال هنا مأخوذ من تشغيل التطبيق فعلياً، لا من النوايا. القيم مثل `201` و
 `AUTH_REFRESH_REUSED` مُقيسة.
 
+> ⚠️ **لقطة مرحلة (snapshot) محدَّثة.** يصف هذا المستند سطح الـAPI الحالي بعد دمج مسارات
+> الكتالوج والـquiz والتقدّم: الكتالوج **مساران** (`/content/tree` + `/content/lessons/{id}`)،
+> والـquiz **ثلاثة** (بدأ / استئناف / أمر موحَّد عبر `op`)، والتقدّم **قراءتان** (`/progress` +
+> `/progress/unlocks`). المراجعة المتباعدة (SRS) لم تبنَ بعد. ومسار الشرح المستقل
+> `GET /content/questions/{id}/explanation` **حُذف** — صار الشرح يُعاد مع إجابة الـquiz.
+> للمعمارية التفصيلية راجع [`backend-system-ar.md`](backend-system-ar.md) و
+> [`mobile-app-architecture.md`](mobile-app-architecture.md).
+
 ---
 
 ## 1.TL;DR
 
 | السؤال | الجواب |
 | --- | --- |
-| ماذا يوجد؟ | حسابات + ملفات مستخدم + كتالوج محتوى (قراءة فقط) + شرح السؤال بعد الإجابة |
-| ماذا لا يوجد بعد؟ | quiz، تقدّم، مراجعة SRS، نقاط، اشتراكات، إشعارات، ذكاء اصطناعي، لوحة admin |
+| ماذا يوجد؟ | حسابات + ملفات مستخدم + كتالوج محتوى (قراءة) + محرّك quiz + قراءات تقدّم |
+| ماذا لا يوجد بعد؟ | مراجعة SRS، قلوب/إنجازات، اشتراكات، إرسال إشعارات، رفع وسائط، ذكاء اصطناعي، لوحة admin |
 | كيف أدخل؟ | Google أو Apple فقط — أرسل ID token إلى `/auth/google` أو `/auth/apple`. **لا كلمة مرور في النظام** |
 | كيف أُنشئ حساباً؟ | أول دخول يُنشئ الحساب تلقائياً — لا يوجد `register` ولا `forgot-password` |
 | كيف أدخل بعد ذلك؟ | access token **15 دقيقة** + refresh token **30 يوم** مع تدوير |
-| ماذا أعرض قبل الدخول؟ | الكتالوج كاملاً — 5 مسارات عامة |
-| هل أستطيع حل الأسئلة؟ | **لا**. لا يوجد endpoint لتسجيل الإجابة ولا لحفظ التقدم. الشرح متاح فقط عبر endpoint مستقل بعد أن يجيب المستخدم |
+| ماذا أعرض قبل الدخول؟ | الكتالوج كاملاً — **مساران** عامّان (`/content/tree` + `/content/lessons/{id}`) |
+| هل أستطيع حل الأسئلة؟ | **نعم** — محرّك الـquiz يصحّح على السيرفر ويعيد الصحّ + الشرح لكل إجابة |
 | أهم فخّين | لا ترسل `cursor` فارغاً · لا تُهمل single-flight لتحديث التوكن |
 
 ---
 
 ## 2. اقرأ هذا أولاً: ما لا يوجد
 
-هذه أهم نسبة في المستند. الـ backend حالياً **قاعدة محتوى وحسابات فقط**.
+هذه أهم نسبة في المستند. الـ backend حالياً **قاعدة محتوى وحسابات + محرّك quiz + قراءات تقدّم**.
 
 ```
 ✅ موجود                          ❌ غير موجود (أي طلب لها يعيد 404)
 ─────────────────────────────      ─────────────────────────────
-POST   /auth/google                أي quiz أو session أو إجابة سؤال
-POST   /auth/apple                 أي تسجيل تقدّم أو إجابة صحيحة
-POST   /auth/refresh               أي SRS أو مراجعة متباعدة
-POST   /auth/logout                أي نقاط / سلسلة أيام / إنجازات
-GET    /me · PATCH /me             أي اشتراك أو دفع
-DELETE /me                         أي إشعارات (فقط التفضيلات، لا الإرسال)
-GET    /me/devices                 أي رفع صوت أو صورة (لا يوجد upload)
-DELETE /me/devices/{id}            أي تحليلات
-GET    /content/levels             ─────────────────────────────
-GET    /content/levels/{c}/units
-GET    /content/units/{id}/lessons
+POST   /auth/google                أي مراجعة SRS / بطاقات
+POST   /auth/apple                 أي إنجازات / لوحة صدارة
+POST   /auth/refresh               أي اشتراك أو دفع
+POST   /auth/logout                أي إرسال إشعارات (فقط التفضيلات)
+GET    /me · PATCH /me             أي رفع صوت أو صورة (لا يوجد upload)
+DELETE /me                         أي تحليلات
+GET    /me/devices                 أي ذكاء اصطناعي / تصحيح كتابة
+DELETE /me/devices/{id}            ─────────────────────────────
+GET    /content/tree
 GET    /content/lessons/{id}
-GET    /content/questions/{id}/explanation
+POST   /quiz/sessions
+GET    /quiz/sessions/{id}
+POST   /quiz/sessions/{id}
+GET    /progress
+GET    /progress/unlocks
 ```
 
-**ماذا يعني هذا عملياً:** تقدر تبني شاشات تسجيل/دخول/تصفّح الدروس وقراءة أسئلة، وتقدر
-تجلب **شرح السؤال** بعد أن يجيب المستخدم. **لا تقدر** تصحّح الإجابة (لا مفتاح إجابة)،
-ولا تبني شاشة "تقدمي"، ولا شاشة "راجع اليوم". إذا بنيتها ستحتاج backend جديد.
+**ماذا يعني هذا عملياً:** تقدر تبني شاشات تسجيل/دخول/تصفّح الدروس، وقراءة الأسئلة، **وحلّها**
+(الـquiz يصحّح على السيرفر ويعيد الشرح)، **ومتابعة تقدّمك** (شاشة "تقدّمي" وسجل XP).
+**لا تقدر** تبني شاشة "راجع اليوم" (SRS مؤجّلة) ولا لوحة إنجازات — تحتاج backend جديد.
 
-الترتيب المقترح للبناء: الحسابات والكتالوج أولاً، ثم quiz + progress عند توفر
-`/api/v1/quiz/*` و`/api/v1/progress`.
+الترتيب المقترح للبناء: الحسابات والكتالوج أولاً، ثم الـquiz والتقدّم (live الآن)، ثم
+مراجعة SRS عند بناء المرحلة الثانية.
 
 ---
 
@@ -67,13 +77,15 @@ GET    /content/questions/{id}/explanation
 | 7 | `DELETE` | `/api/v1/me` | Bearer | `204` — إغلاق الحساب |
 | 8 | `GET` | `/api/v1/me/devices` | Bearer | `200` + مصفوفة |
 | 9 | `DELETE` | `/api/v1/me/devices/{device_id}` | Bearer | `204` |
-| 10 | `GET` | `/api/v1/content/levels` | — | `200` + صفحة |
-| 11 | `GET` | `/api/v1/content/levels/{level_code}/units` | — | `200` + صفحة |
-| 12 | `GET` | `/api/v1/content/units/{unit_id}/lessons` | — | `200` + صفحة |
-| 13 | `GET` | `/api/v1/content/lessons/{lesson_id}` | — | `200` |
-| 14 | `GET` | `/api/v1/content/questions/{question_id}/explanation` | — | `200` |
-| 15 | `GET` | `/health` | — | `200` |
-| 16 | `GET` | `/ready` | — | `200` / `503` |
+| 10 | `GET` | `/api/v1/content/tree` | — | `200` + الشجرة كاملة (nest) |
+| 11 | `GET` | `/api/v1/content/lessons/{lesson_id}` | — | `200` |
+| 12 | `POST` | `/api/v1/quiz/sessions` | Bearer | `201` + الجلسة والأسئلة (بلا مفتاح) |
+| 13 | `GET` | `/api/v1/quiz/sessions/{session_id}` | Bearer | `200` + الجلسة والأسئلة |
+| 14 | `POST` | `/api/v1/quiz/sessions/{session_id}` | Bearer | `200` + نتيجة الأمر (`op`: answer/complete/abandon) |
+| 15 | `GET` | `/api/v1/progress` | Bearer | `200` + الملخّص + صفحة XP |
+| 16 | `GET` | `/api/v1/progress/unlocks` | Bearer | `200` + خريطة الدروس |
+| 17 | `GET` | `/health` | — | `200` |
+| 18 | `GET` | `/ready` | — | `200` / `503` |
 
 كل المسارات تحت `/api/v1/`. **`/health` و `/ready` ليست تحت `/api/v1`.** ووسائل الأسئلة
 (`/media/...`) تُقدَّم من الأصل نفسه لكن **ليست تحت `/api/v1`** (ملفات ثابتة — انظر 11).
@@ -321,7 +333,7 @@ Authorization: Bearer <accessToken>
 | `AUTH_REFRESH_REUSED` | 401 | إعادة استخدام — **كل الجلسات أُبطلت** | اخرج فوراً، لا تحاول مرة أخرى |
 | `AUTH_FORBIDDEN` | 403 | لا صلاحية | لا تعرض المحتوى |
 | `VALIDATION_ERROR` | 422 | حقل خاطئ | `details.fields[].field` يحدد أي حقل |
-| `LEVEL_NOT_FOUND` / `UNIT_NOT_FOUND` / `LESSON_NOT_FOUND` / `QUESTION_NOT_FOUND` | 404 | غير موجود أو غير منشور | "المحتوى غير متاح" |
+| `LESSON_NOT_FOUND` / `QUESTION_NOT_FOUND` | 404 | غير موجود أو غير منشور | "المحتوى غير متاح" |
 | `DEVICE_NOT_FOUND` | 404 | جهاز غير موجود | حدّث القائمة |
 | `PAYLOAD_TOO_LARGE` | 413 | payload كبير | `details` فيه `max_bytes` |
 | `RATE_LIMITED` | 429 | تجاوزت الحد | انتظر `Retry-After` (**انظر 9**) |
@@ -330,12 +342,13 @@ Authorization: Bearer <accessToken>
 ### 422 مقابل 404 — الفرق مقصود
 
 ```
-GET /content/levels/ZZ9/units      → 404 LEVEL_NOT_FOUND   (رمز غير موجود أو غير منشور)
-GET /content/units/nope/lessons    → 422 VALIDATION_ERROR  (ليس UUID إطلاقاً)
+GET /content/lessons/not-a-uuid        → 422 VALIDATION_ERROR  (ليس UUID إطلاقاً)
+GET /content/lessons/<uuid غير منشور>  → 404 LESSON_NOT_FOUND
 ```
 
-رمز **مشوّه** يُعامل مثل غير الموجود عمداً، حتى لا يمكن استخدام الـ endpoint لكشف محتوى
-غير منشور. لكن **UUID** مشوّه يُرفض كـ validation، لأنه لا يمكن أن يكون id أصلاً.
+**UUID** مشوّه يُرفض كـ validation، لأنه لا يمكن أن يكون id أصلاً. أما UUID صحيح لا يشير
+إلى درس منشور فيُعامل مثل غير المنشور عمداً، حتى لا يُستخدم الـ endpoint لكشف محتوى غير
+منشور.
 
 **القاعدة:** `404` = "اطلب من المستخدم شيئاً آخر"، `422` = "طلبك مبني خطأ". لا تعِد
 التجربة على `404`.
@@ -373,10 +386,10 @@ PATCH /me  { "currentLevel": "B2" }
 فارغ، والسيرفر يرفضه:
 
 ```
-GET /content/levels?limit=1&cursor=          → 422 VALIDATION_ERROR
+GET /progress?limit=1&cursor=          → 422 VALIDATION_ERROR
    "The cursor is not usable. Start again from the first page."
-GET /content/levels?limit=1&cursor=garbage   → 422 VALIDATION_ERROR
-GET /content/levels?limit=1                  → 200 ✅
+GET /progress?limit=1&cursor=garbage   → 422 VALIDATION_ERROR
+GET /progress?limit=1                  → 200 ✅
 ```
 
 ```dart
@@ -406,7 +419,7 @@ if (cursor != null && cursor.isNotEmpty) q['cursor'] = cursor;
 ### 7.4 مسارات بشرطة مائلة أخيرة
 
 ```
-GET /api/v1/content/levels/   →  307 → /api/v1/content/levels?limit=1
+GET /api/v1/content/tree/   →  307 → /api/v1/content/tree?limit=1
 ```
 
 `307` يحافظ على query string. **ابنِ المسارات بدون شرطة أخيرة**، وتأكد أن عميلك يرسل
@@ -521,40 +534,32 @@ Bearer. `204` (بلا جسم).
 
 ---
 
-## 11. الكتالوج — 5 مسارات
+## 11. الكتالوج — مساران
 
-### `GET /content/levels`
+### `GET /content/tree` — شجرة المنهج كاملة
 
-```jsonc
-{ "items": [{ "id": "5601a155-...", "code": "A1", "title": "A1 Starter",
-              "description": "Greetings, introductions...",
-              "position": 1, "unitCount": 24 }],
-  "meta": { "limit": 20, "hasMore": false, "nextCursor": null } }
-```
-
-`code` هو CEFR. المستويات المنشورة الآن `A1` حتى `C2`، و`A1` هو المكتمل (24 وحدة).
-`unitCount` يأتي محسوباً — اعرضه مباشرة ولا تحسبه.
-
-### `GET /content/levels/{level_code}/units`
-
-`level_code` = `"A1"` (حروف كبيرة، في الـ path).
+ردّ واحد **غير مصفّح** يعيد الهيكل كله: مستويات ← وحدات ← دروس، مع العدّادات.
 
 ```jsonc
-{ "items": [{ "id": "...", "levelCode": "A1", "title": "...",
-              "description": null, "position": 1, "lessonCount": 4 }],
-  "meta": { ... } }
+{
+  "items": [
+    { "id": "5601a155-...", "code": "A1", "title": "A1 Starter",
+      "description": "Greetings, introductions...", "position": 1, "unitCount": 24,
+      "units": [
+        { "id": "...", "levelCode": "A1", "title": "...", "description": null,
+          "position": 1, "lessonCount": 4,
+          "lessons": [
+            { "id": "...", "unitId": "...", "title": "...", "summary": "...",
+              "position": 1, "estimatedMinutes": 5, "questionCount": 6 }
+          ] }
+      ] }
+  ]
+}
 ```
 
-### `GET /content/units/{unit_id}/lessons`
-
-`unit_id` **UUID** من الخطوة السابقة.
-
-```jsonc
-{ "items": [{ "id": "...", "unitId": "...", "title": "...",
-              "summary": "...", "position": 1,
-              "estimatedMinutes": 5, "questionCount": 6 }],
-  "meta": { ... } }
-```
+`code` هو CEFR (حروف كبيرة). المستويات المنشورة `A1` حتى `C2`. العدّادات (`unitCount`,
+`lessonCount`, `questionCount`) تأتي محسوبة — اعرضها مباشرة ولا تحسبها. لا يوجد ترقيم:
+الردّ كامل، والمحتوى المنشور هو الحدّ.
 
 ### `GET /content/lessons/{lesson_id}` — الدرس الكامل
 
@@ -585,28 +590,23 @@ Bearer. `204` (بلا جسم).
 
 > ⚠️ **الأسئلة بدون مفتاح إجابة في حمولة الدرس.** لا يوجد `correctIndex` ولا
 > `acceptedAnswers` ولا `explanation` — عمداً، حتى يمكن قراءة الدرس قبل تسجيل الدخول.
-> **الشرح وحده** له مسار مستقل يُطلب **بعد** أن يجيب المستخدم (§ أدناه).
+> **الشرح ليس على سطح الكتالوج إطلاقًا**؛ يُعاد فقط مع إجابة الـquiz.
 >
-> **النتيجة المباشرة:** **لا يمكنك تصحيح إجابة المستخدم.** تحقق دائماً: هل هناك
-> endpoint لتسجيل إجابة؟ الإجابة **لا**. أي شاشة "اختبرني" تستطيع عرض الأسئلة وجلب
-> الشرح، لكن **لا تستطيع تحديد الصح والخطأ**، ولا حفظ النتيجة. هذه فجوة معمارية تحتاج
-> قراراً منك ومني قبل بناء تلك الشاشة.
+> **النتيجة المباشرة:** **لا يمكنك تصحيح إجابة المستخدم من الكتالوج.** أي شاشة "اختبرني"
+> على الكتالوج تعرض الأسئلة فقط، **ولا تستطيع تحديد الصح والخطأ**، ولا حفظ النتيجة. للتصحيح
+> والشرح استخدم محرّك الـquiz
+> (انظر [`mobile-app-architecture.md`](mobile-app-architecture.md) §6.3).
 
-### `GET /content/questions/{question_id}/explanation` — شرح السؤال
+### مسار الشرح المستقل — **حُذف**
 
-`question_id` **UUID** من حمولة الدرس. يُطلب **بعد** أن يجيب المستخدم، لا قبله. قابل
-للكاش وللحد من المعدل، وبلا مصادقة مثل بقية الكتالوج.
+كان هناك `GET /content/questions/{question_id}/explanation` يعيد `{ id, explanation }`،
+وقد **أُزيل** من الـAPI: لا يكشف الشرح أي سطح كتالوج. صار الشرح جزءًا من استجابة إجابة
+الـquiz (`POST /quiz/sessions/{id}` بأمر `{"op":"answer"}`) مصحوبًا بالتصحيح، فلا لزوم
+لمسار منفصل.
 
-```jsonc
-{ "id": "...", "explanation": "'Hello' is answered with a greeting of your own." }
-```
-
-- يعيد `200` + `{ id, explanation }`.
-- UUID مشوّه → `422 VALIDATION_ERROR`. سؤال غير موجود أو **تحت درس غير منشور** →
-  `404 QUESTION_NOT_FOUND` (نفس الرد للحالتين: لا يمكن كشف محتوى غير منشور).
-- **لا يوجد محرك محاولات بعد**، فالسيرفر لا يستطيع فرض الترتيب؛ **أنت** من يقرر متى يطلب
-  العميل الشرح بعد إجابة المستخدم محلياً.
-- الشرح نص واحد لكل سؤال (بالإنجليزية في بيانات الكتالوج الحالية).
+> تفاصيل محرّك الـquiz (`start` / `resume` / الأمر الموحَّد `op`) وقراءتَي التقدّم
+> (`/progress` + `/progress/unlocks`) في
+> [`mobile-app-architecture.md`](mobile-app-architecture.md) §6.3–§6.4.
 
 ---
 
@@ -636,12 +636,12 @@ Bearer. `204` (بلا جسم).
 - [ ] إنشاء الحساب تلقائياً عند أول دخول (لا شاشة تسجيل منفصلة)
 - [ ] تصفح: مستويات → وحدات → دروس
 - [ ] درس بأسئلة قابلة للعرض (بدون تصحيح)
-- [ ] جلب الشرح بعد إجابة المستخدم (`/content/questions/{id}/explanation`)
+- [ ] (أُزيل) كان الشرح يُجلب من `/content/questions/{id}/explanation` — صار مع إجابة الـquiz
 - [ ] الملف الشخصي (بدون حقل المستوى)
 - [ ] إدارة الأجهزة
 
 ### مطلوب قرار قبل البناء
-- [ ] **تصحيح الأسئلة + حفظ التقدم** — يحتاج backend (quiz + progress). الشرح وحده متاح الآن عبر مسار مستقل
+- [ ] **تصحيح الأسئلة + حفظ التقدم** — **مبنيّ الآن**: محرّك quiz (`/api/v1/quiz/*`) وقراءتا progress (`/api/v1/progress`). الشرح يأتي مع إجابة الـquiz
 - [ ] **apple client id** — iOS فلازم `APPLE_CLIENT_IDS` مضبوط على السيرفر قبل إطلاق الشاشة
 - [ ] **إغلاق الحساب** — موجود (`DELETE /me`) لكن بدون مهلة سماح ولا تأكيد
 - [ ] **placement test** — غير موجود، المستوى يبدأ `A1`
@@ -663,8 +663,8 @@ Bearer. `204` (بلا جسم).
 | شكل الخطأ لا يطابق OpenAPI | كان `422` يُنشر بشكل خاطئ — أُصلح (§6)، و`openapi.json` الآن مطابق لما يُرسَل فعلاً |
 | `AUTH_IDENTITY_CONFLICT` بعد دخول بمزوّد ثانٍ | المزوّد لم يؤكّد البريد — استخدم المزوّد الأصلي، أو اطلب من المستخدم تأكيد البريد ثم أعد المحاولة |
 | تصميم شاشة "تسجيل" منفصلة | لا معنى لها: أول دخول بـ Google/Apple هو التسجيل (§5.2) |
-| تبحث عن الشرح داخل حمولة الدرس | ليس فيها: اطلبه من `/content/questions/{id}/explanation` بعد الإجابة (§11) |
-| `404 QUESTION_NOT_FOUND` على الشرح | السؤال تحت درس غير منشور أو غير موجود — لا فرق مقصود (§11) |
+| تبحث عن الشرح داخل حمولة الدرس أو الكتالوج | الكتالوج لا يكشف الشرح إطلاقًا؛ صار يُعاد مع إجابة الـquiz (§11) |
+| `404 QUESTION_NOT_FOUND` لسؤال داخل جلسة | السؤال ضمن درس غير منشور أو غير موجود — لا فرق مقصود (§11) |
 
 ---
 
@@ -675,11 +675,11 @@ Bearer. `204` (بلا جسم).
 1. **البيئات** — عنوان staging و production، هل HTTPS مُفعّل، وما هو `CORS_ORIGINS` المطلوب
    لو كان هناك webview.
 2. **مثال `device`** — كيف تحصل على FCM token، وهل هو متاح قبل أول دخول؟
-3. **قرار quiz** — هل نضيف `POST /api/v1/quiz/sessions` مع حفظ المحاولات؟ هذا ما يحرر
-   أكبر شاشة في التطبيق.
-4. **قرار التصحيح** — الشرح صار متاحاً عبر `/content/questions/{id}/explanation`، لكن
-   `correctIndex`/`acceptedAnswers` ما زالا محجوبين. نضيف مفتاح الإجابة (يتطلب تسجيل
-   دخول ومحرك محاولات) أم نبقي التصحيح خارج التطبيق؟
+3. **قرار quiz** — محرّك المحاولات **مبنيّ** الآن (`POST /api/v1/quiz/sessions` + أمر
+   موحَّد على `/quiz/sessions/{id}`)، ويحفظ المحاولات ويصحّح على السيرفر.
+4. **قرار التصحيح** — صار الشرح والتصحيح يُعادان مع إجابة الـquiz، لكن
+   `correctIndex`/`acceptedAnswers` ما زالا محجوبين على سطح الكتالوج. (والمسار المنفصل
+   القديم `/content/questions/{id}/explanation` أُزيل.)
 
 مرجع تقني إضافي: [`client-contract.md`](client-contract.md) (إنجليزي) و
 `GET /openapi.json` — يمكنك توليد عميل منه الآن (§6).

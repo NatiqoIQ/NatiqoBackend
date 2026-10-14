@@ -154,6 +154,12 @@ class QuizAnswer:
     ``is_correct`` / ``points_awarded`` are the verdict from the most recent attempt.
     Copying the rationale means a learner's feedback stays truthful even after the
     underlying question is reworded or its key corrected.
+
+    ``attempt`` counts how many times this question has been answered in the session, the
+    row being overwritten in place rather than appended. It is what lets a retry show the
+    choices in a new order: the presentation seed includes the attempt number
+    (``domain/presentation.py``), so ``attempt`` is the only thing that has to be recalled
+    to reproduce exactly the order the learner is looking at — and to grade against it.
     """
 
     id: uuid.UUID
@@ -164,6 +170,9 @@ class QuizAnswer:
     is_correct: bool
     points_awarded: int
     explanation: str
+    #: Which try this row records, counting from one. The first answer is one; every
+    #: re-answer of a missed question is the previous attempt plus one.
+    attempt: int = 1
     answered_at: datetime = field(default_factory=utc_now)
 
 
@@ -221,4 +230,3 @@ class AnswerTally:
         if self.answered <= 0:
             return 0
         return round(self.correct / self.answered * 100)
-

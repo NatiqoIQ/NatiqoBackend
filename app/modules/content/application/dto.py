@@ -79,24 +79,30 @@ class LessonDetailView(LessonSummaryView):
 
 
 @dataclass(frozen=True, slots=True)
-class QuestionExplanationView:
-    """The rationale behind a question's answer.
+class UnitNodeView(UnitView):
+    """A unit in the catalogue tree, carrying its lessons in curriculum order.
 
-    Served only by the dedicated feedback endpoint, never inside a lesson payload:
-    this is the answer key made human-readable, so it must not travel with the public
-    catalogue. There is no attempt engine yet, so the *client* is the one that asks for
-    it after the learner has answered.
+    A subclass rather than a parallel type so the unit's own fields stay defined in one
+    place; ``lessons`` defaults to empty so the base ``UnitView`` construction still
+    works and the field ordering rule (defaults after the inherited fields) is honoured.
     """
 
-    id: uuid.UUID
-    explanation: str
+    lessons: tuple[LessonSummaryView, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class LevelNodeView(LevelView):
+    """A level in the catalogue tree, carrying its units in curriculum order."""
+
+    units: tuple[UnitNodeView, ...] = ()
 
 
 __all__ = [
     "LessonDetailView",
     "LessonSummaryView",
+    "LevelNodeView",
     "LevelView",
-    "QuestionExplanationView",
     "QuestionView",
+    "UnitNodeView",
     "UnitView",
 ]

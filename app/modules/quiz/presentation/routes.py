@@ -1,8 +1,14 @@
 """Authenticated routes for the attempt engine.
 
-Five endpoints under ``/quiz``: open a sitting, resume one, answer a question, finish, and
-abandon. All require a bearer token — unlike the catalogue, a session is account data, and
-every one of them is scoped to the caller's own sessions.
+Three endpoints under ``/quiz``: open a sitting, resume one, and send it a command. All
+require a bearer token — unlike the catalogue, a session is account data, and every one of
+them is scoped to the caller's own sessions.
+
+The command endpoint is the interesting one. Answering, finishing and abandoning a sitting
+are one verb applied to an open session, so they share ``POST /quiz/sessions/{id}`` and are
+told apart by an ``op`` discriminator (see ``schemas.py``) rather than by three sibling
+paths. That keeps one route per resource action, and the discriminant is what the service
+dispatch below branches on.
 
 Handlers are thin: parse, delegate to :class:`QuizService`, render. The rule that decides
 an answer's correctness never appears here, and the answer key never leaves the response
@@ -29,13 +35,19 @@ from app.modules.quiz.application.dto import (
 )
 from app.modules.quiz.domain.policy import SubmittedAnswer
 from app.modules.quiz.presentation.schemas import (
+    AbandonCommandResult,
+    AnswerCommand,
+    AnswerCommandResult,
+    CompleteCommand,
+    CompleteCommandResult,
     CompletedSessionResponse,
     GradedAnswerResponse,
+    SessionCommand,
+    SessionCommandResponse,
     SessionDetailResponse,
     SessionQuestionResponse,
     SessionResponse,
     StartSessionRequest,
-    SubmitAnswerRequest,
 )
 from app.modules.users.presentation.routes import CurrentUser
 
@@ -115,66 +127,55 @@ async def resume_session(
 
 
 @router.post(
-    "/sessions/{session_id}/answers",
-    response_model=GradedAnswerResponse,
-    summary="Answer one question",
+    "/sessions/{session_id}",
+    response_model=SessionCommandResponse,
+    summary="Send a command to an open session",
 )
-async def submit_answer(
+async def command_session(
     session_id: uuid.UUID,
-    payload: SubmitAnswerRequest,
+    payload: SessionCommand,
     user: CurrentUser,
     service: QuizServiceDep,
     _limit: QuizRateLimitDep,
-) -> GradedAnswerResponse:
-    """Grade one answer and return the verdict, the correct answer and the rationale."""
-    graded: GradedAnswerView = await service.submit_answer(
-        user.id,
-        session_id,
-        question_id=payload.question_id,
-        answer=SubmittedAnswer(choice=payload.answer.choice, text=payload.answer.text),
+) -> SessionCommandResponse:
+    """Answer, finish or abandon a sitting — chosen by the body's ``op``.
+
+    ``op: "answer"`` grades one answer and returns the verdict, the correct answer and the
+    rationale. ``op: "complete"`` scores a fully answered sitting and records it against
+    the lesson. ``op: "abandon"`` ends a sitting without scoring it and is idempotent once
+    abandoned. The verdict and rationale are only ever reachable through the answer
+    command, which is what keeps the answer key off every other surface.
+    """
+    if isinstance(payload, AnswerCommand):
+        graded: GradedAnswerView = await service.submit_answer(
+            user.id,
+            session_id,
+            question_id=payload.question_id,
+            answer=SubmittedAnswer(choice=payload.answer.choice, text=payload.answer.text),
+        )
+        return AnswerCommandResult(
+            result=GradedAnswerResponse(
+                is_correct=graded.is_correct,
+                correct_answer=graded.correct_answer,
+                explanation=graded.explanation,
+                points_awarded=graded.points_awarded,
+                answered_count=graded.answered_count,
+                total_count=graded.total_count,
+                correct_count=graded.correct_count,
+                is_complete=graded.is_complete,
+            )
+        )
+    if isinstance(payload, CompleteCommand):
+        completed: CompletedSessionView = await service.complete_session(user.id, session_id)
+        return CompleteCommandResult(
+            result=CompletedSessionResponse(
+                session=_session_response(completed.session),
+                score_percent=completed.score_percent,
+            )
+        )
+    return AbandonCommandResult(
+        result=_session_response(await service.abandon_session(user.id, session_id))
     )
-    return GradedAnswerResponse(
-        is_correct=graded.is_correct,
-        correct_answer=graded.correct_answer,
-        explanation=graded.explanation,
-        points_awarded=graded.points_awarded,
-        answered_count=graded.answered_count,
-        total_count=graded.total_count,
-        correct_count=graded.correct_count,
-        is_complete=graded.is_complete,
-    )
-
-
-@router.post(
-    "/sessions/{session_id}/complete",
-    response_model=CompletedSessionResponse,
-    summary="Finish a session and score it",
-)
-async def complete_session(
-    session_id: uuid.UUID,
-    user: CurrentUser,
-    service: QuizServiceDep,
-) -> CompletedSessionResponse:
-    """Score a fully answered sitting and record it against the lesson."""
-    completed: CompletedSessionView = await service.complete_session(user.id, session_id)
-    return CompletedSessionResponse(
-        session=_session_response(completed.session),
-        score_percent=completed.score_percent,
-    )
-
-
-@router.post(
-    "/sessions/{session_id}/abandon",
-    response_model=SessionResponse,
-    summary="Abandon a session",
-)
-async def abandon_session(
-    session_id: uuid.UUID,
-    user: CurrentUser,
-    service: QuizServiceDep,
-) -> SessionResponse:
-    """End a sitting without scoring it. Idempotent once abandoned."""
-    return _session_response(await service.abandon_session(user.id, session_id))
 
 
 __all__ = ["router"]

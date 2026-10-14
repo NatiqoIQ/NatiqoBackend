@@ -119,6 +119,10 @@ class QuizAnswerModel(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     given_answer: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
     is_correct: Mapped[bool] = mapped_column(Boolean, nullable=False)
     points_awarded: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    #: Which try this row records, counting from one. The row is overwritten on a re-answer,
+    #: so this is also the number of attempts the learner has made; ``domain/presentation``
+    #: seeds the served choice order from it so a retry cannot show the same layout twice.
+    attempt: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=1)
     #: The rationale as it stood when the answer was graded. A copy, not a reference: a
     #: revised question must not rewrite feedback a learner already received.
     explanation: Mapped[str | None] = mapped_column(Text)
@@ -133,6 +137,7 @@ class QuizAnswerModel(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         UniqueConstraint("session_id", "question_id", name="uq_quiz_answers_session_question"),
         CheckConstraint("position >= 1", name="positive_position"),
         CheckConstraint("points_awarded >= 0", name="non_negative_points"),
+        CheckConstraint("attempt >= 1", name="positive_attempt"),
         Index("ix_quiz_answers_session", "session_id", "position"),
     )
 

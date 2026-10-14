@@ -33,6 +33,7 @@ MODEL_MODULES: tuple[str, ...] = (
     "app.modules.ai.infrastructure.models",
     "app.modules.content.infrastructure.models",
     "app.modules.quiz.infrastructure.models",
+    "app.modules.quiz.infrastructure.review_models",
 )
 
 

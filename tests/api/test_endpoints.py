@@ -26,6 +26,7 @@ import json
 import re
 import uuid
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
@@ -47,6 +48,8 @@ from app.modules.content.infrastructure.models import (
     QuestionModel,
     UnitModel,
 )
+from app.modules.quiz.domain.review import ReviewState
+from app.modules.quiz.infrastructure.review_models import ReviewCardModel
 from app.modules.users.application.auth_service import AuthService
 from app.modules.users.domain.identity import (
     IdentityProvider,
@@ -86,20 +89,17 @@ PUBLISHED_OPERATIONS: set[tuple[str, str]] = {
     ("DELETE", "/api/v1/me"),
     ("GET", "/api/v1/me/devices"),
     ("DELETE", "/api/v1/me/devices/{device_id}"),
-    ("GET", "/api/v1/content/levels"),
-    ("GET", "/api/v1/content/levels/{level_code}/units"),
-    ("GET", "/api/v1/content/units/{unit_id}/lessons"),
+    ("GET", "/api/v1/content/tree"),
     ("GET", "/api/v1/content/lessons/{lesson_id}"),
-    ("GET", "/api/v1/content/questions/{question_id}/explanation"),
     ("POST", "/api/v1/quiz/sessions"),
     ("GET", "/api/v1/quiz/sessions/{session_id}"),
-    ("POST", "/api/v1/quiz/sessions/{session_id}/answers"),
-    ("POST", "/api/v1/quiz/sessions/{session_id}/complete"),
-    ("POST", "/api/v1/quiz/sessions/{session_id}/abandon"),
-    ("GET", "/api/v1/progress/summary"),
-    ("GET", "/api/v1/progress/lessons/{lesson_id}"),
+    ("POST", "/api/v1/quiz/sessions/{session_id}"),
+    ("GET", "/api/v1/progress"),
     ("GET", "/api/v1/progress/unlocks"),
-    ("GET", "/api/v1/progress/xp"),
+    ("GET", "/api/v1/review/due"),
+    ("GET", "/api/v1/review/stats"),
+    ("GET", "/api/v1/review/preview"),
+    ("POST", "/api/v1/review/cards/{card_id}/answer"),
 }
 
 
@@ -969,6 +969,7 @@ def _answer_key_keys(payload: Any) -> list[str]:
             found.extend(_answer_key_keys(item))
     return found
 
+
 #: Published for testing, but with nothing under it.
 DRAFT_LEVEL_CODE = "B1"
 
@@ -1085,119 +1086,56 @@ async def test_the_catalogue_needs_no_token(client: AsyncClient, content_db: Asy
     """A signed-out app shell has to be able to show that a curriculum exists."""
     await seed_catalogue(content_db)
 
-    response = await client.get("/api/v1/content/levels")
+    response = await client.get("/api/v1/content/tree")
 
     assert response.status_code == 200
     assert [item["code"] for item in response.json()["items"]] == ["A1", "A2"]
 
 
-async def test_a_draft_level_is_absent_from_the_list(
+async def test_a_draft_level_is_absent_from_the_tree(
     client: AsyncClient, content_db: AsyncSession
 ) -> None:
     await seed_catalogue(content_db)
 
-    codes = [item["code"] for item in (await client.get("/api/v1/content/levels")).json()["items"]]
+    body = (await client.get("/api/v1/content/tree")).json()
 
-    assert DRAFT_LEVEL_CODE not in codes
+    assert DRAFT_LEVEL_CODE not in [item["code"] for item in body["items"]]
 
 
-async def test_the_levels_page_reports_counts_and_cursor_metadata(
+async def test_the_tree_nests_units_and_lessons_with_their_counts(
     client: AsyncClient, content_db: AsyncSession
 ) -> None:
+    """One response carries the whole hierarchy: level → units → lessons, each counted."""
     await seed_catalogue(content_db)
 
-    body = (await client.get("/api/v1/content/levels")).json()
+    body = (await client.get("/api/v1/content/tree")).json()
 
-    assert body["items"][0]["unitCount"] == 1, "the draft unit must not be counted"
-    assert body["meta"] == {"limit": 20, "hasMore": False, "nextCursor": None}
+    a1 = body["items"][0]
+    assert a1["code"] == "A1"
+    assert a1["unitCount"] == 1, "the draft unit must not be counted"
+    (unit,) = a1["units"]
+    assert unit["title"] == "Introductions"
+    assert unit["lessonCount"] == 2
+    assert [lesson["title"] for lesson in unit["lessons"]] == ["Lesson 1", "Lesson 2"]
+    assert [lesson["questionCount"] for lesson in unit["lessons"]] == [1, 1]
 
 
-async def test_walking_the_levels_with_a_cursor_covers_every_level(
+async def test_the_tree_covers_every_level_in_one_response(
     client: AsyncClient, content_db: AsyncSession
 ) -> None:
-    """The boundary bug this catches: a cursor built from the wrong row drops or repeats
-    one on every page."""
-    await seed_catalogue(content_db)
+    """The tree replaced a paginated walk, so there is nothing left to page through.
 
-    seen: list[str] = []
-    cursor: str | None = None
-    while True:
-        url = "/api/v1/content/levels?limit=1"
-        if cursor:
-            url += f"&cursor={cursor}"
-        body = (await client.get(url)).json()
-        seen += [item["code"] for item in body["items"]]
-        cursor = body["meta"]["nextCursor"]
-        if not body["meta"]["hasMore"]:
-            break
+    Asserting the shape has no ``meta`` is the point: a client must not be left looking for
+    a cursor that no longer exists.
+    """
+    await seed_catalogue(content_db, lessons=3)
 
-    assert seen == ["A1", "A2"], "paging lost or repeated a level"
-    assert cursor is None
+    body = (await client.get("/api/v1/content/tree")).json()
 
-
-async def test_a_useless_cursor_is_a_validation_error_not_a_silent_first_page(
-    client: AsyncClient, content_db: AsyncSession
-) -> None:
-    """Swallowing it and returning page one would look like a working catalogue."""
-    await seed_catalogue(content_db)
-
-    response = await client.get("/api/v1/content/levels?cursor=not-a-cursor")
-
-    assert response.status_code == 422
-    assert error_code(response) == "VALIDATION_ERROR"
-
-
-@pytest.mark.parametrize("limit", [0, -1, 101])
-async def test_the_page_size_is_bounded(
-    client: AsyncClient, content_db: AsyncSession, limit: int
-) -> None:
-    """An unbounded limit on an unauthenticated endpoint is a free load amplifier."""
-    await seed_catalogue(content_db)
-
-    response = await client.get(f"/api/v1/content/levels?limit={limit}")
-
-    assert response.status_code == 422
-
-
-async def test_units_of_an_unknown_level_are_not_found(
-    client: AsyncClient, content_db: AsyncSession
-) -> None:
-    """Takes the fixture only for its schema; an empty catalogue is enough."""
-    response = await client.get("/api/v1/content/levels/Z9/units")
-
-    assert response.status_code == 404
-    assert error_code(response) == "LEVEL_NOT_FOUND"
-
-
-async def test_units_of_a_draft_level_look_exactly_like_an_unknown_one(
-    client: AsyncClient, content_db: AsyncSession
-) -> None:
-    """Otherwise the catalogue becomes a map of the editorial pipeline."""
-    await seed_catalogue(content_db)
-
-    unknown = await client.get("/api/v1/content/levels/Z9/units")
-    unpublished = await client.get(f"/api/v1/content/levels/{DRAFT_LEVEL_CODE}/units")
-
-    assert unpublished.status_code == unknown.status_code == 404
-    assert unpublished.json()["error"]["code"] == unknown.json()["error"]["code"]
-
-
-async def test_lessons_are_listed_with_their_question_counts(
-    client: AsyncClient, content_db: AsyncSession
-) -> None:
-    ids = await seed_catalogue(content_db)
-
-    body = (await client.get(f"/api/v1/content/units/{ids['A1-unit']}/lessons")).json()
-
-    assert [item["title"] for item in body["items"]] == ["Lesson 1", "Lesson 2"]
-    assert [item["questionCount"] for item in body["items"]] == [1, 1]
-
-
-async def test_lessons_of_an_unknown_unit_are_not_found(client: AsyncClient) -> None:
-    response = await client.get(f"/api/v1/content/units/{uuid.uuid4()}/lessons")
-
-    assert response.status_code == 404
-    assert error_code(response) == "UNIT_NOT_FOUND"
+    assert [item["code"] for item in body["items"]] == ["A1", "A2"]
+    assert all(len(level["units"]) == 1 for level in body["items"])
+    assert all(len(level["units"][0]["lessons"]) == 3 for level in body["items"])
+    assert "meta" not in body
 
 
 async def test_the_lesson_detail_carries_its_questions(
@@ -1397,10 +1335,9 @@ async def test_every_response_body_is_camel_case(client: AsyncClient) -> None:
     tokens = registered["tokens"]
 
     probes = [
-        await client.get("/api/v1/content/levels"),
-        await client.get("/api/v1/content/levels/A1/units"),
+        await client.get("/api/v1/content/tree"),
+        await client.get(f"/api/v1/content/lessons/{uuid.uuid4()}"),
         await client.get("/health"),
-        await client.get("/api/v1/content/levels/Z9/units"),
         await client.get("/api/v1/me", headers=auth_headers(tokens["accessToken"])),
     ]
 
@@ -1470,13 +1407,13 @@ async def test_a_catalogue_response_is_revalidatable_rather_than_refetched(
     """
     await seed_catalogue(content_db)
 
-    first = await client.get("/api/v1/content/levels")
+    first = await client.get("/api/v1/content/tree")
     assert first.status_code == 200
     etag = first.headers.get("etag")
     assert etag, "a cacheable route must return a validator"
     assert "max-age=60" in first.headers["cache-control"]
 
-    again = await client.get("/api/v1/content/levels", headers={"If-None-Match": etag})
+    again = await client.get("/api/v1/content/tree", headers={"If-None-Match": etag})
     assert again.status_code == 304
     assert again.content == b"", "a 304 must not spend bandwidth re-sending the body"
     # The freshness of the copy the client already holds is updated by this response, so it
@@ -1490,11 +1427,11 @@ async def test_an_unchanged_validator_survives_a_stale_one_being_offered(
 ) -> None:
     """A conditional request carrying a tag we do not have gets the body, not a 304."""
     await seed_catalogue(content_db)
-    stale = await client.get("/api/v1/content/levels")
+    stale = await client.get("/api/v1/content/tree")
     current = stale.headers["etag"]
 
     response = await client.get(
-        "/api/v1/content/levels", headers={"If-None-Match": '"a-tag-from-a-future-deploy"'}
+        "/api/v1/content/tree", headers={"If-None-Match": '"a-tag-from-a-future-deploy"'}
     )
     assert response.status_code == 200
     assert response.json() == stale.json()
@@ -1502,19 +1439,19 @@ async def test_an_unchanged_validator_survives_a_stale_one_being_offered(
 
 
 @pytest.mark.asyncio
-async def test_two_different_catalogue_pages_do_not_share_a_validator(
+async def test_two_different_catalogue_resources_do_not_share_a_validator(
     client: AsyncClient, content_db: AsyncSession
 ) -> None:
     """ETags are per resource. Sharing one would make a client's 304s unsound."""
-    await seed_catalogue(content_db)
-    levels = await client.get("/api/v1/content/levels")
-    units = await client.get("/api/v1/content/levels/A1/units")
-    assert levels.headers["etag"] != units.headers["etag"]
+    ids = await seed_catalogue(content_db)
+    tree = await client.get("/api/v1/content/tree")
+    lesson = await client.get(f"/api/v1/content/lessons/{ids['A1-lesson-1']}")
+    assert tree.headers["etag"] != lesson.headers["etag"]
 
-    # Offering levels' tag against units must therefore miss.
+    # Offering the tree's tag against a lesson must therefore miss.
     crossed = await client.get(
-        "/api/v1/content/levels/A1/units",
-        headers={"If-None-Match": levels.headers["etag"]},
+        f"/api/v1/content/lessons/{ids['A1-lesson-1']}",
+        headers={"If-None-Match": tree.headers["etag"]},
     )
     assert crossed.status_code == 200
 
@@ -1526,7 +1463,7 @@ async def test_a_miss_is_not_cacheable(client: AsyncClient) -> None:
     Caching it for the freshness window would let an editor publish a lesson and have
     learners keep the miss — the content exists, the phone simply refuses to ask again.
     """
-    response = await client.get("/api/v1/content/levels/Z9/units")
+    response = await client.get(f"/api/v1/content/lessons/{uuid.uuid4()}")
     assert response.status_code == 404
     assert response.headers["cache-control"] == "no-store"
     assert "etag" not in response.headers
@@ -1557,109 +1494,15 @@ async def test_the_catalogue_budget_is_enforced_per_client(
     monkeypatch.setenv("RATE_LIMIT_CATALOGUE_REQUESTS_PER_MINUTE", "3")
     config_module.reset_settings_cache()
 
-    statuses = [(await client.get("/api/v1/content/levels")).status_code for _ in range(5)]
+    statuses = [(await client.get("/api/v1/content/tree")).status_code for _ in range(5)]
 
     assert statuses[:3] == [200, 200, 200], "the budget must actually admit traffic"
     assert statuses[3:] == [429, 429]
 
-    blocked = await client.get("/api/v1/content/levels")
+    blocked = await client.get("/api/v1/content/tree")
     assert blocked.status_code == 429
     assert blocked.headers["retry-after"], "a client must be told when to come back"
     assert error_code(blocked) == "RATE_LIMITED"
-
-
-# ----------------------------------------------------------------- questions / explanation
-async def test_the_feedback_endpoint_reveals_the_rationale(
-    client: AsyncClient, content_db: AsyncSession
-) -> None:
-    """After a learner has answered, the client asks the dedicated endpoint for the
-    explanation — the one surface in the catalogue allowed to say why."""
-    ids = await seed_catalogue(content_db)
-    lesson = await content_db.get(LessonModel, ids["A1-lesson-1"])
-    assert lesson is not None
-    question = (
-        await content_db.scalars(select(QuestionModel).where(QuestionModel.lesson_id == lesson.id))
-    ).one()
-
-    response = await client.get(f"/api/v1/content/questions/{question.id}/explanation")
-
-    assert response.status_code == 200, response.text
-    assert response.json() == {"id": str(question.id), "explanation": "A greeting."}
-
-
-async def test_the_feedback_endpoint_hides_a_question_under_a_draft_lesson(
-    client: AsyncClient, content_db: AsyncSession
-) -> None:
-    ids = await seed_catalogue(content_db)
-    draft = LessonModel(
-        id=uuid.uuid4(),
-        unit_id=ids["A1-unit"],
-        title="Draft",
-        summary="Not ready.",
-        position=98,
-        estimated_minutes=5,
-        state=ContentState.REVIEW.value,
-    )
-    question = QuestionModel(
-        id=uuid.uuid4(),
-        lesson_id=draft.id,
-        position=1,
-        kind=QuestionKind.MULTIPLE_CHOICE.value,
-        skill=SkillKind.VOCABULARY.value,
-        prompt="Which one means 'hello'?",
-        choices=["Hello", "Goodbye"],
-        accepted_answers=[],
-        correct_index=0,
-        explanation="A greeting.",
-        points=1,
-    )
-    content_db.add_all([draft, question])
-    await content_db.commit()
-
-    response = await client.get(f"/api/v1/content/questions/{question.id}/explanation")
-
-    assert response.status_code == 404
-    assert error_code(response) == "QUESTION_NOT_FOUND"
-
-
-async def test_the_feedback_endpoint_and_an_invented_question_are_indistinguishable(
-    client: AsyncClient, content_db: AsyncSession
-) -> None:
-    ids = await seed_catalogue(content_db)
-    draft = LessonModel(
-        id=uuid.uuid4(),
-        unit_id=ids["A1-unit"],
-        title="Draft",
-        summary="Not ready.",
-        position=99,
-        estimated_minutes=5,
-        state=ContentState.REVIEW.value,
-    )
-    question = QuestionModel(
-        id=uuid.uuid4(),
-        lesson_id=draft.id,
-        position=1,
-        kind=QuestionKind.MULTIPLE_CHOICE.value,
-        skill=SkillKind.VOCABULARY.value,
-        prompt="Which one means 'hello'?",
-        choices=["Hello", "Goodbye"],
-        accepted_answers=[],
-        correct_index=0,
-        explanation="A greeting.",
-        points=1,
-    )
-    content_db.add_all([draft, question])
-    await content_db.commit()
-
-    unpublished = await client.get(f"/api/v1/content/questions/{question.id}/explanation")
-    invented = await client.get(f"/api/v1/content/questions/{uuid.uuid4()}/explanation")
-
-    assert unpublished.status_code == invented.status_code == 404
-    assert (
-        unpublished.json()["error"]["code"]
-        == invented.json()["error"]["code"]
-        == "QUESTION_NOT_FOUND"
-    )
 
 
 # ==================================================================================== CORS
@@ -1727,7 +1570,7 @@ async def test_a_cross_origin_client_can_read_the_headers_the_api_relies_on(
 async def test_an_unknown_origin_is_not_granted_access(cors_client: AsyncClient) -> None:
     """The allowlist is the control. An unmatched origin must get no CORS grant at all."""
     preflight = await cors_client.options(
-        "/api/v1/content/levels",
+        "/api/v1/content/tree",
         headers={"Origin": "https://attacker.example", "Access-Control-Request-Method": "GET"},
     )
 
@@ -1752,10 +1595,10 @@ async def test_a_trailing_slash_redirects_without_losing_the_query_string(
     """
     await seed_catalogue(content_db)
 
-    response = await client.get("/api/v1/content/levels/", params={"limit": 1})
+    response = await client.get("/api/v1/content/tree/", params={"limit": 1})
 
     assert response.status_code == 307
-    assert response.headers["location"].endswith("/api/v1/content/levels?limit=1"), (
+    assert response.headers["location"].endswith("/api/v1/content/tree?limit=1"), (
         "the query string must survive the redirect or pagination silently resets"
     )
 
@@ -1769,13 +1612,13 @@ async def test_a_malformed_id_and_an_absent_one_are_distinguishable(client: Asyn
     lesson by probing — but a *malformed UUID* never reaches the catalogue, because it cannot
     be a row id at all, and saying so saves the client a pointless retry.
     """
-    malformed = await client.get("/api/v1/content/units/not-a-uuid/lessons")
-    well_formed_but_absent = await client.get(f"/api/v1/content/units/{uuid.uuid4()}/lessons")
+    malformed = await client.get("/api/v1/content/lessons/not-a-uuid")
+    well_formed_but_absent = await client.get(f"/api/v1/content/lessons/{uuid.uuid4()}")
 
     assert malformed.status_code == 422
     assert error_code(malformed) == "VALIDATION_ERROR"
     assert well_formed_but_absent.status_code == 404
-    assert error_code(well_formed_but_absent) == "UNIT_NOT_FOUND"
+    assert error_code(well_formed_but_absent) == "LESSON_NOT_FOUND"
 
 
 def test_the_schema_describes_the_error_envelope_we_actually_send() -> None:
@@ -1814,7 +1657,7 @@ async def test_the_schema_and_the_wire_agree_on_a_validation_error(client: Async
     assert envelope["type"] == "object"
     assert set(envelope["properties"]) >= {"code", "message", "details", "requestId"}
 
-    rejected = await client.get("/api/v1/content/units/not-a-uuid/lessons")
+    rejected = await client.get("/api/v1/content/lessons/not-a-uuid")
     body = rejected.json()
 
     assert rejected.status_code == 422
@@ -1886,13 +1729,17 @@ async def test_answering_is_graded_on_the_server(
     started = await _start_quiz(client, headers, lesson_id)
 
     response = await client.post(
-        f"/api/v1/quiz/sessions/{started['session']['id']}/answers",
-        json={"questionId": started["questions"][0]["id"], "answer": {"choice": "Hello"}},
+        f"/api/v1/quiz/sessions/{started['session']['id']}",
+        json={
+            "op": "answer",
+            "questionId": started["questions"][0]["id"],
+            "answer": {"choice": "Hello"},
+        },
         headers=headers,
     )
 
     assert response.status_code == 200, response.text
-    body = response.json()
+    body = response.json()["result"]
     assert body["isCorrect"] is True
     assert body["correctAnswer"] == {"choice": "Hello"}
     assert body["explanation"] == "A greeting."
@@ -1915,21 +1762,21 @@ async def test_a_correct_retry_earns_half_and_replaces_the_answer(
     session_id = started["session"]["id"]
     question_id = started["questions"][0]["id"]
     wrong = await client.post(
-        f"/api/v1/quiz/sessions/{session_id}/answers",
-        json={"questionId": question_id, "answer": {"choice": "Goodbye"}},
+        f"/api/v1/quiz/sessions/{session_id}",
+        json={"op": "answer", "questionId": question_id, "answer": {"choice": "Goodbye"}},
         headers=headers,
     )
     assert wrong.status_code == 200, wrong.text
-    assert wrong.json()["pointsAwarded"] == 0
+    assert wrong.json()["result"]["pointsAwarded"] == 0
 
     retry = await client.post(
-        f"/api/v1/quiz/sessions/{session_id}/answers",
-        json={"questionId": question_id, "answer": {"choice": "Hello"}},
+        f"/api/v1/quiz/sessions/{session_id}",
+        json={"op": "answer", "questionId": question_id, "answer": {"choice": "Hello"}},
         headers=headers,
     )
 
     assert retry.status_code == 200, retry.text
-    body = retry.json()
+    body = retry.json()["result"]
     assert body["isCorrect"] is True
     assert body["pointsAwarded"] == 0  # half of one point, rounded down
     assert body["correctAnswer"] == {"choice": "Hello"}
@@ -1946,15 +1793,15 @@ async def test_a_question_answered_correctly_is_closed(
     session_id = started["session"]["id"]
     question_id = started["questions"][0]["id"]
     first = await client.post(
-        f"/api/v1/quiz/sessions/{session_id}/answers",
-        json={"questionId": question_id, "answer": {"choice": "Hello"}},
+        f"/api/v1/quiz/sessions/{session_id}",
+        json={"op": "answer", "questionId": question_id, "answer": {"choice": "Hello"}},
         headers=headers,
     )
     assert first.status_code == 200, first.text
 
     response = await client.post(
-        f"/api/v1/quiz/sessions/{session_id}/answers",
-        json={"questionId": question_id, "answer": {"choice": "Hello"}},
+        f"/api/v1/quiz/sessions/{session_id}",
+        json={"op": "answer", "questionId": question_id, "answer": {"choice": "Hello"}},
         headers=headers,
     )
 
@@ -1983,15 +1830,21 @@ async def test_completing_a_session_scores_it(
     started = await _start_quiz(client, headers, lesson_id)
     session_id = started["session"]["id"]
     await client.post(
-        f"/api/v1/quiz/sessions/{session_id}/answers",
-        json={"questionId": started["questions"][0]["id"], "answer": {"choice": "Hello"}},
+        f"/api/v1/quiz/sessions/{session_id}",
+        json={
+            "op": "answer",
+            "questionId": started["questions"][0]["id"],
+            "answer": {"choice": "Hello"},
+        },
         headers=headers,
     )
 
-    response = await client.post(f"/api/v1/quiz/sessions/{session_id}/complete", headers=headers)
+    response = await client.post(
+        f"/api/v1/quiz/sessions/{session_id}", json={"op": "complete"}, headers=headers
+    )
 
     assert response.status_code == 200, response.text
-    body = response.json()
+    body = response.json()["result"]
     assert body["scorePercent"] == 100
     assert body["session"]["status"] == "completed"
 
@@ -2001,11 +1854,13 @@ async def test_abandoning_a_session_ends_it(client: AsyncClient, content_db: Asy
     started = await _start_quiz(client, headers, lesson_id)
 
     response = await client.post(
-        f"/api/v1/quiz/sessions/{started['session']['id']}/abandon", headers=headers
+        f"/api/v1/quiz/sessions/{started['session']['id']}",
+        json={"op": "abandon"},
+        headers=headers,
     )
 
     assert response.status_code == 200, response.text
-    assert response.json()["status"] == "abandoned"
+    assert response.json()["result"]["status"] == "abandoned"
 
 
 async def test_an_unknown_session_is_not_found(
@@ -2090,9 +1945,7 @@ async def test_no_pre_attempt_read_carries_the_answer_key(
     """
     ids = await _seed_catalogue_with_a_key(content_db)
     reads = (
-        ("levels", "/api/v1/content/levels"),
-        ("level units", "/api/v1/content/levels/A1/units"),
-        ("unit lessons", f"/api/v1/content/units/{ids['A1-unit']}/lessons"),
+        ("catalogue tree", "/api/v1/content/tree"),
         ("lesson detail", f"/api/v1/content/lessons/{ids['A1-lesson-1']}"),
         ("free-text lesson detail", f"/api/v1/content/lessons/{ids['A2-lesson-1']}"),
     )
@@ -2153,54 +2006,6 @@ def test_the_published_schema_declares_no_pre_attempt_answer_key_field() -> None
             assert never_public not in rendered, f"{name} declares {never_public}"
 
 
-async def test_the_rationale_route_carries_the_rationale_and_nothing_else(
-    client: AsyncClient, content_db: AsyncSession
-) -> None:
-    """The one public route allowed to reveal an answer, and the narrowest shape for it.
-
-    ``explanation`` is the answer key in prose, so this route is the exception the whole
-    invariant is built around. What is pinned here is that the exception stays narrow: the
-    payload is the question id and the rationale, with no ``correctIndex`` and no
-    ``acceptedAnswers`` riding along. Contrast the lesson route above, which serves the same
-    question and quotes none of it.
-    """
-    ids = await seed_catalogue(content_db)
-    question = await _question_of(content_db, ids["A1-lesson-1"])
-
-    response = await client.get(f"/api/v1/content/questions/{question.id}/explanation")
-
-    assert response.status_code == 200, response.text
-    assert set(response.json()) == {"id", "explanation"}
-    assert response.json()["explanation"] == SEEDED_EXPLANATION
-    assert _answer_key_keys(response.json()) == ["explanation"], "only the rationale may appear"
-    assert "correctIndex" not in response.text
-    assert "acceptedAnswers" not in response.text
-
-
-async def test_the_rationale_route_answers_without_an_attempt(
-    client: AsyncClient, content_db: AsyncSession
-) -> None:
-    """Pins the one hole this file cannot close, so it is visible rather than implied.
-
-    ``GET /content/questions/{id}/explanation`` was written when no attempt engine existed:
-    the client was trusted to call it only after answering, because the server had nothing to
-    check that ordering against. That justification has expired — ``POST
-    /quiz/sessions/{id}/answers`` returns the rationale itself, and a session records exactly
-    which questions a learner answered — so the ordering the route documents as "the client is
-    expected to" is now enforceable. Until something enforces it, an unauthenticated caller
-    can read every rationale in the catalogue by walking question ids, and this test states
-    that as the current behaviour instead of leaving it unsaid.
-    """
-    ids = await seed_catalogue(content_db)
-    question = await _question_of(content_db, ids["A1-lesson-1"])
-
-    # No token, and no session has been started by anyone.
-    response = await client.get(f"/api/v1/content/questions/{question.id}/explanation")
-
-    assert response.status_code == 200
-    assert response.json()["explanation"] == SEEDED_EXPLANATION
-
-
 # ==================================================================== progress
 # The read-only progress surface: the auth gate, the wire shape, and the property that
 # ties it to the attempt engine — every figure is restated from a session the learner
@@ -2230,13 +2035,13 @@ async def _complete_a_lesson(
     session_id = started["session"]["id"]
     for question in started["questions"]:
         answered = await client.post(
-            f"/api/v1/quiz/sessions/{session_id}/answers",
-            json={"questionId": question["id"], "answer": {"choice": "Hello"}},
+            f"/api/v1/quiz/sessions/{session_id}",
+            json={"op": "answer", "questionId": question["id"], "answer": {"choice": "Hello"}},
             headers=headers,
         )
         assert answered.status_code == 200, answered.text
     completed = await client.post(
-        f"/api/v1/quiz/sessions/{session_id}/complete", headers=headers
+        f"/api/v1/quiz/sessions/{session_id}", json={"op": "complete"}, headers=headers
     )
     assert completed.status_code == 200, completed.text
     return uuid.UUID(session_id)
@@ -2246,10 +2051,8 @@ async def _complete_a_lesson(
 @pytest.mark.parametrize(
     "path",
     [
-        "/api/v1/progress/summary",
-        f"/api/v1/progress/lessons/{uuid.uuid4()}",
+        "/api/v1/progress",
         "/api/v1/progress/unlocks",
-        "/api/v1/progress/xp",
     ],
 )
 async def test_progress_reads_need_a_token(client: AsyncClient, path: str) -> None:
@@ -2266,7 +2069,7 @@ async def test_a_brand_new_learner_has_an_all_zero_summary(client: AsyncClient) 
     account = await sign_in(client)
     headers = auth_headers(account["tokens"]["accessToken"])
 
-    response = await client.get("/api/v1/progress/summary", headers=headers)
+    response = await client.get("/api/v1/progress", headers=headers)
 
     assert response.status_code == 200, response.text
     assert response.json() == {
@@ -2280,6 +2083,7 @@ async def test_a_brand_new_learner_has_an_all_zero_summary(client: AsyncClient) 
         "currentStreakDays": 0,
         "longestStreakDays": 0,
         "lastActivityAt": None,
+        "xp": {"items": [], "meta": {"limit": 20, "hasMore": False, "nextCursor": None}},
     }
 
 
@@ -2290,7 +2094,7 @@ async def test_progress_responses_are_never_cached(
     """A progress body on a shared phone's HTTP cache is the next user's problem."""
     headers, _ = await _learner_with_catalogue(client, content_db)
 
-    response = await client.get("/api/v1/progress/summary", headers=headers)
+    response = await client.get("/api/v1/progress", headers=headers)
 
     assert response.status_code == 200, response.text
     assert response.headers["cache-control"] == "no-store"
@@ -2321,42 +2125,39 @@ async def test_the_unlock_map_lists_the_published_curriculum_in_order(
 
 
 @pytest.mark.asyncio
-async def test_a_lesson_with_no_record_reads_available(
+async def test_a_lesson_with_no_record_reads_available_in_the_unlock_map(
     client: AsyncClient, content_db: AsyncSession
 ) -> None:
     headers, ids = await _learner_with_catalogue(client, content_db)
 
-    response = await client.get(
-        f"/api/v1/progress/lessons/{ids['A1-lesson-1']}", headers=headers
-    )
+    body = (await client.get("/api/v1/progress/unlocks", headers=headers)).json()
 
-    assert response.status_code == 200, response.text
-    body = response.json()
-    assert body["lessonId"] == str(ids["A1-lesson-1"])
-    assert body["levelCode"] == "A1"
-    assert body["title"] == "Lesson 1"
-    assert body["state"] == "available"
-    assert body["locked"] is False
-    assert (body["bestScore"], body["attempts"], body["xpEarned"]) == (0, 0, 0)
-    assert body["completedAt"] is None
+    first = next(item for item in body["items"] if item["lessonId"] == str(ids["A1-lesson-1"]))
+    assert first["levelCode"] == "A1"
+    assert first["title"] == "Lesson 1"
+    assert first["state"] == "available"
+    assert first["locked"] is False
+    assert (first["bestScore"], first["attempts"], first["xpEarned"]) == (0, 0, 0)
+    assert first["completedAt"] is None
 
 
 @pytest.mark.asyncio
-async def test_an_unknown_lesson_progress_is_not_found(client: AsyncClient) -> None:
-    account = await sign_in(client)
-    headers = auth_headers(account["tokens"]["accessToken"])
-
-    response = await client.get(f"/api/v1/progress/lessons/{uuid.uuid4()}", headers=headers)
-
-    assert response.status_code == 404, response.text
-    assert error_code(response) == "LESSON_NOT_FOUND"
-
-
-@pytest.mark.asyncio
-async def test_a_draft_lesson_progress_is_not_found(
+async def test_an_unknown_lesson_is_absent_from_the_unlock_map(
     client: AsyncClient, content_db: AsyncSession
 ) -> None:
-    """Draft visibility is inherited, so a lesson under an unpublished unit is a 404."""
+    """The map lists the curriculum; a lesson that is not in it simply is not there."""
+    headers, _ = await _learner_with_catalogue(client, content_db)
+
+    body = (await client.get("/api/v1/progress/unlocks", headers=headers)).json()
+
+    assert str(uuid.uuid4()) not in {item["lessonId"] for item in body["items"]}
+
+
+@pytest.mark.asyncio
+async def test_a_draft_lesson_is_absent_from_the_unlock_map(
+    client: AsyncClient, content_db: AsyncSession
+) -> None:
+    """Draft visibility is inherited, so a lesson under an unpublished unit never appears."""
     headers, ids = await _learner_with_catalogue(client, content_db)
     draft = LessonModel(
         id=uuid.uuid4(),
@@ -2370,10 +2171,10 @@ async def test_a_draft_lesson_progress_is_not_found(
     content_db.add(draft)
     await content_db.commit()
 
-    response = await client.get(f"/api/v1/progress/lessons/{draft.id}", headers=headers)
+    body = (await client.get("/api/v1/progress/unlocks", headers=headers)).json()
 
-    assert response.status_code == 404, response.text
-    assert error_code(response) == "LESSON_NOT_FOUND"
+    assert str(draft.id) not in {item["lessonId"] for item in body["items"]}
+    assert body["total"] == 4, "the draft must not be counted"
 
 
 @pytest.mark.asyncio
@@ -2388,32 +2189,26 @@ async def test_completing_a_lesson_flows_into_the_summary_and_the_feed(
     headers, ids = await _learner_with_catalogue(client, content_db)
     await _complete_a_lesson(client, headers, ids["A1-lesson-1"])
 
-    summary = (await client.get("/api/v1/progress/summary", headers=headers)).json()
-    assert summary["totalXp"] == 1
-    assert summary["lessonsStarted"] == 1
-    assert summary["lessonsCompleted"] == 1
-    assert summary["lessonsInProgress"] == 0
-    assert summary["answeredCount"] == 1
-    assert summary["correctCount"] == 1
-    assert summary["accuracyPercent"] == 100
-    assert summary["currentStreakDays"] == 1
-    assert summary["longestStreakDays"] == 1
-    assert summary["lastActivityAt"] is not None
-
-    lesson = (
-        await client.get(f"/api/v1/progress/lessons/{ids['A1-lesson-1']}", headers=headers)
-    ).json()
-    assert lesson["state"] == "completed"
-    assert lesson["bestScore"] == 100
-    assert lesson["attempts"] == 1
-    assert lesson["xpEarned"] == 1
+    body = (await client.get("/api/v1/progress", headers=headers)).json()
+    assert body["totalXp"] == 1
+    assert body["lessonsStarted"] == 1
+    assert body["lessonsCompleted"] == 1
+    assert body["lessonsInProgress"] == 0
+    assert body["answeredCount"] == 1
+    assert body["correctCount"] == 1
+    assert body["accuracyPercent"] == 100
+    assert body["currentStreakDays"] == 1
+    assert body["longestStreakDays"] == 1
+    assert body["lastActivityAt"] is not None
 
     unlocks = (await client.get("/api/v1/progress/unlocks", headers=headers)).json()
     first = next(item for item in unlocks["items"] if item["lessonId"] == str(ids["A1-lesson-1"]))
     assert first["state"] == "completed"
     assert first["bestScore"] == 100
+    assert first["attempts"] == 1
+    assert first["xpEarned"] == 1
 
-    feed = (await client.get("/api/v1/progress/xp", headers=headers)).json()
+    feed = body["xp"]
     assert len(feed["items"]) == 1
     event = feed["items"][0]
     assert event["lessonId"] == str(ids["A1-lesson-1"])
@@ -2430,18 +2225,20 @@ async def test_an_abandoned_session_is_not_xp_history(
     headers, ids = await _learner_with_catalogue(client, content_db)
     started = await _start_quiz(client, headers, ids["A1-lesson-1"])
     abandoned = await client.post(
-        f"/api/v1/quiz/sessions/{started['session']['id']}/abandon", headers=headers
+        f"/api/v1/quiz/sessions/{started['session']['id']}",
+        json={"op": "abandon"},
+        headers=headers,
     )
     assert abandoned.status_code == 200, abandoned.text
 
-    summary = (await client.get("/api/v1/progress/summary", headers=headers)).json()
-    assert summary["lastActivityAt"] is None
-    assert summary["totalXp"] == 0
+    body = (await client.get("/api/v1/progress", headers=headers)).json()
+    assert body["lastActivityAt"] is None
+    assert body["totalXp"] == 0
     # Starting the lesson still counts it as begun, though it is not finished.
-    assert summary["lessonsInProgress"] == 1
-    assert summary["lessonsCompleted"] == 0
+    assert body["lessonsInProgress"] == 1
+    assert body["lessonsCompleted"] == 0
 
-    feed = (await client.get("/api/v1/progress/xp", headers=headers)).json()
+    feed = body["xp"]
     assert feed["items"] == []
     assert feed["meta"]["hasMore"] is False
 
@@ -2455,19 +2252,17 @@ async def test_the_xp_feed_pages_with_a_cursor_without_overlap(
     first = await _complete_a_lesson(client, headers, ids["A1-lesson-1"])
     second = await _complete_a_lesson(client, headers, ids["A2-lesson-1"])
 
-    page_one = (
-        await client.get("/api/v1/progress/xp", params={"limit": 1}, headers=headers)
-    ).json()
+    page_one = (await client.get("/api/v1/progress", params={"limit": 1}, headers=headers)).json()[
+        "xp"
+    ]
     assert len(page_one["items"]) == 1
     assert page_one["meta"]["hasMore"] is True
     cursor = page_one["meta"]["nextCursor"]
     assert cursor
 
     page_two = (
-        await client.get(
-            "/api/v1/progress/xp", params={"limit": 1, "cursor": cursor}, headers=headers
-        )
-    ).json()
+        await client.get("/api/v1/progress", params={"limit": 1, "cursor": cursor}, headers=headers)
+    ).json()["xp"]
     assert page_two["meta"]["hasMore"] is False
     assert page_two["meta"]["nextCursor"] is None
 
@@ -2485,7 +2280,7 @@ async def test_a_useless_progress_cursor_is_a_validation_error(
     headers = auth_headers(account["tokens"]["accessToken"])
 
     response = await client.get(
-        "/api/v1/progress/xp", params={"cursor": "not-a-cursor"}, headers=headers
+        "/api/v1/progress", params={"cursor": "not-a-cursor"}, headers=headers
     )
 
     assert response.status_code == 422, response.text
@@ -2498,9 +2293,7 @@ async def test_the_progress_page_size_is_bounded(client: AsyncClient, limit: int
     account = await sign_in(client)
     headers = auth_headers(account["tokens"]["accessToken"])
 
-    response = await client.get(
-        "/api/v1/progress/xp", params={"limit": limit}, headers=headers
-    )
+    response = await client.get("/api/v1/progress", params={"limit": limit}, headers=headers)
 
     assert response.status_code == 422, response.text
 
@@ -2523,14 +2316,295 @@ async def test_progress_is_scoped_to_the_caller(
     )
     other_headers = auth_headers(other["tokens"]["accessToken"])
 
-    summary = (await client.get("/api/v1/progress/summary", headers=other_headers)).json()
-    assert summary["totalXp"] == 0
-    assert summary["lessonsCompleted"] == 0
+    body = (await client.get("/api/v1/progress", headers=other_headers)).json()
+    assert body["totalXp"] == 0
+    assert body["lessonsCompleted"] == 0
 
-    lesson = (
-        await client.get(f"/api/v1/progress/lessons/{ids['A1-lesson-1']}", headers=other_headers)
-    ).json()
-    assert lesson["state"] == "available"
+    unlocks = (await client.get("/api/v1/progress/unlocks", headers=other_headers)).json()
+    other = next(item for item in unlocks["items"] if item["lessonId"] == str(ids["A1-lesson-1"]))
+    assert other["state"] == "available"
 
-    feed = (await client.get("/api/v1/progress/xp", headers=other_headers)).json()
-    assert feed["items"] == []
+    assert body["xp"]["items"] == []
+
+
+# ====================================================================== review
+# The spaced-repetition HTTP surface: the auth gate, the wire shape, and the two contracts
+# worth pinning at the boundary — the queue serves the answer-free question a live session
+# does, and answering returns the verdict plus the SM-2 schedule it derived. The use cases
+# are exercised in ``tests/integration``; this is the HTTP contract a client is generated
+# from.
+
+
+async def _learner_with_a_card(
+    client: AsyncClient,
+    content_db: AsyncSession,
+    *,
+    lesson_key: str = "A1-lesson-1",
+    due_at: datetime,
+    repetitions: int = 0,
+    interval_days: int = 0,
+    lapses: int = 0,
+    state: str = ReviewState.NEW.value,
+) -> tuple[dict[str, str], uuid.UUID]:
+    """A signed-in learner, the seeded catalogue, and one card planted for them.
+
+    Planted rather than grown through the engine because the queue only shows cards that
+    are *due*, and a freshly-seeded card is due tomorrow. Returns the caller's headers and
+    the card id.
+    """
+    account = await sign_in(client)
+    headers = auth_headers(account["tokens"]["accessToken"])
+    ids = await seed_catalogue(content_db)
+    question = await _question_of(content_db, ids[lesson_key])
+    card = ReviewCardModel(
+        id=uuid.uuid4(),
+        user_id=uuid.UUID(account["user"]["id"]),
+        question_id=question.id,
+        ease_factor=2.5,
+        interval_days=interval_days,
+        repetitions=repetitions,
+        lapses=lapses,
+        due_at=due_at,
+        last_reviewed_at=None,
+        state=state,
+    )
+    content_db.add(card)
+    await content_db.commit()
+    return headers, card.id
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/api/v1/review/due",
+        "/api/v1/review/stats",
+        "/api/v1/review/preview",
+    ],
+)
+async def test_review_reads_need_a_token(client: AsyncClient, path: str) -> None:
+    """Review figures are account data, so the read prefix is gated like ``/me``."""
+    response = await client.get(path)
+
+    assert response.status_code == 401, response.text
+    assert error_code(response) == "AUTH_TOKEN_INVALID"
+
+
+@pytest.mark.asyncio
+async def test_answering_a_review_needs_a_token(client: AsyncClient) -> None:
+    response = await client.post(
+        f"/api/v1/review/cards/{uuid.uuid4()}/answer", json={"choice": "Hello"}
+    )
+
+    assert response.status_code == 401, response.text
+    assert error_code(response) == "AUTH_TOKEN_INVALID"
+
+
+@pytest.mark.asyncio
+async def test_a_brand_new_learner_has_an_empty_review_surface(
+    client: AsyncClient,
+) -> None:
+    """Every figure is derived from an empty card set, not defaulted into place."""
+    account = await sign_in(client)
+    headers = auth_headers(account["tokens"]["accessToken"])
+
+    queue = await client.get("/api/v1/review/due", headers=headers)
+    assert queue.status_code == 200, queue.text
+    assert queue.json() == {"cards": [], "hasMore": False, "dueCount": 0}
+
+    preview = await client.get("/api/v1/review/preview", headers=headers)
+    assert preview.status_code == 200, preview.text
+    assert preview.json() == {"dueCount": 0}
+
+    stats = await client.get("/api/v1/review/stats", headers=headers)
+    assert stats.status_code == 200, stats.text
+    assert stats.json() == {
+        "totalCards": 0,
+        "dueToday": 0,
+        "future": 0,
+        "reviewedTotal": 0,
+        "retentionPercent": 0,
+    }
+
+
+@pytest.mark.asyncio
+async def test_the_due_queue_serves_the_question_without_the_answer(
+    client: AsyncClient, content_db: AsyncSession
+) -> None:
+    """The whole reason the queue reuses the session projection: no key before an answer."""
+    headers, card_id = await _learner_with_a_card(
+        client,
+        content_db,
+        due_at=datetime.now(UTC) - timedelta(days=1),
+        repetitions=2,
+        interval_days=6,
+        state=ReviewState.REVIEW.value,
+    )
+
+    response = await client.get("/api/v1/review/due", headers=headers)
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["hasMore"] is False
+    assert body["dueCount"] == 1
+    (card,) = body["cards"]
+    assert card["cardId"] == str(card_id)
+    assert card["state"] == "review"
+    assert card["intervalDays"] == 6
+    assert card["repetitions"] == 2
+    question = card["question"]
+    assert set(question) == PUBLIC_QUESTION_FIELDS | {"position"}
+    for leaked in ANSWER_KEY_FIELDS:
+        assert leaked not in question
+    assert SEEDED_EXPLANATION not in response.text
+
+
+@pytest.mark.asyncio
+async def test_answering_a_card_reports_the_verdict_and_the_new_schedule(
+    client: AsyncClient, content_db: AsyncSession
+) -> None:
+    headers, card_id = await _learner_with_a_card(
+        client, content_db, due_at=datetime.now(UTC) - timedelta(days=1)
+    )
+
+    response = await client.post(
+        f"/api/v1/review/cards/{card_id}/answer", json={"choice": "Hello"}, headers=headers
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["isCorrect"] is True
+    assert body["correctAnswer"] == {"choice": "Hello"}
+    assert body["explanation"] == SEEDED_EXPLANATION
+    assert body["pointsAwarded"] == 1
+    assert body["quality"] == 5
+    assert body["intervalDays"] == 1
+    assert body["repetitions"] == 1
+    assert body["lapses"] == 0
+    assert body["state"] == "learning"
+    assert body["dueAt"] is not None
+
+
+@pytest.mark.asyncio
+async def test_a_wrong_review_resets_the_schedule(
+    client: AsyncClient, content_db: AsyncSession
+) -> None:
+    """A failed recall throws the run away and brings the card back tomorrow."""
+    headers, card_id = await _learner_with_a_card(
+        client,
+        content_db,
+        due_at=datetime.now(UTC) - timedelta(days=1),
+        repetitions=3,
+        interval_days=15,
+        state=ReviewState.REVIEW.value,
+    )
+
+    response = await client.post(
+        f"/api/v1/review/cards/{card_id}/answer", json={"choice": "Goodbye"}, headers=headers
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["isCorrect"] is False
+    assert body["quality"] == 2
+    assert body["intervalDays"] == 1
+    assert body["repetitions"] == 0
+    assert body["lapses"] == 1
+    assert body["state"] == "relearning"
+
+
+@pytest.mark.asyncio
+async def test_a_strict_empty_queue_reports_nothing_due(client: AsyncClient) -> None:
+    """``strict`` turns the blank screen into a code the client can branch on."""
+    account = await sign_in(client)
+    headers = auth_headers(account["tokens"]["accessToken"])
+
+    response = await client.get("/api/v1/review/due", params={"strict": True}, headers=headers)
+
+    assert response.status_code == 404, response.text
+    assert error_code(response) == "REVIEW_NOTHING_DUE"
+
+
+@pytest.mark.asyncio
+async def test_answering_an_unknown_card_is_not_found(client: AsyncClient) -> None:
+    account = await sign_in(client)
+    headers = auth_headers(account["tokens"]["accessToken"])
+
+    response = await client.post(
+        f"/api/v1/review/cards/{uuid.uuid4()}/answer", json={"choice": "Hello"}, headers=headers
+    )
+
+    assert response.status_code == 404, response.text
+    assert error_code(response) == "NOT_FOUND"
+
+
+@pytest.mark.asyncio
+async def test_review_is_scoped_to_the_caller(
+    client: AsyncClient, content_db: AsyncSession
+) -> None:
+    """One learner's card must not be readable or answerable by another."""
+    owner_headers, card_id = await _learner_with_a_card(
+        client, content_db, due_at=datetime.now(UTC) - timedelta(days=1)
+    )
+    other = await sign_in(
+        client,
+        token="review-other-token",
+        subject="review-other",
+        email="review-other@natiqo.app",
+    )
+    other_headers = auth_headers(other["tokens"]["accessToken"])
+
+    queue = await client.get("/api/v1/review/due", headers=other_headers)
+    assert queue.json()["cards"] == []
+    assert queue.json()["dueCount"] == 0
+
+    stolen = await client.post(
+        f"/api/v1/review/cards/{card_id}/answer",
+        json={"choice": "Hello"},
+        headers=other_headers,
+    )
+    assert stolen.status_code == 404, stolen.text
+
+    # The owner can still answer it; the refusal above changed nothing.
+    mine = await client.post(
+        f"/api/v1/review/cards/{card_id}/answer", json={"choice": "Hello"}, headers=owner_headers
+    )
+    assert mine.status_code == 200, mine.text
+
+
+@pytest.mark.asyncio
+async def test_completing_a_lesson_seeds_a_review_card(
+    client: AsyncClient, content_db: AsyncSession
+) -> None:
+    """The property that ties review to the engine: a correct answer schedules the question.
+
+    The card lands due tomorrow, so it is counted ahead rather than as due today — which
+    only holds if the due date came off the scheduler.
+    """
+    headers, ids = await _learner_with_catalogue(client, content_db)
+
+    stats_before = (await client.get("/api/v1/review/stats", headers=headers)).json()
+    assert stats_before["totalCards"] == 0
+
+    await _complete_a_lesson(client, headers, ids["A1-lesson-1"])
+
+    stats = (await client.get("/api/v1/review/stats", headers=headers)).json()
+    assert stats["totalCards"] == 1
+    assert stats["dueToday"] == 0
+    assert stats["future"] == 1
+    assert stats["reviewedTotal"] == 0
+
+
+@pytest.mark.asyncio
+async def test_review_responses_are_never_cached(
+    client: AsyncClient, content_db: AsyncSession
+) -> None:
+    """Review state on a shared phone's HTTP cache is the next user's problem."""
+    headers, _ = await _learner_with_a_card(
+        client, content_db, due_at=datetime.now(UTC) - timedelta(days=1)
+    )
+
+    response = await client.get("/api/v1/review/due", headers=headers)
+
+    assert response.status_code == 200, response.text
+    assert response.headers["cache-control"] == "no-store"

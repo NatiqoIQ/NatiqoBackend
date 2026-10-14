@@ -20,7 +20,7 @@ from pydantic import ConfigDict, Field
 from app.core.responses import Page, WireModel
 
 __all__ = [
-    "LessonProgressResponse",
+    "ProgressOverviewResponse",
     "ProgressSummaryResponse",
     "UnlockMapItemResponse",
     "UnlockMapResponse",
@@ -59,26 +59,13 @@ class ProgressSummaryResponse(_ProgressWire):
     last_activity_at: datetime | None = None
 
 
-class LessonProgressResponse(_ProgressWire):
-    """One lesson's curriculum placement plus the learner's record against it."""
-
-    lesson_id: uuid.UUID
-    unit_id: uuid.UUID
-    level_code: str = Field(description="CEFR code, e.g. 'A1'.")
-    title: str
-    position: int
-    state: str = Field(description="available | in_progress | completed")
-    locked: bool = Field(
-        description="Whether the curriculum blocks starting this lesson. Always false today."
-    )
-    best_score: int = Field(ge=0, le=100)
-    attempts: int = Field(ge=0)
-    xp_earned: int = Field(ge=0)
-    completed_at: datetime | None = None
-
-
 class UnlockMapItemResponse(_ProgressWire):
-    """One node of the curriculum-ordered progress map."""
+    """One node of the curriculum-ordered progress map, with the learner's record.
+
+    ``attempts`` and ``xpEarned`` are here because the map is the only place a single
+    lesson's record is read now: a client that wants to show "3 attempts, 40 XP" on a node
+    reads it off the map rather than making a second request.
+    """
 
     lesson_id: uuid.UUID
     unit_id: uuid.UUID
@@ -88,6 +75,8 @@ class UnlockMapItemResponse(_ProgressWire):
     state: str
     locked: bool
     best_score: int = Field(ge=0, le=100)
+    attempts: int = Field(ge=0)
+    xp_earned: int = Field(ge=0)
     completed_at: datetime | None = None
 
 
@@ -115,3 +104,16 @@ class XpEventResponse(_ProgressWire):
 
 
 XpHistoryPage = Page[XpEventResponse]
+
+
+class ProgressOverviewResponse(ProgressSummaryResponse):
+    """The summary and the first page of the XP feed, in one read.
+
+    Flattened rather than wrapped: the summary fields stay at the top level (``totalXp``,
+    ``currentStreakDays``, ...) so a client that already reads the summary shape keeps
+    working, and the feed hangs off ``xp`` beside them. Merging the two reads that a
+    progress screen always made together into one round trip is the point; changing the
+    summary's own shape was not.
+    """
+
+    xp: XpHistoryPage

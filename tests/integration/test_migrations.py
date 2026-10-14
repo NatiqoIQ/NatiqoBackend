@@ -50,6 +50,8 @@ EXPECTED_TABLES = {
     "quiz_answers",
     "quiz_sessions",
     "refresh_tokens",
+    "review_cards",
+    "review_logs",
     "units",
     "user_devices",
     "user_identities",

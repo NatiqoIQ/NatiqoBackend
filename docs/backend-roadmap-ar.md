@@ -27,7 +27,7 @@ endpoint وهمية.**
 | # | المرحلة | يوفّر للتطبيق | جداول جديدة | endpoints | تقدير |
 | --- | --- | --- | --- | --- | --- |
 | 0 | جاهزية الإنتاج | صيانة لا مزايا | 2 | 5 | 3–4 أيام |
-| 1 | Quiz + Progress | **أكبر فجوة اليوم** | 4 | 9 | 8–10 أيام |
+| 1 | Quiz + Progress | ✅ **منفّذ** (أكبر فجوة سابقاً) | 4 | 5 | 8–10 أيام |
 | 2 | مراجعة SRS | حلقة_usage يومية | 2 | 4 | 5–6 أيام |
 | 3 | Gamification | شاشات التقدّم | 3 | 5 | 5–7 أيام |
 | 4 | الاشتراكات | Premium | 3 | 6 | 5–7 أيام |
@@ -148,21 +148,17 @@ lesson_progress(
 
 ### الـEndpoints
 
-> **الحالة: منفّذ.** كتابة التقدّم (`lesson_progress`) وقراءاته الأربعة تحت `/progress`
-> تعمل الآن. كل رقم مُشتقّ من صفوف كتبها محرّك المحاولة، ولا شيء بلا مخزن (القلوب، review
-> due) يظهر — يُحذف بدل أن يُعاد صفراً.
+> **الحالة: منفّذ.** كتابة التقدّم (`lesson_progress`) وقراءتاه (`GET /progress` و
+> `GET /progress/unlocks`) تعمل الآن. كل رقم مُشتقّ من صفوف كتبها محرّك المحاولة، ولا شيء
+> بلا مخزن (القلوب، review due) يظهر — يُحذف بدل أن يُعاد صفراً.
 
 | Method | Path |_jobs | ملاحظات |
 | --- | --- | --- | --- |
-| `POST` | `/api/v1/quiz/sessions` | ابدأ درس | يعيد sessionId + الأسئلة **بلا** مفتاح + `hearts` |
-| `GET` | `/api/v1/quiz/sessions/{id}` | استئناف | **ضروري للموبايل**: لو أُغلق التطبيق midstrip |
-| `POST` | `/api/v1/quiz/sessions/{id}/answers` | إجابة واحدة | يُصحّح، يعيد `correct` + `explanation` |
-| `POST` | `/api/v1/quiz/sessions/{id}/complete` | إنهاء | XP، فتح الدرس التالي، تحديث الـstreak |
-| `POST` | `/api/v1/quiz/sessions/{id}/abandon` | إلغاء | يعيد الـhearts |
-| `GET` | `/api/v1/progress/summary` | شاشة البداية | **منفّذ** — xp، عدد الدروس، الدقة، streak، آخر نشاط. القلوب/review due مؤجّلة |
-| `GET` | `/api/v1/progress/lessons/{id}` | حالة درس | **منفّذ** — available/in_progress/completed |
-| `GET` | `/api/v1/progress/unlocks` | ما يفتح بعد ماذا | **منفّذ** — كامل المنهج مرتّباً؛ `locked` دائماً `false` (بلا قاعدة فتح بعد) |
-| `GET` | `/api/v1/progress/xp` | سجل XP | **منفّذ** — صفحة مرتّبة بالأحدث، الجلسات المكتملة فقط |
+| `POST` | `/api/v1/quiz/sessions` | ابدأ درس | يعيد الجلسة + الأسئلة **بلا** مفتاح إجابة |
+| `GET` | `/api/v1/quiz/sessions/{id}` | استئناف | **ضروري للموبايل**: لو أُغلق التطبيق وسط الدرس |
+| `POST` | `/api/v1/quiz/sessions/{id}` | أمر موحَّد | جسم `{"op":"answer"\|"complete"\|"abandon"}` — يوحّد الإجابة/الإنهاء/الإلغاء في مسار واحد |
+| `GET` | `/api/v1/progress` | شاشة البداية | **منفّذ** — نظرة عامّة + أوّل صفحة XP تحت `xp`. القلوب/review due مؤجّلة |
+| `GET` | `/api/v1/progress/unlocks` | ما يفتح بعد ماذا | **منفّذ** — كامل المنهج مرتّباً مع `attempts`/`xpEarned`؛ `locked` دائماً `false` (بلا قاعدة فتح بعد) |
 
 ### الطلب/الاستجابة
 
@@ -173,21 +169,24 @@ lesson_progress(
 // 201
 {
   "session": { "id":"uuid", "mode":"lesson", "lessonId":"uuid", "status":"active",
-               "expiresAt":"...", "questionCount":6, "answeredCount":0,
-               "hearts":5, "maxHearts":5 },
+               "startedAt":"...", "expiresAt":"...", "totalCount":6,
+               "answeredCount":0, "correctCount":0, "xpAwarded":0,
+               "answeredQuestionIds":[] },
   "questions": [ { "id":"uuid", "position":0, "kind":"multiple_choice",
                    "skill":"vocabulary", "prompt":"...", "points":1,
-                   "choices":["a","b","c"] } ]     // ← correct_index غير موجود هنا
+                   "choices":["a","b","c"] } ]     // ← correctIndex غير موجود هنا
 }
 
-// POST /quiz/sessions/{id}/answers
-{ "questionId":"uuid", "answer": {"choice":"b"} }
+// POST /quiz/sessions/{id}   — أمر موحَّد عبر op
+{ "op": "answer", "questionId":"uuid", "answer": {"choice":"b"} }
+// أو   { "op": "complete" }      // أو   { "op": "abandon" }
 
-// 200
-{ "isCorrect":true, "correctAnswer":{"choice":"c"},   // فقط بعد الإجابة
-  "explanation":"...", "pointsAwarded":1,
-  "sessionHearts":5, "answeredCount":1, "totalCount":6,
-  "isComplete":false }
+// 200 (op=answer) — النتيجة داخل result وتُكرّر op
+{ "op":"answer",
+  "result": { "isCorrect":true, "correctAnswer":{"choice":"c"},   // فقط بعد الإجابة
+              "explanation":"...", "pointsAwarded":1,
+              "answeredCount":1, "totalCount":6, "correctCount":1,
+              "isComplete":false } }
 ```
 
 **`correctAnswer` يظهر بعد الإجابة فقط** — لا قبلها. هذا هو العقد.

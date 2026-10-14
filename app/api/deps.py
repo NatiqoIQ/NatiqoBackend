@@ -27,6 +27,7 @@ from app.core.uow_sqlalchemy import SqlAlchemyUnitOfWork
 from app.modules.content.application.catalogue_service import CatalogueService
 from app.modules.quiz.application.progress_service import ProgressService
 from app.modules.quiz.application.quiz_service import QuizService
+from app.modules.quiz.application.review_service import ReviewService
 from app.modules.users.domain.identity import (
     IdentityProvider,
     IdentityVerifierPort,
@@ -280,6 +281,19 @@ def get_progress_service(uow: UowDep) -> ProgressService:
 ProgressServiceDep = Annotated[ProgressService, Depends(get_progress_service)]
 
 
+# --------------------------------------------------------------------- review
+def get_review_service(uow: UowDep) -> ReviewService:
+    """Build a request-scoped :class:`ReviewService`.
+
+    Bound to the request's unit of work like every other service, so answering a card
+    advances the schedule, appends the log and commits as one transaction.
+    """
+    return ReviewService(uow)
+
+
+ReviewServiceDep = Annotated[ReviewService, Depends(get_review_service)]
+
+
 # ------------------------------------------------------------------- event bus
 def get_bus() -> InProcessEventBus:
     return get_event_bus()
@@ -327,6 +341,7 @@ def rate_limit(scope: str = "default", limit: int | None = None) -> Callable[...
                 "catalogue": settings.rate_limit_catalogue_requests_per_minute,
                 "quiz": settings.rate_limit_quiz_requests_per_minute,
                 "progress": settings.rate_limit_progress_requests_per_minute,
+                "review": settings.rate_limit_review_requests_per_minute,
             }.get(scope, settings.rate_limit_requests_per_minute)
         # The window key is derived server-side from the clock, never from a header.
         window = int(time.time() // 60)
@@ -358,6 +373,11 @@ QuizRateLimitDep = Annotated[None, Depends(rate_limit(scope="quiz"))]
 #: refreshing a summary after every completed lesson does not eat into the answer-grading
 #: allowance, and vice versa.
 ProgressRateLimitDep = Annotated[None, Depends(rate_limit(scope="progress"))]
+
+#: Budget for the review surface. Separate from the quiz write budget so a learner drilling a
+#: due queue does not spend the allowance that the next lesson's answer burst needs, and vice
+#: versa.
+ReviewRateLimitDep = Annotated[None, Depends(rate_limit(scope="review"))]
 
 #: Budget for the credential-adjacent auth routes. Separate from the default so that a
 #: burst of "resend verification" taps cannot consume the allowance that login and
