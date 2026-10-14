@@ -90,6 +90,11 @@ PUBLISHED_OPERATIONS: set[tuple[str, str]] = {
     ("GET", "/api/v1/content/units/{unit_id}/lessons"),
     ("GET", "/api/v1/content/lessons/{lesson_id}"),
     ("GET", "/api/v1/content/questions/{question_id}/explanation"),
+    ("POST", "/api/v1/quiz/sessions"),
+    ("GET", "/api/v1/quiz/sessions/{session_id}"),
+    ("POST", "/api/v1/quiz/sessions/{session_id}/answers"),
+    ("POST", "/api/v1/quiz/sessions/{session_id}/complete"),
+    ("POST", "/api/v1/quiz/sessions/{session_id}/abandon"),
 }
 
 
@@ -1771,3 +1776,198 @@ async def test_the_schema_and_the_wire_agree_on_a_validation_error(client: Async
     assert set(body["error"]) <= set(envelope["properties"])
     assert isinstance(body["error"]["code"], str)
     assert isinstance(body["error"]["message"], str)
+
+
+# ==================================================================== quiz engine
+# The attempt engine's HTTP surface: the status codes, the auth gate, and the one
+# contract that matters most — an answer key never reaches a client that has not
+# answered. The use cases themselves are exercised in ``tests/integration``.
+
+
+async def _quiz_context(
+    client: AsyncClient, content_db: AsyncSession
+) -> tuple[dict[str, str], uuid.UUID]:
+    """A signed-in learner and a published lesson for them to attempt."""
+    account = await sign_in(client)
+    headers = auth_headers(account["tokens"]["accessToken"])
+    ids = await seed_catalogue(content_db)
+    return headers, ids["A1-lesson-1"]
+
+
+async def _start_quiz(
+    client: AsyncClient, headers: dict[str, str], lesson_id: uuid.UUID
+) -> dict[str, Any]:
+    response = await client.post(
+        "/api/v1/quiz/sessions",
+        json={"mode": "lesson", "lessonId": str(lesson_id)},
+        headers=headers,
+    )
+    assert response.status_code == 201, response.text
+    return response.json()
+
+
+async def test_a_quiz_session_needs_a_token(client: AsyncClient) -> None:
+    """A session is account data, so the whole prefix is gated."""
+    response = await client.post(
+        "/api/v1/quiz/sessions", json={"mode": "lesson", "lessonId": str(uuid.uuid4())}
+    )
+
+    assert response.status_code == 401
+
+
+async def test_starting_a_session_never_returns_the_answer_key(
+    client: AsyncClient, content_db: AsyncSession
+) -> None:
+    """The whole point of the slice, asserted at the wire layer."""
+    headers, lesson_id = await _quiz_context(client, content_db)
+
+    body = await _start_quiz(client, headers, lesson_id)
+
+    assert body["session"]["status"] == "active"
+    assert body["session"]["totalCount"] == 1
+    assert body["session"]["answeredCount"] == 0
+    question = body["questions"][0]
+    assert set(question) == PUBLIC_QUESTION_FIELDS | {"position"}
+    for leaked in ANSWER_KEY_FIELDS:
+        assert leaked not in question
+
+
+async def test_answering_is_graded_on_the_server(
+    client: AsyncClient, content_db: AsyncSession
+) -> None:
+    """The verdict, the correct answer and the rationale all come back from the answer."""
+    headers, lesson_id = await _quiz_context(client, content_db)
+    started = await _start_quiz(client, headers, lesson_id)
+
+    response = await client.post(
+        f"/api/v1/quiz/sessions/{started['session']['id']}/answers",
+        json={"questionId": started["questions"][0]["id"], "answer": {"choice": "Hello"}},
+        headers=headers,
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["isCorrect"] is True
+    assert body["correctAnswer"] == {"choice": "Hello"}
+    assert body["explanation"] == "A greeting."
+    assert body["pointsAwarded"] == 1
+    assert body["isComplete"] is True
+
+
+async def test_a_correct_retry_earns_half_and_replaces_the_answer(
+    client: AsyncClient, content_db: AsyncSession
+) -> None:
+    """A missed question may be answered again, and only the score changes.
+
+    The seeded question is worth one point, so half rounds down to nothing — the documented
+    consequence of the halving rule, and the sharpest form of "the first try is the one that
+    pays". Just as important is that the retry lands on the *same* answer: ``answeredCount``
+    stays at one, so a session cannot be inflated by trying again.
+    """
+    headers, lesson_id = await _quiz_context(client, content_db)
+    started = await _start_quiz(client, headers, lesson_id)
+    session_id = started["session"]["id"]
+    question_id = started["questions"][0]["id"]
+    wrong = await client.post(
+        f"/api/v1/quiz/sessions/{session_id}/answers",
+        json={"questionId": question_id, "answer": {"choice": "Goodbye"}},
+        headers=headers,
+    )
+    assert wrong.status_code == 200, wrong.text
+    assert wrong.json()["pointsAwarded"] == 0
+
+    retry = await client.post(
+        f"/api/v1/quiz/sessions/{session_id}/answers",
+        json={"questionId": question_id, "answer": {"choice": "Hello"}},
+        headers=headers,
+    )
+
+    assert retry.status_code == 200, retry.text
+    body = retry.json()
+    assert body["isCorrect"] is True
+    assert body["pointsAwarded"] == 0  # half of one point, rounded down
+    assert body["correctAnswer"] == {"choice": "Hello"}
+    assert body["answeredCount"] == 1
+    assert body["correctCount"] == 1
+
+
+async def test_a_question_answered_correctly_is_closed(
+    client: AsyncClient, content_db: AsyncSession
+) -> None:
+    """Only a *wrong* answer re-opens a question; a right one is settled for good."""
+    headers, lesson_id = await _quiz_context(client, content_db)
+    started = await _start_quiz(client, headers, lesson_id)
+    session_id = started["session"]["id"]
+    question_id = started["questions"][0]["id"]
+    first = await client.post(
+        f"/api/v1/quiz/sessions/{session_id}/answers",
+        json={"questionId": question_id, "answer": {"choice": "Hello"}},
+        headers=headers,
+    )
+    assert first.status_code == 200, first.text
+
+    response = await client.post(
+        f"/api/v1/quiz/sessions/{session_id}/answers",
+        json={"questionId": question_id, "answer": {"choice": "Hello"}},
+        headers=headers,
+    )
+
+    assert response.status_code == 409
+    assert error_code(response) == "QUESTION_ALREADY_ANSWERED"
+
+
+async def test_resuming_a_session_reports_its_state(
+    client: AsyncClient, content_db: AsyncSession
+) -> None:
+    headers, lesson_id = await _quiz_context(client, content_db)
+    started = await _start_quiz(client, headers, lesson_id)
+
+    response = await client.get(
+        f"/api/v1/quiz/sessions/{started['session']['id']}", headers=headers
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["session"]["answeredCount"] == 0
+
+
+async def test_completing_a_session_scores_it(
+    client: AsyncClient, content_db: AsyncSession
+) -> None:
+    headers, lesson_id = await _quiz_context(client, content_db)
+    started = await _start_quiz(client, headers, lesson_id)
+    session_id = started["session"]["id"]
+    await client.post(
+        f"/api/v1/quiz/sessions/{session_id}/answers",
+        json={"questionId": started["questions"][0]["id"], "answer": {"choice": "Hello"}},
+        headers=headers,
+    )
+
+    response = await client.post(f"/api/v1/quiz/sessions/{session_id}/complete", headers=headers)
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["scorePercent"] == 100
+    assert body["session"]["status"] == "completed"
+
+
+async def test_abandoning_a_session_ends_it(client: AsyncClient, content_db: AsyncSession) -> None:
+    headers, lesson_id = await _quiz_context(client, content_db)
+    started = await _start_quiz(client, headers, lesson_id)
+
+    response = await client.post(
+        f"/api/v1/quiz/sessions/{started['session']['id']}/abandon", headers=headers
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "abandoned"
+
+
+async def test_an_unknown_session_is_not_found(
+    client: AsyncClient, content_db: AsyncSession
+) -> None:
+    headers, _ = await _quiz_context(client, content_db)
+
+    response = await client.get(f"/api/v1/quiz/sessions/{uuid.uuid4()}", headers=headers)
+
+    assert response.status_code == 404
+    assert error_code(response) == "QUIZ_SESSION_NOT_FOUND"

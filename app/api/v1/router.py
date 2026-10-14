@@ -12,6 +12,7 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from app.modules.content.presentation.routes import router as content_router
+from app.modules.quiz.presentation.routes import router as quiz_router
 from app.modules.users.presentation.routes import (
     dev_router as dev_login_router,
     router as users_router,
@@ -25,6 +26,10 @@ api_router.include_router(users_router)
 #: The public curriculum catalogue. No prefix of its own and no auth dependency: see
 #: ``modules/content/presentation/routes.py`` for why that is safe.
 api_router.include_router(content_router, prefix="/content", tags=["content"])
+
+#: The attempt engine. Authenticated, unlike the catalogue: a session is account data and
+#: every route is scoped to the caller's own sessions.
+api_router.include_router(quiz_router, prefix="/quiz", tags=["quiz"])
 
 #: The development sign-in deliberately stays *off* ``api_router``: ``create_app``
 #: mounts it only when ``DEV_LOGIN_ENABLED`` is set, so a production app object never

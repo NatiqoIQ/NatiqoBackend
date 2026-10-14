@@ -43,9 +43,12 @@ BACKEND_ROOT = Path(__file__).resolve().parents[2]
 #: it should not, shows up here as a set difference rather than as a vague later error.
 EXPECTED_TABLES = {
     "ai_usage_records",
+    "lesson_progress",
     "lessons",
     "levels",
     "questions",
+    "quiz_answers",
+    "quiz_sessions",
     "refresh_tokens",
     "units",
     "user_devices",

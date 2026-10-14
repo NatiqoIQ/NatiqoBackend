@@ -22,6 +22,11 @@ if TYPE_CHECKING:  # pragma: no cover
         QuestionRepositoryPort,
         UnitRepositoryPort,
     )
+    from app.modules.quiz.domain.ports import (
+        LessonProgressRepositoryPort,
+        QuizAnswerRepositoryPort,
+        QuizSessionRepositoryPort,
+    )
     from app.modules.users.domain.ports import (
         ExternalIdentityRepositoryPort,
         RefreshTokenRepositoryPort,
@@ -195,6 +200,30 @@ class SqlAlchemyUnitOfWork:
         )
 
         return self._repo("questions", SqlAlchemyQuestionRepository)
+
+    @property
+    def quiz_sessions(self) -> QuizSessionRepositoryPort:
+        from app.modules.quiz.infrastructure.repositories import (
+            SqlAlchemyQuizSessionRepository,
+        )
+
+        return self._repo("quiz_sessions", SqlAlchemyQuizSessionRepository)
+
+    @property
+    def quiz_answers(self) -> QuizAnswerRepositoryPort:
+        from app.modules.quiz.infrastructure.repositories import (
+            SqlAlchemyQuizAnswerRepository,
+        )
+
+        return self._repo("quiz_answers", SqlAlchemyQuizAnswerRepository)
+
+    @property
+    def lesson_progress(self) -> LessonProgressRepositoryPort:
+        from app.modules.quiz.infrastructure.repositories import (
+            SqlAlchemyLessonProgressRepository,
+        )
+
+        return self._repo("lesson_progress", SqlAlchemyLessonProgressRepository)
 
     def _repo(self, key: str, factory: Any) -> Any:
         if key not in self._repositories:

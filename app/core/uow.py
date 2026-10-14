@@ -25,6 +25,11 @@ if TYPE_CHECKING:  # pragma: no cover
         QuestionRepositoryPort,
         UnitRepositoryPort,
     )
+    from app.modules.quiz.domain.ports import (
+        LessonProgressRepositoryPort,
+        QuizAnswerRepositoryPort,
+        QuizSessionRepositoryPort,
+    )
     from app.modules.users.domain.ports import (
         ExternalIdentityRepositoryPort,
         RefreshTokenRepositoryPort,
@@ -70,6 +75,15 @@ class UnitOfWorkProtocol(Protocol):
 
     @property
     def questions(self) -> QuestionRepositoryPort: ...
+
+    @property
+    def quiz_sessions(self) -> QuizSessionRepositoryPort: ...
+
+    @property
+    def quiz_answers(self) -> QuizAnswerRepositoryPort: ...
+
+    @property
+    def lesson_progress(self) -> LessonProgressRepositoryPort: ...
 
     async def commit(self) -> None: ...
 

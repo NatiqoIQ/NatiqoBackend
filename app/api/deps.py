@@ -25,6 +25,7 @@ from app.core.events import InProcessEventBus, get_event_bus
 from app.core.logging import get_logger
 from app.core.uow_sqlalchemy import SqlAlchemyUnitOfWork
 from app.modules.content.application.catalogue_service import CatalogueService
+from app.modules.quiz.application.quiz_service import QuizService
 from app.modules.users.domain.identity import (
     IdentityProvider,
     IdentityVerifierPort,
@@ -250,6 +251,20 @@ def get_catalogue_service(uow: UowDep) -> CatalogueService:
 CatalogueServiceDep = Annotated[CatalogueService, Depends(get_catalogue_service)]
 
 
+# ------------------------------------------------------------------------ quiz
+def get_quiz_service(uow: UowDep, settings: SettingsDep) -> QuizService:
+    """Build a request-scoped :class:`QuizService`.
+
+    Bound to the request's unit of work, so starting a session, grading an answer and
+    completing a lesson each commit as one transaction. It takes the settings because a
+    session's lease (``QUIZ_SESSION_TTL_SECONDS``) is configuration, not a constant.
+    """
+    return QuizService(uow, settings)
+
+
+QuizServiceDep = Annotated[QuizService, Depends(get_quiz_service)]
+
+
 # ------------------------------------------------------------------- event bus
 def get_bus() -> InProcessEventBus:
     return get_event_bus()
@@ -295,6 +310,7 @@ def rate_limit(scope: str = "default", limit: int | None = None) -> Callable[...
             budget = {
                 "auth": settings.rate_limit_auth_requests_per_minute,
                 "catalogue": settings.rate_limit_catalogue_requests_per_minute,
+                "quiz": settings.rate_limit_quiz_requests_per_minute,
             }.get(scope, settings.rate_limit_requests_per_minute)
         # The window key is derived server-side from the clock, never from a header.
         window = int(time.time() // 60)
@@ -316,6 +332,11 @@ def rate_limit(scope: str = "default", limit: int | None = None) -> Callable[...
 #: not be able to spend the allowance of an authenticated write happening on the same
 #: device.
 CatalogueRateLimitDep = Annotated[None, Depends(rate_limit(scope="catalogue"))]
+
+#: Budget for the attempt engine. Separate from the catalogue because grading is a write
+#: burst (one per question) while browsing is reads, and a learner mid-lesson should not be
+#: able to exhaust the allowance that browsing the next lesson needs.
+QuizRateLimitDep = Annotated[None, Depends(rate_limit(scope="quiz"))]
 
 #: Budget for the credential-adjacent auth routes. Separate from the default so that a
 #: burst of "resend verification" taps cannot consume the allowance that login and

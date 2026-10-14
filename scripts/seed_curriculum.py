@@ -1691,6 +1691,8 @@ _A2: SeedLevel = SeedLevel(
                     questions=(
                         SeedQuestion(
                             slug="a2-routines-morning-q1",
+                            image_url="/media/images/a1-family-people-q3.jpg",
+                            audio_url="/media/audio/a1-days-month-q1.mp3",
                             kind=QuestionKind.MULTIPLE_CHOICE,
                             skill=SkillKind.VOCABULARY,
                             prompt="Which activity happens first in a typical morning?",
@@ -1705,6 +1707,8 @@ _A2: SeedLevel = SeedLevel(
                         ),
                         SeedQuestion(
                             slug="a2-routines-morning-q2",
+                            image_url="/media/images/a1-appearance-basic-q1.jpg",
+                            audio_url="/media/audio/a1-body-basic-q1.mp3",
                             kind=QuestionKind.FILL_BLANK,
                             skill=SkillKind.GRAMMAR,
                             prompt="Complete: 'I usually ___ up at seven.'",
@@ -1713,6 +1717,8 @@ _A2: SeedLevel = SeedLevel(
                         ),
                         SeedQuestion(
                             slug="a2-routines-morning-q3",
+                            image_url="/media/images/a1-food-cafe-q1.jpg",
+                            audio_url="/media/audio/a1-fruit-basic-q1.mp3",
                             kind=QuestionKind.MULTIPLE_CHOICE,
                             skill=SkillKind.GRAMMAR,
                             prompt="Which sentence describes a habit?",
@@ -1735,6 +1741,8 @@ _A2: SeedLevel = SeedLevel(
                     questions=(
                         SeedQuestion(
                             slug="a2-routines-week-q1",
+                            image_url="/media/images/a1-clothes-basic-q1.jpg",
+                            audio_url="/media/audio/a1-accessories-basic-q2.mp3",
                             kind=QuestionKind.MULTIPLE_CHOICE,
                             skill=SkillKind.GRAMMAR,
                             prompt="Which preposition is correct? 'I work ___ Sunday.'",
@@ -1744,6 +1752,8 @@ _A2: SeedLevel = SeedLevel(
                         ),
                         SeedQuestion(
                             slug="a2-routines-week-q2",
+                            image_url="/media/images/a1-fruit-basic-q1.jpg",
+                            audio_url="/media/audio/a1-town-places-q2.mp3",
                             kind=QuestionKind.FILL_BLANK,
                             skill=SkillKind.VOCABULARY,
                             prompt="The day between Tuesday and Thursday is ___.",
@@ -1752,6 +1762,8 @@ _A2: SeedLevel = SeedLevel(
                         ),
                         SeedQuestion(
                             slug="a2-routines-week-q3",
+                            image_url="/media/images/a1-colours-basic-q2.jpg",
+                            audio_url="/media/audio/a1-days-week-q2.mp3",
                             kind=QuestionKind.MULTIPLE_CHOICE,
                             skill=SkillKind.VOCABULARY,
                             prompt="Which pair are both weekend days?",
@@ -1781,6 +1793,8 @@ _A2: SeedLevel = SeedLevel(
                     questions=(
                         SeedQuestion(
                             slug="a2-home-places-q1",
+                            image_url="/media/images/b1-travel-airport-q1.jpg",
+                            audio_url="/media/audio/a1-family-possessive-q2.mp3",
                             kind=QuestionKind.MULTIPLE_CHOICE,
                             skill=SkillKind.VOCABULARY,
                             prompt="Where do you go to send a letter?",
@@ -1790,6 +1804,8 @@ _A2: SeedLevel = SeedLevel(
                         ),
                         SeedQuestion(
                             slug="a2-home-places-q2",
+                            image_url="/media/images/a1-greetings-hello-q3.jpg",
+                            audio_url="/media/audio/a1-town-directions-q2.mp3",
                             kind=QuestionKind.MULTIPLE_CHOICE,
                             skill=SkillKind.VOCABULARY,
                             prompt="Where do you buy medicine?",
@@ -1799,6 +1815,8 @@ _A2: SeedLevel = SeedLevel(
                         ),
                         SeedQuestion(
                             slug="a2-home-places-q3",
+                            image_url="/media/images/a1-greetings-hello-q1.jpg",
+                            audio_url="/media/audio/a1-jobs-basic-q3.mp3",
                             kind=QuestionKind.FILL_BLANK,
                             skill=SkillKind.VOCABULARY,
                             prompt="You keep your money at the ___.",
@@ -1815,6 +1833,8 @@ _A2: SeedLevel = SeedLevel(
                     questions=(
                         SeedQuestion(
                             slug="a2-home-there-is-q1",
+                            image_url="/media/images/a1-numbers-time-q3.jpg",
+                            audio_url="/media/audio/a1-town-places-q1.mp3",
                             kind=QuestionKind.MULTIPLE_CHOICE,
                             skill=SkillKind.GRAMMAR,
                             prompt="___ three bedrooms in our flat.",
@@ -1824,6 +1844,8 @@ _A2: SeedLevel = SeedLevel(
                         ),
                         SeedQuestion(
                             slug="a2-home-there-is-q2",
+                            image_url="/media/images/a1-weather-words-q1.jpg",
+                            audio_url="/media/audio/a1-greetings-hello-q3.mp3",
                             kind=QuestionKind.FILL_BLANK,
                             skill=SkillKind.GRAMMAR,
                             prompt="Complete: '___ is a small garden behind the house.'",
@@ -1832,6 +1854,8 @@ _A2: SeedLevel = SeedLevel(
                         ),
                         SeedQuestion(
                             slug="a2-home-there-is-q3",
+                            image_url="/media/images/a1-days-month-q3.jpg",
+                            audio_url="/media/audio/a1-money-basic-q1.mp3",
                             kind=QuestionKind.TRUE_FALSE,
                             skill=SkillKind.GRAMMAR,
                             prompt="'There is two chairs' is correct English.",
@@ -1856,6 +1880,8 @@ _A2: SeedLevel = SeedLevel(
                     questions=(
                         SeedQuestion(
                             slug="a2-shopping-market-q1",
+                            image_url="/media/images/a1-house-furniture-q1.jpg",
+                            audio_url="/media/audio/a1-routine-basic-q3.mp3",
                             kind=QuestionKind.MULTIPLE_CHOICE,
                             skill=SkillKind.GRAMMAR,
                             prompt="How do you ask politely for an item in a shop?",
@@ -1870,6 +1896,8 @@ _A2: SeedLevel = SeedLevel(
                         ),
                         SeedQuestion(
                             slug="a2-shopping-market-q2",
+                            image_url="/media/images/a1-house-furniture-q3.jpg",
+                            audio_url="/media/audio/a1-routine-basic-q1.mp3",
                             kind=QuestionKind.FILL_BLANK,
                             skill=SkillKind.GRAMMAR,
                             prompt="Complete: 'How ___ does it cost?'",
@@ -1878,6 +1906,8 @@ _A2: SeedLevel = SeedLevel(
                         ),
                         SeedQuestion(
                             slug="a2-shopping-market-q3",
+                            image_url="/media/images/a1-food-cafe-q3.jpg",
+                            audio_url="/media/audio/a1-clothes-basic-q2.mp3",
                             kind=QuestionKind.MULTIPLE_CHOICE,
                             skill=SkillKind.VOCABULARY,
                             prompt="What does a shop assistant say when you pay in cash?",
@@ -1900,6 +1930,8 @@ _A2: SeedLevel = SeedLevel(
                     questions=(
                         SeedQuestion(
                             slug="a2-shopping-money-q1",
+                            image_url="/media/images/a1-numbers-age-q1.jpg",
+                            audio_url="/media/audio/a1-days-week-q3.mp3",
                             kind=QuestionKind.MULTIPLE_CHOICE,
                             skill=SkillKind.READING,
                             prompt="A label reads '£4.50'. Which is the price?",
@@ -1914,6 +1946,8 @@ _A2: SeedLevel = SeedLevel(
                         ),
                         SeedQuestion(
                             slug="a2-shopping-money-q2",
+                            image_url="/media/images/a1-family-people-q3.jpg",
+                            audio_url="/media/audio/a1-colours-clothes-q3.mp3",
                             kind=QuestionKind.FILL_BLANK,
                             skill=SkillKind.VOCABULARY,
                             prompt="Half of ten kilos is ___ kilos.",
@@ -1922,6 +1956,8 @@ _A2: SeedLevel = SeedLevel(
                         ),
                         SeedQuestion(
                             slug="a2-shopping-money-q3",
+                            image_url="/media/images/a1-greetings-hello-q3.jpg",
+                            audio_url="/media/audio/a1-numbers-age-q2.mp3",
                             kind=QuestionKind.TRUE_FALSE,
                             skill=SkillKind.VOCABULARY,
                             prompt="A receipt is the paper that proves you paid.",
@@ -1931,6 +1967,8 @@ _A2: SeedLevel = SeedLevel(
                         ),
                         SeedQuestion(
                             slug="a2-shopping-money-q4",
+                            image_url="/media/images/a1-money-basic-q1.jpg",
+                            audio_url="/media/audio/a1-days-month-q1.mp3",
                             kind=QuestionKind.MULTIPLE_CHOICE,
                             skill=SkillKind.PRONUNCIATION,
                             prompt="Which word rhymes with 'two'?",
@@ -1965,6 +2003,8 @@ _B1: SeedLevel = SeedLevel(
                     questions=(
                         SeedQuestion(
                             slug="b1-work-jobs-q1",
+                            image_url="/media/images/a1-animals-basic-q2.jpg",
+                            audio_url="/media/audio/a1-food-meals-q3.mp3",
                             kind=QuestionKind.MULTIPLE_CHOICE,
                             skill=SkillKind.VOCABULARY,
                             prompt="A person who keeps and examines financial records is an ___.",
@@ -1974,6 +2014,8 @@ _B1: SeedLevel = SeedLevel(
                         ),
                         SeedQuestion(
                             slug="b1-work-jobs-q2",
+                            image_url="/media/images/a1-family-possessive-q2.jpg",
+                            audio_url="/media/audio/a1-drinks-basic-q1.mp3",
                             kind=QuestionKind.FILL_BLANK,
                             skill=SkillKind.GRAMMAR,
                             prompt="Complete: 'She has been working here ___ 2019.'",
@@ -1982,6 +2024,8 @@ _B1: SeedLevel = SeedLevel(
                         ),
                         SeedQuestion(
                             slug="b1-work-jobs-q3",
+                            image_url="/media/images/a1-routine-basic-q2.jpg",
+                            audio_url="/media/audio/a1-town-places-q3.mp3",
                             kind=QuestionKind.TRUE_FALSE,
                             skill=SkillKind.READING,
                             prompt="'Shift work' means working the same hours every weekday.",
@@ -1999,6 +2043,8 @@ _B1: SeedLevel = SeedLevel(
                     questions=(
                         SeedQuestion(
                             slug="b1-work-interviews-q1",
+                            image_url="/media/images/a1-food-meals-q1.jpg",
+                            audio_url="/media/audio/a1-days-week-q1.mp3",
                             kind=QuestionKind.MULTIPLE_CHOICE,
                             skill=SkillKind.READING,
                             prompt="The advertisement says 'previous experience essential'. What does that mean?",
@@ -2013,6 +2059,8 @@ _B1: SeedLevel = SeedLevel(
                         ),
                         SeedQuestion(
                             slug="b1-work-interviews-q2",
+                            image_url="/media/images/a1-money-basic-q3.jpg",
+                            audio_url="/media/audio/a1-food-cafe-q1.mp3",
                             kind=QuestionKind.FILL_BLANK,
                             skill=SkillKind.GRAMMAR,
                             prompt="Complete: 'I am writing to apply ___ the position of teacher.'",
@@ -2021,6 +2069,8 @@ _B1: SeedLevel = SeedLevel(
                         ),
                         SeedQuestion(
                             slug="b1-work-interviews-q3",
+                            image_url="/media/images/a1-animals-basic-q1.jpg",
+                            audio_url="/media/audio/a1-animals-basic-q1.mp3",
                             kind=QuestionKind.MULTIPLE_CHOICE,
                             skill=SkillKind.WRITING,
                             prompt="Which opening is appropriate in a formal application letter?",
@@ -2050,6 +2100,7 @@ _B1: SeedLevel = SeedLevel(
                     questions=(
                         SeedQuestion(
                             slug="b1-travel-airport-q1",
+                            audio_url="/media/audio/a1-greetings-hello-q1.mp3",
                             kind=QuestionKind.MULTIPLE_CHOICE,
                             skill=SkillKind.VOCABULARY,
                             prompt="Where do you collect your suitcase after landing?",
@@ -2065,6 +2116,8 @@ _B1: SeedLevel = SeedLevel(
                         ),
                         SeedQuestion(
                             slug="b1-travel-airport-q2",
+                            image_url="/media/images/a1-jobs-basic-q1.jpg",
+                            audio_url="/media/audio/a1-holidays-basic-q2.mp3",
                             kind=QuestionKind.FILL_BLANK,
                             skill=SkillKind.VOCABULARY,
                             prompt="Complete: 'Your flight has been ___ by three hours.' (made later)",
@@ -2073,6 +2126,8 @@ _B1: SeedLevel = SeedLevel(
                         ),
                         SeedQuestion(
                             slug="b1-travel-airport-q3",
+                            image_url="/media/images/a1-family-possessive-q2.jpg",
+                            audio_url="/media/audio/a1-numbers-age-q1.mp3",
                             kind=QuestionKind.TRUE_FALSE,
                             skill=SkillKind.READING,
                             prompt="A boarding pass shows your seat number.",
@@ -2090,6 +2145,8 @@ _B1: SeedLevel = SeedLevel(
                     questions=(
                         SeedQuestion(
                             slug="b1-travel-hotel-q1",
+                            image_url="/media/images/a1-town-directions-q1.jpg",
+                            audio_url="/media/audio/a1-house-rooms-q2.mp3",
                             kind=QuestionKind.MULTIPLE_CHOICE,
                             skill=SkillKind.GRAMMAR,
                             prompt="Which is the most polite complaint?",
@@ -2104,6 +2161,8 @@ _B1: SeedLevel = SeedLevel(
                         ),
                         SeedQuestion(
                             slug="b1-travel-hotel-q2",
+                            image_url="/media/images/a1-days-month-q2.jpg",
+                            audio_url="/media/audio/a1-numbers-time-q2.mp3",
                             kind=QuestionKind.FILL_BLANK,
                             skill=SkillKind.GRAMMAR,
                             prompt="Complete: 'Could you ___ me a wake-up call at six?'",
@@ -2112,6 +2171,8 @@ _B1: SeedLevel = SeedLevel(
                         ),
                         SeedQuestion(
                             slug="b1-travel-hotel-q3",
+                            image_url="/media/images/a1-greetings-name-q2.jpg",
+                            audio_url="/media/audio/a1-objects-basic-q2.mp3",
                             kind=QuestionKind.MULTIPLE_CHOICE,
                             skill=SkillKind.VOCABULARY,
                             prompt="What does 'en suite' mean in a hotel listing?",
@@ -2141,6 +2202,8 @@ _B1: SeedLevel = SeedLevel(
                     questions=(
                         SeedQuestion(
                             slug="b1-health-doctor-q1",
+                            image_url="/media/images/a1-colours-basic-q1.jpg",
+                            audio_url="/media/audio/a1-actions-basic-q3.mp3",
                             kind=QuestionKind.FILL_BLANK,
                             skill=SkillKind.GRAMMAR,
                             prompt="Complete: 'I have had this cough ___ three days.'",
@@ -2149,6 +2212,8 @@ _B1: SeedLevel = SeedLevel(
                         ),
                         SeedQuestion(
                             slug="b1-health-doctor-q2",
+                            image_url="/media/images/a1-objects-basic-q2.jpg",
+                            audio_url="/media/audio/a1-appearance-basic-q3.mp3",
                             kind=QuestionKind.MULTIPLE_CHOICE,
                             skill=SkillKind.VOCABULARY,
                             prompt="A doctor writes you a prescription. What do you do with it?",
@@ -2163,6 +2228,8 @@ _B1: SeedLevel = SeedLevel(
                         ),
                         SeedQuestion(
                             slug="b1-health-doctor-q3",
+                            image_url="/media/images/a1-numbers-time-q3.jpg",
+                            audio_url="/media/audio/a1-animals-basic-q2.mp3",
                             kind=QuestionKind.TRUE_FALSE,
                             skill=SkillKind.VOCABULARY,
                             prompt="'I feel under the weather' means I feel unwell.",
@@ -2180,6 +2247,8 @@ _B1: SeedLevel = SeedLevel(
                     questions=(
                         SeedQuestion(
                             slug="b1-health-advice-q1",
+                            image_url="/media/images/a1-drinks-basic-q3.jpg",
+                            audio_url="/media/audio/a1-colours-clothes-q1.mp3",
                             kind=QuestionKind.MULTIPLE_CHOICE,
                             skill=SkillKind.GRAMMAR,
                             prompt="Which sentence gives advice?",
@@ -2194,6 +2263,8 @@ _B1: SeedLevel = SeedLevel(
                         ),
                         SeedQuestion(
                             slug="b1-health-advice-q2",
+                            image_url="/media/images/a1-house-rooms-q3.jpg",
+                            audio_url="/media/audio/a1-family-possessive-q2.mp3",
                             kind=QuestionKind.FILL_BLANK,
                             skill=SkillKind.GRAMMAR,
                             prompt="Complete: 'If I ___ you, I would see a doctor.'",
@@ -2202,6 +2273,8 @@ _B1: SeedLevel = SeedLevel(
                         ),
                         SeedQuestion(
                             slug="b1-health-advice-q3",
+                            image_url="/media/images/a1-body-basic-q1.jpg",
+                            audio_url="/media/audio/a1-food-cafe-q2.mp3",
                             kind=QuestionKind.MULTIPLE_CHOICE,
                             skill=SkillKind.WRITING,
                             prompt="Which is the strongest warning?",
@@ -2241,6 +2314,8 @@ _B2: SeedLevel = SeedLevel(
                     questions=(
                         SeedQuestion(
                             slug="b2-opinions-agreeing-q1",
+                            image_url="/media/images/a1-greetings-hello-q2.jpg",
+                            audio_url="/media/audio/a1-money-basic-q2.mp3",
                             kind=QuestionKind.MULTIPLE_CHOICE,
                             skill=SkillKind.GRAMMAR,
                             prompt="Which sentence disagrees most tentatively?",
@@ -2255,6 +2330,8 @@ _B2: SeedLevel = SeedLevel(
                         ),
                         SeedQuestion(
                             slug="b2-opinions-agreeing-q2",
+                            image_url="/media/images/a1-drinks-basic-q1.jpg",
+                            audio_url="/media/audio/a1-weather-words-q2.mp3",
                             kind=QuestionKind.FILL_BLANK,
                             skill=SkillKind.GRAMMAR,
                             prompt="Complete: 'I agree ___ you up to a point.'",
@@ -2263,6 +2340,8 @@ _B2: SeedLevel = SeedLevel(
                         ),
                         SeedQuestion(
                             slug="b2-opinions-agreeing-q3",
+                            image_url="/media/images/a1-money-basic-q3.jpg",
+                            audio_url="/media/audio/a1-fruit-basic-q3.mp3",
                             kind=QuestionKind.TRUE_FALSE,
                             skill=SkillKind.GRAMMAR,
                             prompt="'I see your point, but...' introduces a concession.",
@@ -2280,6 +2359,8 @@ _B2: SeedLevel = SeedLevel(
                     questions=(
                         SeedQuestion(
                             slug="b2-opinions-paragraph-q1",
+                            image_url="/media/images/a1-greetings-name-q3.jpg",
+                            audio_url="/media/audio/a1-fruit-basic-q2.mp3",
                             kind=QuestionKind.MULTIPLE_CHOICE,
                             skill=SkillKind.WRITING,
                             prompt="Which connector introduces a result?",
@@ -2289,6 +2370,8 @@ _B2: SeedLevel = SeedLevel(
                         ),
                         SeedQuestion(
                             slug="b2-opinions-paragraph-q2",
+                            image_url="/media/images/a1-numbers-age-q2.jpg",
+                            audio_url="/media/audio/a1-numbers-time-q1.mp3",
                             kind=QuestionKind.FILL_BLANK,
                             skill=SkillKind.WRITING,
                             prompt="Complete: '___ the cost, the plan is worth trying.' (despite)",
@@ -2297,6 +2380,8 @@ _B2: SeedLevel = SeedLevel(
                         ),
                         SeedQuestion(
                             slug="b2-opinions-paragraph-q3",
+                            image_url="/media/images/a1-numbers-time-q1.jpg",
+                            audio_url="/media/audio/a1-house-furniture-q3.mp3",
                             kind=QuestionKind.MULTIPLE_CHOICE,
                             skill=SkillKind.READING,
                             prompt="Which sentence is a claim rather than a fact?",
@@ -2326,6 +2411,8 @@ _B2: SeedLevel = SeedLevel(
                     questions=(
                         SeedQuestion(
                             slug="b2-media-headlines-q1",
+                            image_url="/media/images/a1-routine-basic-q3.jpg",
+                            audio_url="/media/audio/a1-days-week-q2.mp3",
                             kind=QuestionKind.MULTIPLE_CHOICE,
                             skill=SkillKind.READING,
                             prompt="The headline reads 'Ministers clash over budget'. Who is involved?",
@@ -2340,6 +2427,8 @@ _B2: SeedLevel = SeedLevel(
                         ),
                         SeedQuestion(
                             slug="b2-media-headlines-q2",
+                            image_url="/media/images/a1-school-basic-q2.jpg",
+                            audio_url="/media/audio/a1-family-people-q3.mp3",
                             kind=QuestionKind.FILL_BLANK,
                             skill=SkillKind.READING,
                             prompt="Headlines often drop the verb 'to be'. Complete: 'Three injured ___ crash.'",
@@ -2348,6 +2437,8 @@ _B2: SeedLevel = SeedLevel(
                         ),
                         SeedQuestion(
                             slug="b2-media-headlines-q3",
+                            image_url="/media/images/a1-drinks-basic-q3.jpg",
+                            audio_url="/media/audio/a1-numbers-time-q1.mp3",
                             kind=QuestionKind.TRUE_FALSE,
                             skill=SkillKind.READING,
                             prompt="A tabloid headline is usually more restrained than a broadsheet one.",
@@ -2365,6 +2456,8 @@ _B2: SeedLevel = SeedLevel(
                     questions=(
                         SeedQuestion(
                             slug="b2-media-passive-q1",
+                            image_url="/media/images/a1-weather-words-q1.jpg",
+                            audio_url="/media/audio/a1-school-basic-q2.mp3",
                             kind=QuestionKind.MULTIPLE_CHOICE,
                             skill=SkillKind.GRAMMAR,
                             prompt="Which is the passive form of 'They built the bridge in 1998'?",
@@ -2379,6 +2472,8 @@ _B2: SeedLevel = SeedLevel(
                         ),
                         SeedQuestion(
                             slug="b2-media-passive-q2",
+                            image_url="/media/images/a1-house-furniture-q2.jpg",
+                            audio_url="/media/audio/a1-appearance-basic-q2.mp3",
                             kind=QuestionKind.FILL_BLANK,
                             skill=SkillKind.GRAMMAR,
                             prompt="Complete: 'The results ___ been published.'",
@@ -2387,6 +2482,8 @@ _B2: SeedLevel = SeedLevel(
                         ),
                         SeedQuestion(
                             slug="b2-media-passive-q3",
+                            image_url="/media/images/a1-accessories-basic-q1.jpg",
+                            audio_url="/media/audio/a1-town-places-q3.mp3",
                             kind=QuestionKind.MULTIPLE_CHOICE,
                             skill=SkillKind.WRITING,
                             prompt="Why does a news report prefer the passive here: 'Two people were arrested'?",
@@ -2401,6 +2498,8 @@ _B2: SeedLevel = SeedLevel(
                         ),
                         SeedQuestion(
                             slug="b2-media-passive-q4",
+                            image_url="/media/images/a1-routine-basic-q2.jpg",
+                            audio_url="/media/audio/a1-fruit-basic-q2.mp3",
                             kind=QuestionKind.MULTIPLE_CHOICE,
                             skill=SkillKind.PRONUNCIATION,
                             prompt="Which letter is silent in the word 'doubt'?",
@@ -2425,6 +2524,8 @@ _B2: SeedLevel = SeedLevel(
                     questions=(
                         SeedQuestion(
                             slug="b2-environment-problems-q1",
+                            image_url="/media/images/a1-food-meals-q3.jpg",
+                            audio_url="/media/audio/a1-fruit-basic-q2.mp3",
                             kind=QuestionKind.MULTIPLE_CHOICE,
                             skill=SkillKind.VOCABULARY,
                             prompt="Which word means 'damage caused to water or air'?",
@@ -2434,6 +2535,8 @@ _B2: SeedLevel = SeedLevel(
                         ),
                         SeedQuestion(
                             slug="b2-environment-problems-q2",
+                            image_url="/media/images/a1-money-basic-q1.jpg",
+                            audio_url="/media/audio/a1-fruit-basic-q1.mp3",
                             kind=QuestionKind.FILL_BLANK,
                             skill=SkillKind.GRAMMAR,
                             prompt="Complete: 'Traffic is the main ___ of air pollution in the city.' (cause)",
@@ -2442,6 +2545,8 @@ _B2: SeedLevel = SeedLevel(
                         ),
                         SeedQuestion(
                             slug="b2-environment-problems-q3",
+                            image_url="/media/images/a1-greetings-name-q3.jpg",
+                            audio_url="/media/audio/a1-appearance-basic-q1.mp3",
                             kind=QuestionKind.TRUE_FALSE,
                             skill=SkillKind.READING,
                             prompt="'A drop in the ocean' means an effect that is large enough to matter.",
@@ -2459,6 +2564,8 @@ _B2: SeedLevel = SeedLevel(
                     questions=(
                         SeedQuestion(
                             slug="b2-environment-solutions-q1",
+                            image_url="/media/images/a1-body-basic-q2.jpg",
+                            audio_url="/media/audio/a1-food-cafe-q1.mp3",
                             kind=QuestionKind.MULTIPLE_CHOICE,
                             skill=SkillKind.GRAMMAR,
                             prompt="Which sentence proposes a solution most formally?",
@@ -2473,6 +2580,8 @@ _B2: SeedLevel = SeedLevel(
                         ),
                         SeedQuestion(
                             slug="b2-environment-solutions-q2",
+                            image_url="/media/images/a1-colours-clothes-q3.jpg",
+                            audio_url="/media/audio/a1-numbers-time-q3.mp3",
                             kind=QuestionKind.FILL_BLANK,
                             skill=SkillKind.GRAMMAR,
                             prompt="Complete: 'This approach is likely ___ reduce congestion.'",
@@ -2481,6 +2590,8 @@ _B2: SeedLevel = SeedLevel(
                         ),
                         SeedQuestion(
                             slug="b2-environment-solutions-q3",
+                            image_url="/media/images/a1-appearance-basic-q1.jpg",
+                            audio_url="/media/audio/a1-days-month-q2.mp3",
                             kind=QuestionKind.MULTIPLE_CHOICE,
                             skill=SkillKind.WRITING,
                             prompt="Which sentence weighs a drawback?",
@@ -2520,6 +2631,8 @@ _C1: SeedLevel = SeedLevel(
                     questions=(
                         SeedQuestion(
                             slug="c1-nuance-idioms-q1",
+                            image_url="/media/images/a1-jobs-basic-q2.jpg",
+                            audio_url="/media/audio/a1-house-furniture-q2.mp3",
                             kind=QuestionKind.MULTIPLE_CHOICE,
                             skill=SkillKind.VOCABULARY,
                             prompt="'We'll cross that bridge when we come to it' means ___.",
@@ -2534,6 +2647,8 @@ _C1: SeedLevel = SeedLevel(
                         ),
                         SeedQuestion(
                             slug="c1-nuance-idioms-q2",
+                            image_url="/media/images/a1-house-furniture-q2.jpg",
+                            audio_url="/media/audio/a1-animals-basic-q1.mp3",
                             kind=QuestionKind.FILL_BLANK,
                             skill=SkillKind.VOCABULARY,
                             prompt="Complete the idiom: 'to be on the same ___' (to agree).",
@@ -2542,6 +2657,8 @@ _C1: SeedLevel = SeedLevel(
                         ),
                         SeedQuestion(
                             slug="c1-nuance-idioms-q3",
+                            image_url="/media/images/a1-objects-basic-q2.jpg",
+                            audio_url="/media/audio/a1-days-month-q3.mp3",
                             kind=QuestionKind.TRUE_FALSE,
                             skill=SkillKind.VOCABULARY,
                             prompt="'To pull someone's leg' means to deceive them seriously.",
@@ -2559,6 +2676,8 @@ _C1: SeedLevel = SeedLevel(
                     questions=(
                         SeedQuestion(
                             slug="c1-nuance-register-q1",
+                            image_url="/media/images/a1-weather-free-time-q3.jpg",
+                            audio_url="/media/audio/a1-drinks-basic-q3.mp3",
                             kind=QuestionKind.MULTIPLE_CHOICE,
                             skill=SkillKind.WRITING,
                             prompt="Which is the most formal way to say 'I want to know more'?",
@@ -2573,6 +2692,8 @@ _C1: SeedLevel = SeedLevel(
                         ),
                         SeedQuestion(
                             slug="c1-nuance-register-q2",
+                            image_url="/media/images/a1-appearance-basic-q1.jpg",
+                            audio_url="/media/audio/a1-town-places-q3.mp3",
                             kind=QuestionKind.FILL_BLANK,
                             skill=SkillKind.WRITING,
                             prompt="Formal alternative to 'get in touch': '___ contact with us.'",
@@ -2581,6 +2702,8 @@ _C1: SeedLevel = SeedLevel(
                         ),
                         SeedQuestion(
                             slug="c1-nuance-register-q3",
+                            image_url="/media/images/a1-clothes-basic-q1.jpg",
+                            audio_url="/media/audio/a1-house-rooms-q1.mp3",
                             kind=QuestionKind.MULTIPLE_CHOICE,
                             skill=SkillKind.READING,
                             prompt="'Your application has not been successful' is ___.",
@@ -2610,6 +2733,8 @@ _C1: SeedLevel = SeedLevel(
                     questions=(
                         SeedQuestion(
                             slug="c1-argument-linking-q1",
+                            image_url="/media/images/a1-money-basic-q1.jpg",
+                            audio_url="/media/audio/a1-drinks-basic-q2.mp3",
                             kind=QuestionKind.MULTIPLE_CHOICE,
                             skill=SkillKind.WRITING,
                             prompt="Which connector introduces a counter-argument to what you just said?",
@@ -2624,6 +2749,8 @@ _C1: SeedLevel = SeedLevel(
                         ),
                         SeedQuestion(
                             slug="c1-argument-linking-q2",
+                            image_url="/media/images/a1-family-possessive-q1.jpg",
+                            audio_url="/media/audio/a1-drinks-basic-q1.mp3",
                             kind=QuestionKind.FILL_BLANK,
                             skill=SkillKind.WRITING,
                             prompt="Complete: 'The evidence is thin; ___, the conclusion may still hold.' (however)",
@@ -2632,6 +2759,8 @@ _C1: SeedLevel = SeedLevel(
                         ),
                         SeedQuestion(
                             slug="c1-argument-linking-q3",
+                            image_url="/media/images/a1-food-meals-q1.jpg",
+                            audio_url="/media/audio/a1-food-cafe-q1.mp3",
                             kind=QuestionKind.TRUE_FALSE,
                             skill=SkillKind.WRITING,
                             prompt="'In other words' signals that a restatement follows.",
@@ -2649,6 +2778,8 @@ _C1: SeedLevel = SeedLevel(
                     questions=(
                         SeedQuestion(
                             slug="c1-argument-hedging-q1",
+                            image_url="/media/images/a1-routine-basic-q3.jpg",
+                            audio_url="/media/audio/a1-days-week-q3.mp3",
                             kind=QuestionKind.MULTIPLE_CHOICE,
                             skill=SkillKind.WRITING,
                             prompt="Which sentence is hedged?",
@@ -2663,6 +2794,8 @@ _C1: SeedLevel = SeedLevel(
                         ),
                         SeedQuestion(
                             slug="c1-argument-hedging-q2",
+                            image_url="/media/images/a1-colours-clothes-q2.jpg",
+                            audio_url="/media/audio/a1-colours-basic-q2.mp3",
                             kind=QuestionKind.FILL_BLANK,
                             skill=SkillKind.GRAMMAR,
                             prompt="Complete: 'The results ___ suggest a link, but not conclusively.'",
@@ -2671,6 +2804,8 @@ _C1: SeedLevel = SeedLevel(
                         ),
                         SeedQuestion(
                             slug="c1-argument-hedging-q3",
+                            image_url="/media/images/a1-accessories-basic-q1.jpg",
+                            audio_url="/media/audio/a1-town-places-q2.mp3",
                             kind=QuestionKind.MULTIPLE_CHOICE,
                             skill=SkillKind.READING,
                             prompt="'This is arguably the best solution' means ___.",
@@ -2700,6 +2835,8 @@ _C1: SeedLevel = SeedLevel(
                     questions=(
                         SeedQuestion(
                             slug="c1-culture-literature-q1",
+                            image_url="/media/images/a1-school-basic-q3.jpg",
+                            audio_url="/media/audio/a1-house-rooms-q1.mp3",
                             kind=QuestionKind.MULTIPLE_CHOICE,
                             skill=SkillKind.VOCABULARY,
                             prompt="The main character of a novel is the ___.",
@@ -2709,6 +2846,8 @@ _C1: SeedLevel = SeedLevel(
                         ),
                         SeedQuestion(
                             slug="c1-culture-literature-q2",
+                            image_url="/media/images/a1-fruit-basic-q1.jpg",
+                            audio_url="/media/audio/a1-colours-clothes-q3.mp3",
                             kind=QuestionKind.FILL_BLANK,
                             skill=SkillKind.VOCABULARY,
                             prompt="A story with a hidden meaning that teaches a lesson is a ___.",
@@ -2717,6 +2856,8 @@ _C1: SeedLevel = SeedLevel(
                         ),
                         SeedQuestion(
                             slug="c1-culture-literature-q3",
+                            image_url="/media/images/a1-jobs-basic-q1.jpg",
+                            audio_url="/media/audio/a1-town-places-q3.mp3",
                             kind=QuestionKind.TRUE_FALSE,
                             skill=SkillKind.READING,
                             prompt="A 'plot twist' is a change the reader saw coming from page one.",
@@ -2734,6 +2875,8 @@ _C1: SeedLevel = SeedLevel(
                     questions=(
                         SeedQuestion(
                             slug="c1-culture-humour-q1",
+                            image_url="/media/images/a1-food-cafe-q3.jpg",
+                            audio_url="/media/audio/a1-weather-free-time-q3.mp3",
                             kind=QuestionKind.MULTIPLE_CHOICE,
                             skill=SkillKind.READING,
                             prompt="It is pouring with rain and someone says 'Lovely weather!'. They are ___.",
@@ -2748,6 +2891,8 @@ _C1: SeedLevel = SeedLevel(
                         ),
                         SeedQuestion(
                             slug="c1-culture-humour-q2",
+                            image_url="/media/images/a1-routine-basic-q2.jpg",
+                            audio_url="/media/audio/a1-appearance-basic-q1.mp3",
                             kind=QuestionKind.FILL_BLANK,
                             skill=SkillKind.VOCABULARY,
                             prompt="A joke that plays on a word's double meaning is a ___. (play on words)",
@@ -2756,6 +2901,8 @@ _C1: SeedLevel = SeedLevel(
                         ),
                         SeedQuestion(
                             slug="c1-culture-humour-q3",
+                            image_url="/media/images/a1-colours-clothes-q1.jpg",
+                            audio_url="/media/audio/a1-greetings-name-q4.mp3",
                             kind=QuestionKind.MULTIPLE_CHOICE,
                             skill=SkillKind.LISTENING,
                             prompt="You hear 'That went well' immediately after a disaster. The tone is ___.",
@@ -2795,6 +2942,8 @@ _C2: SeedLevel = SeedLevel(
                     questions=(
                         SeedQuestion(
                             slug="c2-style-connotation-q1",
+                            image_url="/media/images/a1-food-cafe-q1.jpg",
+                            audio_url="/media/audio/a1-objects-basic-q2.mp3",
                             kind=QuestionKind.MULTIPLE_CHOICE,
                             skill=SkillKind.VOCABULARY,
                             prompt="Which word is the most negative?",
@@ -2804,6 +2953,8 @@ _C2: SeedLevel = SeedLevel(
                         ),
                         SeedQuestion(
                             slug="c2-style-connotation-q2",
+                            image_url="/media/images/a1-house-furniture-q1.jpg",
+                            audio_url="/media/audio/a1-actions-basic-q1.mp3",
                             kind=QuestionKind.FILL_BLANK,
                             skill=SkillKind.VOCABULARY,
                             prompt="Neutral word for a person who studies a lot: '___'. (approving: 'studious')",
@@ -2812,6 +2963,8 @@ _C2: SeedLevel = SeedLevel(
                         ),
                         SeedQuestion(
                             slug="c2-style-connotation-q3",
+                            image_url="/media/images/a1-greetings-hello-q1.jpg",
+                            audio_url="/media/audio/a1-accessories-basic-q2.mp3",
                             kind=QuestionKind.MULTIPLE_CHOICE,
                             skill=SkillKind.WRITING,
                             prompt="A report calls a decision 'hasty'. The writer believes it was ___.",
@@ -2834,6 +2987,8 @@ _C2: SeedLevel = SeedLevel(
                     questions=(
                         SeedQuestion(
                             slug="c2-style-inversion-q1",
+                            image_url="/media/images/a1-accessories-basic-q2.jpg",
+                            audio_url="/media/audio/a1-house-furniture-q1.mp3",
                             kind=QuestionKind.MULTIPLE_CHOICE,
                             skill=SkillKind.GRAMMAR,
                             prompt="Which sentence uses inversion correctly for emphasis?",
@@ -2848,6 +3003,8 @@ _C2: SeedLevel = SeedLevel(
                         ),
                         SeedQuestion(
                             slug="c2-style-inversion-q2",
+                            image_url="/media/images/a1-jobs-basic-q1.jpg",
+                            audio_url="/media/audio/a1-clothes-basic-q2.mp3",
                             kind=QuestionKind.FILL_BLANK,
                             skill=SkillKind.GRAMMAR,
                             prompt="Complete: 'Only later ___ we realise the cost.' (inverted auxiliary)",
@@ -2856,6 +3013,8 @@ _C2: SeedLevel = SeedLevel(
                         ),
                         SeedQuestion(
                             slug="c2-style-inversion-q3",
+                            image_url="/media/images/a1-numbers-time-q2.jpg",
+                            audio_url="/media/audio/a1-body-basic-q2.mp3",
                             kind=QuestionKind.TRUE_FALSE,
                             skill=SkillKind.WRITING,
                             prompt="Inversion makes a formal text sound more emphatic.",
@@ -2880,6 +3039,8 @@ _C2: SeedLevel = SeedLevel(
                     questions=(
                         SeedQuestion(
                             slug="c2-discourse-cohesion-q1",
+                            image_url="/media/images/a1-accessories-basic-q3.jpg",
+                            audio_url="/media/audio/a1-family-possessive-q1.mp3",
                             kind=QuestionKind.MULTIPLE_CHOICE,
                             skill=SkillKind.WRITING,
                             prompt="Which device refers back to something mentioned earlier?",
@@ -2894,6 +3055,8 @@ _C2: SeedLevel = SeedLevel(
                         ),
                         SeedQuestion(
                             slug="c2-discourse-cohesion-q2",
+                            image_url="/media/images/a1-money-basic-q3.jpg",
+                            audio_url="/media/audio/a1-shopping-basic-q2.mp3",
                             kind=QuestionKind.FILL_BLANK,
                             skill=SkillKind.WRITING,
                             prompt="Complete: 'The proposal was rejected. ___, the committee agreed to review it.' (contrast)",
@@ -2902,6 +3065,8 @@ _C2: SeedLevel = SeedLevel(
                         ),
                         SeedQuestion(
                             slug="c2-discourse-cohesion-q3",
+                            image_url="/media/images/a1-weather-words-q3.jpg",
+                            audio_url="/media/audio/a1-days-month-q1.mp3",
                             kind=QuestionKind.TRUE_FALSE,
                             skill=SkillKind.READING,
                             prompt="Repeating a key noun exactly is generally preferred to using a pronoun in a long text.",
@@ -2919,6 +3084,8 @@ _C2: SeedLevel = SeedLevel(
                     questions=(
                         SeedQuestion(
                             slug="c2-discourse-tone-q1",
+                            image_url="/media/images/a1-school-basic-q3.jpg",
+                            audio_url="/media/audio/a1-days-month-q2.mp3",
                             kind=QuestionKind.MULTIPLE_CHOICE,
                             skill=SkillKind.READING,
                             prompt="'It is hardly surprising that the plan failed.' The writer ___.",
@@ -2933,6 +3100,8 @@ _C2: SeedLevel = SeedLevel(
                         ),
                         SeedQuestion(
                             slug="c2-discourse-tone-q2",
+                            image_url="/media/images/a1-weather-words-q2.jpg",
+                            audio_url="/media/audio/a1-objects-basic-q1.mp3",
                             kind=QuestionKind.MULTIPLE_CHOICE,
                             skill=SkillKind.READING,
                             prompt="Which sentence implies the speaker doubts the claim?",
@@ -2947,6 +3116,8 @@ _C2: SeedLevel = SeedLevel(
                         ),
                         SeedQuestion(
                             slug="c2-discourse-tone-q3",
+                            image_url="/media/images/a1-numbers-age-q3.jpg",
+                            audio_url="/media/audio/a1-school-basic-q1.mp3",
                             kind=QuestionKind.FILL_BLANK,
                             skill=SkillKind.WRITING,
                             prompt="Complete: 'The memo stops ___ of criticising the decision.' (without *short*)",
@@ -2970,6 +3141,8 @@ _C2: SeedLevel = SeedLevel(
                     questions=(
                         SeedQuestion(
                             slug="c2-idiom-phrasal-q1",
+                            image_url="/media/images/a1-family-people-q3.jpg",
+                            audio_url="/media/audio/a1-greetings-hello-q2.mp3",
                             kind=QuestionKind.MULTIPLE_CHOICE,
                             skill=SkillKind.VOCABULARY,
                             prompt="'We need to iron out the details' means ___.",
@@ -2984,6 +3157,8 @@ _C2: SeedLevel = SeedLevel(
                         ),
                         SeedQuestion(
                             slug="c2-idiom-phrasal-q2",
+                            image_url="/media/images/a1-shopping-basic-q2.jpg",
+                            audio_url="/media/audio/a1-holidays-basic-q3.mp3",
                             kind=QuestionKind.FILL_BLANK,
                             skill=SkillKind.VOCABULARY,
                             prompt="Complete: 'The deal fell ___ at the last minute.' (failed)",
@@ -2992,6 +3167,8 @@ _C2: SeedLevel = SeedLevel(
                         ),
                         SeedQuestion(
                             slug="c2-idiom-phrasal-q3",
+                            image_url="/media/images/a1-food-cafe-q1.jpg",
+                            audio_url="/media/audio/a1-actions-basic-q2.mp3",
                             kind=QuestionKind.MULTIPLE_CHOICE,
                             skill=SkillKind.VOCABULARY,
                             prompt="'She put the meeting off' means she ___.",
@@ -3014,6 +3191,8 @@ _C2: SeedLevel = SeedLevel(
                     questions=(
                         SeedQuestion(
                             slug="c2-idiom-metaphor-q1",
+                            image_url="/media/images/a1-money-basic-q1.jpg",
+                            audio_url="/media/audio/a1-accessories-basic-q3.mp3",
                             kind=QuestionKind.MULTIPLE_CHOICE,
                             skill=SkillKind.READING,
                             prompt="'The city is a sleeping giant' is ___.",
@@ -3028,6 +3207,8 @@ _C2: SeedLevel = SeedLevel(
                         ),
                         SeedQuestion(
                             slug="c2-idiom-metaphor-q2",
+                            image_url="/media/images/a1-holidays-basic-q3.jpg",
+                            audio_url="/media/audio/a1-holidays-basic-q2.mp3",
                             kind=QuestionKind.FILL_BLANK,
                             skill=SkillKind.VOCABULARY,
                             prompt="'As quiet as a ___' completes the simile. (small rodent)",
@@ -3036,6 +3217,8 @@ _C2: SeedLevel = SeedLevel(
                         ),
                         SeedQuestion(
                             slug="c2-idiom-metaphor-q3",
+                            image_url="/media/images/a1-greetings-goodbye-q3.jpg",
+                            audio_url="/media/audio/a1-shopping-basic-q1.mp3",
                             kind=QuestionKind.TRUE_FALSE,
                             skill=SkillKind.WRITING,
                             prompt="A mixed metaphor combines two comparisons that do not fit together.",

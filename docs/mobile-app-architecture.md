@@ -36,7 +36,7 @@ It complements, and never repeats:
                      PostgreSQL     Redis    S3
 ```
 
-**What the backend gives you today (15 operations):**
+**What the backend gives you today (16 operations):**
 
 ```
 POST   /api/v1/auth/google          POST   /api/v1/auth/apple
@@ -48,6 +48,7 @@ GET    /api/v1/content/levels
 GET    /api/v1/content/levels/{code}/units
 GET    /api/v1/content/units/{id}/lessons
 GET    /api/v1/content/lessons/{id}
+GET    /api/v1/content/questions/{id}/explanation
 GET    /health                      GET    /ready
 ```
 
@@ -100,7 +101,7 @@ lib/
       bloc/         # catalogue_bloc (levels), unit_list_cubit, lesson_list_cubit
       presentation/ # levels_screen, units_screen, lessons_screen
     lesson/
-      data/         # lesson_repository (uses catalogue endpoint + local cache)
+      data/         # lesson_repository (catalogue + explanation endpoints, local cache)
       bloc/         # lesson_bloc, question_viewer_cubit
       presentation/ # lesson_screen, question_card.dart
     profile/
@@ -343,15 +344,22 @@ an existing learner's choices.
 | Levels | `GET /content/levels` | public (no auth gate!) — usable pre-sign-in; shows unit counts |
 | Units of a level | `GET /content/levels/{code}/units` | cursor pagination; infinite scroll |
 | Lessons of a unit | `GET /content/units/{id}/lessons` | cursor pagination |
-| Lesson detail | `GET /content/lessons/{id}` | questions **without** `correctIndex`, `acceptedAnswers`, `explanation` |
+| Lesson detail | `GET /content/lessons/{id}` | questions **without** `correctIndex`, `acceptedAnswers`, `explanation` — plus optional `imageUrl`/`audioUrl` aids |
+| Question explanation | `GET /content/questions/{id}/explanation` | the rationale, fetched **after** the learner answers; the one catalogue surface that reveals why |
 
-- All four are cacheable: `ETag` + `Cache-Control: max-age=60,
+- All five are cacheable: `ETag` + `Cache-Control: max-age=60,
   stale-while-revalidate=600`. Cache the body + ETag in drift; revalidate with
   `If-None-Match` and serve `304` from cache while offline.
 - Rate limit 240/min per IP — generous, but still surface `429`.
-- The lesson screen today is a **reader**, not a quiz: questions render, nothing can
-  be submitted. Label it honestly in the UI ("practice coming soon") rather than
-  showing dead answer buttons.
+- The lesson screen today is a **reader with a local reveal**, not a quiz: questions
+  render with their image/audio aids, the learner may pick an answer, and you may then
+  call the explanation endpoint to show why — but **the server cannot grade it**, so do
+  not show a score. Label it honestly ("practice coming soon") rather than faking
+  correctness.
+- `imageUrl`/`audioUrl` are same-origin `/media/...` paths (not under `/api/v1`),
+  immutable, and few — cache them for the life of the app. A `404` from the explanation
+  endpoint means the question is unpublished or unknown (`QUESTION_NOT_FOUND`), which is
+  indistinguishable on purpose.
 
 ### 6.3 Quiz + progress — PHASE 1 (unlocks the app's core loop)
 
@@ -414,9 +422,12 @@ delivery itself waits for phase 5.
 
 ### 6.8 Media — PHASE 6
 
-Presigned upload: `POST /media/presign` → upload directly to S3 → `POST /media/confirm`
-→ read via `GET /media/{id}` (signed URL, 15 min). Relevant for speaking/pronunciation
-answers later; do not stream audio through the API server.
+Two different things share the name. **Catalogue aids already work today:** question
+`imageUrl`/`audioUrl` are public, same-origin `/media/...` files (§6.2) — read them
+directly and cache them. **Learner uploads are phase 6:** presigned upload
+`POST /media/presign` → upload directly to S3 → `POST /media/confirm` → read via
+`GET /media/{id}` (signed URL, 15 min). Relevant for speaking/pronunciation answers
+later; do not stream audio through the API server.
 
 ### 6.9 AI — PHASE 7
 
@@ -427,7 +438,8 @@ answers later; do not stream audio through the API server.
 | Quota display | `GET /ai/quota` |
 
 Design for failure: `AI_QUOTA_EXCEEDED`, `AI_TIMEOUT`, `AI_PROVIDER_ERROR` are normal
-outcomes — degrade to the static explanation already stored with the question.
+outcomes — degrade to the authored explanation, already fetchable today via
+`GET /content/questions/{id}/explanation`, so the fallback path exists before the AI one.
 
 ### 6.10 Vocabulary & grammar — PHASE 9
 
@@ -505,8 +517,10 @@ Every screen implements the same five states — build them once in `shared/widg
   the last visible item is within 5 of the end; keep scroll position on back
   (ValueKey per route + `AutomaticKeepAlive`).
 - **Lesson reader:** question card with choice buttons / true-false / text field per
-  `kind` (`multiple_choice`, `true_false`, `fill_blank`); disable interaction with a
-  gentle "answers open after the update" affordance until phase 1 ships.
+  `kind` (`multiple_choice`, `true_false`, `fill_blank`), showing the `imageUrl`/
+  `audioUrl` aid when present. Let the learner answer, then fetch
+  `/content/questions/{id}/explanation` and show it — but submit nothing and show no
+  score until phase 1 ships (the server cannot grade yet).
 - **Profile:** `currentLevel` shown read-only; `PATCH` sends only changed fields —
   never send the whole object back (that is how `422` on `currentLevel` happens).
 - **Destructive actions** (revoke device, close account): confirm dialog that names
@@ -527,7 +541,7 @@ roadmap phase).
 | --- | --- | --- | --- |
 | **M0** | Project scaffold: folder structure, theme, router, DI, Dio + interceptors (auth, single-flight refresh, request-id, error mapping), token store, `AuthBloc` state machine, CI lint+test | — | **buildable now** |
 | **M1** | Sign-in (Google/Apple), session restore, shell, catalogue: levels → units → lessons with cursor paging + ETag cache | live endpoints | **buildable now** |
-| **M2** | Lesson reader, profile (view/edit), devices, settings + notification preference toggles, close account | live endpoints | **buildable now** |
+| **M2** | Lesson reader (+ post-answer explanation reveal), profile (view/edit), devices, settings + notification preference toggles, close account | live endpoints | **buildable now** |
 | **M3** | Quiz player + home dashboard + lesson map + XP history (**the core loop**) | **backend Phase 1** | blocked |
 | **M4** | Daily review (SRS) + review tab | **Phase 2** | blocked |
 | **M5** | Gamification hub, achievements, streak detail | **Phase 3** | blocked |
@@ -557,7 +571,7 @@ flutter test --coverage            # fail-under 70% for features/, 0 for generat
 | Repositories | `mocktail` + fake Dio (`http_mock_adapter`) | envelope → Failure mapping, cursor handling, cache fallback |
 | Interceptors | pure unit tests | **single-flight refresh**: N concurrent 401s → exactly 1 refresh call; retry-once; no retry after `AUTH_REFRESH_REUSED` |
 | Widgets | `flutter_test` + golden | the five screen states; RTL layout |
-| E2E | `integration_test` against staging | sign-in → browse → lesson; token expiry across 15 min (fast-forward via injected clock) |
+| E2E | `integration_test` against staging | sign-in → browse → lesson → post-answer explanation reveal; token expiry across 15 min (fast-forward via injected clock) |
 
 Rules:
 
@@ -570,15 +584,16 @@ Rules:
 
 ## 11. Performance checklist
 
-- `ListView.builder` (or `ListView.separated`) for every remote list — the catalogue
-  grows to 6 levels / 18 units / 37 lessons / 114 questions.
+- `ListView.builder` (or `ListView.separated`) for every remote list — the seeded
+  catalogue is already 6 levels / 39 units / 64 lessons / 195 questions and grows.
 - Cursor pagination + prefetch (§8); never `offset`-style loading.
 - ETag/`If-None-Match` revalidation before refetching catalogue pages; serve cached
   body during offline and after `max-age` while `stale-while-revalidate` (600 s)
   applies.
-- Images: `cached_network_image` with fixed aspect ratios (no layout jumps); audio
-  via just_audio with pre-buffering, streamed from signed S3 URLs — never proxied
-  through the API.
+- Images: `cached_network_image` with fixed aspect ratios (no layout jumps). Question
+  aids are served same-origin from `/media` and are immutable, so cache them
+  aggressively. Audio via just_audio with pre-buffering — stream the `/media/...` aid
+  directly; user uploads (phase 6) come via signed S3 URLs, never through the API.
 - Parse large payloads off the main isolate (`compute`) only after profiling —
   lesson JSON here is < 1 KB.
 - Keep the widget tree shallow under the quiz player; animate with implicit
@@ -596,6 +611,8 @@ Rules:
 - [ ] `requestId` visible in error details and attached to support reports
 - [ ] `429` respects `Retry-After`; auth calls not auto-retried in a loop
 - [ ] Catalogue browsable offline from cache; offline banner shown honestly
+- [ ] Lesson reader reveals the explanation only after the learner answers, and never
+      shows a score (no grading endpoint exists)
 - [ ] No screen for a feature that is still `404` (tabs hidden, not disabled)
 - [ ] `PATCH /me` sends only changed fields; `currentLevel` never sent
 - [ ] RTL layout verified for Arabic; both locales in the store listing
