@@ -100,6 +100,15 @@ PUBLISHED_OPERATIONS: set[tuple[str, str]] = {
     ("GET", "/api/v1/review/stats"),
     ("GET", "/api/v1/review/preview"),
     ("POST", "/api/v1/review/cards/{card_id}/answer"),
+    ("POST", "/api/v1/ai/explain"),
+    ("POST", "/api/v1/ai/tutor"),
+    ("GET", "/api/v1/ai/tutor/{conversation_id}"),
+    ("GET", "/api/v1/ai/quota"),
+    ("GET", "/api/v1/gamification/summary"),
+    ("GET", "/api/v1/achievements"),
+    ("POST", "/api/v1/achievements/{code}/claim"),
+    ("GET", "/api/v1/streak"),
+    ("POST", "/api/v1/streak/freeze"),
 }
 
 
@@ -2608,3 +2617,237 @@ async def test_review_responses_are_never_cached(
 
     assert response.status_code == 200, response.text
     assert response.headers["cache-control"] == "no-store"
+
+
+# ========================================================================== ai
+# The AI tutor HTTP surface. The suite runs with AI disabled (``conftest`` pins
+# ``AI_ENABLED=false``), which is exactly the configuration worth pinning at the boundary:
+# the whole design claim is that the tutor degrades to a deterministic, non-AI answer rather
+# than failing, so a test that only ran against a live model would prove the opposite of the
+# property that matters. Verdicts, provenance and the thread lifecycle are all checked here;
+# the use cases themselves are exercised in ``tests/integration``.
+
+
+#: The exact request shape ``/ai/explain`` expects. ``questionId`` plus a bare answer, the
+#: same contract ``/quiz`` and ``/review`` keep: the key is never sent before an answer is.
+def _explain_body(question_id: uuid.UUID, *, choice: str = "Hello") -> dict[str, Any]:
+    return {"questionId": str(question_id), "answer": {"choice": choice}}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [
+        ("POST", "/api/v1/ai/explain"),
+        ("POST", "/api/v1/ai/tutor"),
+        ("GET", "/api/v1/ai/tutor/{conversation_id}"),
+        ("GET", "/api/v1/ai/quota"),
+    ],
+)
+async def test_the_ai_surface_needs_a_token(client: AsyncClient, method: str, path: str) -> None:
+    """A thread and a quota are account data, so the whole prefix is gated like ``/me``.
+
+    ``/explain`` earns its place in this list even though grading looks stateless: the
+    rationale is metered against the caller's AI budget, so an anonymous caller must not be
+    able to spend it.
+    """
+    url = path.replace("{conversation_id}", str(uuid.uuid4()))
+    if method == "POST":
+        response = await client.post(url, json={})
+    else:
+        response = await client.get(url)
+
+    assert response.status_code == 401, response.text
+    assert error_code(response) == "AUTH_TOKEN_INVALID"
+
+
+@pytest.mark.asyncio
+async def test_explaining_an_answer_grades_on_the_server(
+    client: AsyncClient, content_db: AsyncSession
+) -> None:
+    """``/ai/explain`` returns the verdict, the key and the rationale — after the answer.
+
+    With AI off the rationale is the authored CMS text, and ``source`` says ``authored``
+    rather than passing a fallback off as model output. That provenance flag is the part a
+    client renders, so it is asserted rather than the wording.
+    """
+    headers, ids = await _learner_with_catalogue(client, content_db)
+    question = await _question_of(content_db, ids["A1-lesson-1"])
+
+    response = await client.post(
+        "/api/v1/ai/explain", json=_explain_body(question.id), headers=headers
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["isCorrect"] is True
+    assert body["correctAnswer"] == {"choice": "Hello"}
+    assert body["explanation"] == SEEDED_EXPLANATION
+    assert body["source"] == "authored"
+
+
+@pytest.mark.asyncio
+async def test_explaining_a_wrong_answer_reports_the_verdict_honestly(
+    client: AsyncClient, content_db: AsyncSession
+) -> None:
+    """A wrong pick is reported wrong, and the key is still returned only after the answer."""
+    headers, ids = await _learner_with_catalogue(client, content_db)
+    question = await _question_of(content_db, ids["A1-lesson-1"])
+
+    response = await client.post(
+        "/api/v1/ai/explain", json=_explain_body(question.id, choice="Goodbye"), headers=headers
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["isCorrect"] is False
+    assert body["correctAnswer"] == {"choice": "Hello"}
+
+
+@pytest.mark.asyncio
+async def test_explaining_an_unknown_question_is_not_found(client: AsyncClient) -> None:
+    """An invented question id reads as absent, the same way a draft lesson does."""
+    account = await sign_in(client)
+    headers = auth_headers(account["tokens"]["accessToken"])
+
+    response = await client.post(
+        "/api/v1/ai/explain", json=_explain_body(uuid.uuid4()), headers=headers
+    )
+
+    assert response.status_code == 404, response.text
+    assert error_code(response) == "QUESTION_NOT_FOUND"
+
+
+@pytest.mark.asyncio
+async def test_explaining_rejects_a_malformed_body(client: AsyncClient) -> None:
+    """The request schema is enforced at the edge: no question id, no grading."""
+    account = await sign_in(client)
+    headers = auth_headers(account["tokens"]["accessToken"])
+
+    response = await client.post(
+        "/api/v1/ai/explain", json={"answer": {"choice": "Hello"}}, headers=headers
+    )
+
+    assert response.status_code == 422, response.text
+
+
+@pytest.mark.asyncio
+async def test_a_tutor_thread_opens_then_continues(client: AsyncClient) -> None:
+    """A first message opens a thread; a second continues it and the transcript keeps both.
+
+    This is the contract that makes the tutor a tutor rather than a stateless prompt: the
+    learner's earlier turns are persisted and readable, and a returning client resumes the
+    same conversation instead of starting a new one.
+    """
+    account = await sign_in(client)
+    headers = auth_headers(account["tokens"]["accessToken"])
+
+    first = await client.post(
+        "/api/v1/ai/tutor", json={"message": "How do I say hello?"}, headers=headers
+    )
+    assert first.status_code == 200, first.text
+    first_body = first.json()
+    assert first_body["source"] == "authored"
+    assert first_body["reply"].strip() != ""
+    conversation_id = first_body["conversationId"]
+
+    read_back = await client.get(f"/api/v1/ai/tutor/{conversation_id}", headers=headers)
+    assert read_back.status_code == 200, read_back.text
+    body = read_back.json()
+    assert body["id"] == conversation_id
+    assert [turn["role"] for turn in body["messages"]] == ["user", "assistant"]
+    assert body["messages"][0]["content"] == "How do I say hello?"
+
+    second = await client.post(
+        "/api/v1/ai/tutor",
+        json={"message": "And how do I say goodbye?", "conversationId": conversation_id},
+        headers=headers,
+    )
+    assert second.status_code == 200, second.text
+    assert second.json()["conversationId"] == conversation_id
+
+    grown = (await client.get(f"/api/v1/ai/tutor/{conversation_id}", headers=headers)).json()
+    assert [turn["role"] for turn in grown["messages"]] == [
+        "user",
+        "assistant",
+        "user",
+        "assistant",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_tutor_message_must_not_be_blank(client: AsyncClient) -> None:
+    """An empty message is a 422 at the edge rather than an empty turn in the transcript."""
+    account = await sign_in(client)
+    headers = auth_headers(account["tokens"]["accessToken"])
+
+    response = await client.post("/api/v1/ai/tutor", json={"message": "   "}, headers=headers)
+
+    assert response.status_code == 422, response.text
+
+
+@pytest.mark.asyncio
+async def test_reading_another_learners_thread_is_not_found(client: AsyncClient) -> None:
+    """A conversation is scoped to its owner; another account's thread reads as absent."""
+    owner = await sign_in(client)
+    owner_headers = auth_headers(owner["tokens"]["accessToken"])
+    opened = await client.post(
+        "/api/v1/ai/tutor", json={"message": "Private question."}, headers=owner_headers
+    )
+    conversation_id = opened.json()["conversationId"]
+
+    other = await sign_in(
+        client,
+        token="ai-other-id-token-probe",
+        subject="ai-other",
+        email="ai-other@natiqo.app",
+    )
+    other_headers = auth_headers(other["tokens"]["accessToken"])
+
+    stolen = await client.get(f"/api/v1/ai/tutor/{conversation_id}", headers=other_headers)
+    assert stolen.status_code == 404, stolen.text
+    assert error_code(stolen) == "CONVERSATION_NOT_FOUND"
+
+    continued = await client.post(
+        "/api/v1/ai/tutor",
+        json={"message": "Still here?", "conversationId": conversation_id},
+        headers=other_headers,
+    )
+    assert continued.status_code == 404, continued.text
+
+    # The owner can still read it; the refusals above changed nothing.
+    mine = await client.get(f"/api/v1/ai/tutor/{conversation_id}", headers=owner_headers)
+    assert mine.status_code == 200, mine.text
+
+
+@pytest.mark.asyncio
+async def test_reading_an_unknown_thread_is_not_found(client: AsyncClient) -> None:
+    account = await sign_in(client)
+    headers = auth_headers(account["tokens"]["accessToken"])
+
+    response = await client.get(f"/api/v1/ai/tutor/{uuid.uuid4()}", headers=headers)
+
+    assert response.status_code == 404, response.text
+    assert error_code(response) == "CONVERSATION_NOT_FOUND"
+
+
+@pytest.mark.asyncio
+async def test_the_quota_reports_the_daily_allowance(client: AsyncClient) -> None:
+    """The quota is readable before any AI call, and reports the feature as disabled.
+
+    ``enabled`` is ``false`` because the suite runs with AI off; the budget figures must
+    still be internally consistent, which is what a UI branches on to warn a learner before
+    the allowance runs out.
+    """
+    account = await sign_in(client)
+    headers = auth_headers(account["tokens"]["accessToken"])
+
+    response = await client.get("/api/v1/ai/quota", headers=headers)
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["enabled"] is False
+    assert body["allowed"] is True
+    assert body["spentUsd"] == 0.0
+    assert body["limitUsd"] >= 0.0
+    assert body["remainingUsd"] == pytest.approx(body["limitUsd"] - body["spentUsd"])

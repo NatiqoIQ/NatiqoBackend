@@ -136,6 +136,14 @@ class Settings(BaseSettings):
     #: progress budget rather than the tighter write one: a learner working a queue of
     #: twenty cards should not share the allowance with their progress polling.
     rate_limit_review_requests_per_minute: int = 240
+    #: The tutor is the one surface where a request can trigger an upstream, billable call,
+    #: so it gets its own, tighter allowance. A runaway client looping the chat burns money
+    #: rather than merely bandwidth, which is why this is the tightest scope in the app.
+    rate_limit_ai_requests_per_minute: int = 30
+    #: The gamification screens are authenticated reads with two rare writes (claim, freeze),
+    #: so the scope mirrors the progress budget: a client refreshing a badge list should not
+    #: share the allowance with the progress summary or the quiz answer burst.
+    rate_limit_gamification_requests_per_minute: int = 240
     max_request_body_bytes: int = 1_048_576
     #: How long a client-supplied ``Idempotency-Key`` is honoured. 24h covers a client
     #: retrying after a night of no signal, which is the realistic mobile failure.
@@ -183,6 +191,14 @@ class Settings(BaseSettings):
     heart_regen_seconds: int = 1800
     premium_unlimited_hearts: bool = True
     daily_goal_default: int = 30
+    #: Free streak freezes a learner may hold. Granted when their stats row is first built.
+    max_streak_freezes: int = 2
+    #: The simple premium gate for this phase. Real subscriptions arrive in a later phase;
+    #: until then every learner is treated as non-premium, so ``POST /streak/freeze`` answers
+    #: ``PREMIUM_REQUIRED`` with the purchase link below. Flip this on to exercise the paid
+    #: path — there is no per-account plan yet, on purpose.
+    premium_enabled: bool = False
+    premium_purchase_url: str = "https://natiqo.app/premium"
 
     # ----------------------------------------------------- observability
     log_level: str = "INFO"

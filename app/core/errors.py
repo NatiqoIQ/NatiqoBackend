@@ -91,6 +91,7 @@ class ErrorCode(StrEnum):
     PREMIUM_REQUIRED = "PREMIUM_REQUIRED"
     ACHIEVEMENT_NOT_FOUND = "ACHIEVEMENT_NOT_FOUND"
     ALREADY_CLAIMED = "ALREADY_CLAIMED"
+    NO_FREEZES_AVAILABLE = "NO_FREEZES_AVAILABLE"
 
     # --------------------------------------------------------------- economy
     SUBSCRIPTION_NOT_FOUND = "SUBSCRIPTION_NOT_FOUND"
@@ -114,6 +115,8 @@ class ErrorCode(StrEnum):
     AI_PROVIDER_ERROR = "AI_PROVIDER_ERROR"
     AI_TIMEOUT = "AI_TIMEOUT"
     AI_UNSAFE_INPUT = "AI_UNSAFE_INPUT"
+    #: A tutor thread id that does not exist, or does not belong to the caller.
+    CONVERSATION_NOT_FOUND = "CONVERSATION_NOT_FOUND"
 
     # ------------------------------------------------------------------ jobs
     JOB_NOT_FOUND = "JOB_NOT_FOUND"

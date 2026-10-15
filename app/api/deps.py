@@ -21,10 +21,13 @@ from fastapi import Depends, Request
 from app.core.config import Settings, get_settings
 from app.core.database import make_uow
 from app.core.errors import RateLimitedError
-from app.core.events import InProcessEventBus, get_event_bus
+from app.core.events import InProcessEventBus
 from app.core.logging import get_logger
 from app.core.uow_sqlalchemy import SqlAlchemyUnitOfWork
+from app.modules.ai.application.tutor_service import AiTutorService
 from app.modules.content.application.catalogue_service import CatalogueService
+from app.modules.gamification.application.handlers import build_gamification_bus
+from app.modules.gamification.application.service import GamificationService
 from app.modules.quiz.application.progress_service import ProgressService
 from app.modules.quiz.application.quiz_service import QuizService
 from app.modules.quiz.application.review_service import ReviewService
@@ -196,6 +199,25 @@ async def uow_dep() -> AsyncIterator[SqlAlchemyUnitOfWork]:
 UowDep = Annotated[SqlAlchemyUnitOfWork, Depends(uow_dep)]
 
 
+# ------------------------------------------------------------------- event bus
+def get_bus(uow: UowDep, settings: SettingsDep) -> InProcessEventBus:
+    """Build a request-scoped event bus bound to **this request's** unit of work.
+
+    A bus per request, not a process singleton, is the whole point: the gamification
+    subscriber writes the stats it maintains through the same session that emits the event,
+    so a lesson completion and the XP, streak and achievements it earned share one
+    transaction and commit or roll back together. A process-wide bus would hand the
+    subscriber a different session and break that guarantee.
+
+    FastAPI caches ``uow_dep`` for the request, so the unit of work handed to the bus is the
+    same instance the emitting service uses — not a second one.
+    """
+    return build_gamification_bus(uow, settings)
+
+
+EventBusDep = Annotated[InProcessEventBus, Depends(get_bus)]
+
+
 # --------------------------------------------------------------------------- ai
 @lru_cache(maxsize=1)
 def _build_ai_provider() -> AIProvider:
@@ -237,6 +259,23 @@ def get_ai_service(uow: UowDep) -> AIService:
 AIServiceDep = Annotated[AIService, Depends(get_ai_service)]
 
 
+# ------------------------------------------------------------------ ai tutor
+def get_ai_tutor_service(uow: UowDep, settings: SettingsDep) -> AiTutorService:
+    """Build a request-scoped :class:`AiTutorService`.
+
+    Bound to the request's unit of work, so a stored thread and the AI usage it produced
+    share one transaction. It composes three ports: the persistence layer for threads, the
+    platform :class:`AIService` for phrasing, and the same budget the platform enforces, so
+    the quota the UI reads is the quota the provider respects.
+    """
+    from app.modules.ai.infrastructure.budget import budget_for
+
+    return AiTutorService(uow, get_ai_service(uow), budget_for(uow.session, settings))
+
+
+AiTutorServiceDep = Annotated[AiTutorService, Depends(get_ai_tutor_service)]
+
+
 # ------------------------------------------------------------------- catalogue
 def get_catalogue_service(uow: UowDep) -> CatalogueService:
     """Build a request-scoped :class:`CatalogueService`.
@@ -254,17 +293,36 @@ CatalogueServiceDep = Annotated[CatalogueService, Depends(get_catalogue_service)
 
 
 # ------------------------------------------------------------------------ quiz
-def get_quiz_service(uow: UowDep, settings: SettingsDep) -> QuizService:
+def get_quiz_service(uow: UowDep, settings: SettingsDep, bus: EventBusDep) -> QuizService:
     """Build a request-scoped :class:`QuizService`.
 
     Bound to the request's unit of work, so starting a session, grading an answer and
     completing a lesson each commit as one transaction. It takes the settings because a
     session's lease (``QUIZ_SESSION_TTL_SECONDS``) is configuration, not a constant.
+
+    It also takes the request's event bus, because finishing a lesson publishes
+    ``LessonCompleted`` and the gamification subscriber that consumes it must write through
+    this same unit of work — otherwise the XP a completion earns could be committed without
+    the completion, or vice versa.
     """
-    return QuizService(uow, settings)
+    return QuizService(uow, settings, bus=bus)
 
 
 QuizServiceDep = Annotated[QuizService, Depends(get_quiz_service)]
+
+
+# ----------------------------------------------------------------- gamification
+def get_gamification_service(uow: UowDep, settings: SettingsDep) -> GamificationService:
+    """Build a request-scoped :class:`GamificationService`.
+
+    Bound to the request's unit of work like every other service, so a claim or a freeze
+    commits as one transaction. Reads project stats from history without persisting, so a
+    pure hub read rolls back cleanly through the dependency's ``__aexit__``.
+    """
+    return GamificationService(uow, settings)
+
+
+GamificationServiceDep = Annotated[GamificationService, Depends(get_gamification_service)]
 
 
 # -------------------------------------------------------------------- progress
@@ -292,14 +350,6 @@ def get_review_service(uow: UowDep) -> ReviewService:
 
 
 ReviewServiceDep = Annotated[ReviewService, Depends(get_review_service)]
-
-
-# ------------------------------------------------------------------- event bus
-def get_bus() -> InProcessEventBus:
-    return get_event_bus()
-
-
-EventBusDep = Annotated[InProcessEventBus, Depends(get_bus)]
 
 
 # ----------------------------------------------------------------- rate limit
@@ -342,6 +392,8 @@ def rate_limit(scope: str = "default", limit: int | None = None) -> Callable[...
                 "quiz": settings.rate_limit_quiz_requests_per_minute,
                 "progress": settings.rate_limit_progress_requests_per_minute,
                 "review": settings.rate_limit_review_requests_per_minute,
+                "ai": settings.rate_limit_ai_requests_per_minute,
+                "gamification": settings.rate_limit_gamification_requests_per_minute,
             }.get(scope, settings.rate_limit_requests_per_minute)
         # The window key is derived server-side from the clock, never from a header.
         window = int(time.time() // 60)
@@ -378,6 +430,17 @@ ProgressRateLimitDep = Annotated[None, Depends(rate_limit(scope="progress"))]
 #: due queue does not spend the allowance that the next lesson's answer burst needs, and vice
 #: versa.
 ReviewRateLimitDep = Annotated[None, Depends(rate_limit(scope="review"))]
+
+#: Budget for the AI surface. The tightest scope in the app because a request here can trigger
+#: an upstream, billable call — a runaway client burns money rather than just bandwidth. It is
+#: also the only budget besides auth that a single endpoint can exhaust on its own.
+AiRateLimitDep = Annotated[None, Depends(rate_limit(scope="ai"))]
+
+#: Budget for the gamification surface. Separate from the progress read budget because the
+#: hub, achievements and streak screens are their own client story — a learner pulling to
+#: refresh a badge list should not spend the allowance that a progress summary needs, and
+#: claiming or freezing (the two writes here) should not spend the quiz answer budget.
+GamificationRateLimitDep = Annotated[None, Depends(rate_limit(scope="gamification"))]
 
 #: Budget for the credential-adjacent auth routes. Separate from the default so that a
 #: burst of "resend verification" taps cannot consume the allowance that login and

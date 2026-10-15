@@ -1,7 +1,7 @@
 """In-process domain event bus.
 
 Plan §54 requires event-driven *internal* design without prematurely introducing a
-distributed message bus. ``DomainEventBus`` dispatches synchronously inside the same
+distributed message bus. :class:`InProcessEventBus` dispatches inside the same
 request/transaction so that side effects (XP, streak, achievements, analytics) either
 happen with the aggregate that emitted them or not at all.
 
@@ -11,11 +11,12 @@ requires a new implementation of :class:`EventBus`.
 
 from __future__ import annotations
 
+import inspect
 import uuid
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Protocol, TypeVar, runtime_checkable
+from typing import Any, Protocol, TypeVar
 
 from app.core.logging import get_logger
 from app.core.time import utc_now
@@ -24,6 +25,11 @@ from app.core.types import UserId
 logger = get_logger("events")
 
 E = TypeVar("E", bound="DomainEvent")
+
+#: A subscriber may be a plain function or a coroutine function. Both are accepted so a
+#: pure projection (no I/O) can stay synchronous while a subscriber that writes through the
+#: request's unit of work can be ``async`` and share its transaction.
+EventHandler = Callable[[Any], Awaitable[None]] | Callable[[Any], None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,34 +48,41 @@ class DomainEvent:
         return type(self).__name__
 
 
-@runtime_checkable
-class EventHandler(Protocol):
-    def __call__(self, event: DomainEvent) -> None: ...
-
-
 class EventBus(Protocol):
     """Port for event distribution."""
 
-    def subscribe(self, event_type: type[DomainEvent], handler: Callable[[Any], None]) -> None: ...
+    def subscribe(
+        self,
+        event_type: type[DomainEvent],
+        handler: EventHandler,
+        *,
+        critical: bool = False,
+    ) -> None: ...
 
-    def publish(self, event: DomainEvent) -> None: ...
+    async def publish(self, event: DomainEvent) -> None: ...
 
 
 class InProcessEventBus:
-    """Synchronous, in-transaction dispatcher.
+    """In-transaction dispatcher.
 
-    A failing handler is logged and re-raised only for handlers explicitly marked
-    critical, so a broken analytics sink can never fail a lesson completion.
+    Handlers run inside the request's transaction, in subscription order, so a
+    projection written by a subscriber commits (or rolls back) with the aggregate that
+    emitted the event. A handler may be synchronous or a coroutine function; the bus
+    awaits whichever it is.
+
+    A failing handler is logged and swallowed unless its event type was subscribed as
+    ``critical``, in which case the exception propagates so the whole transaction rolls
+    back — a half-written projection can never be committed.
     """
 
     def __init__(self) -> None:
-        self._handlers: dict[type[DomainEvent], list[Callable[[Any], None]]] = {}
+        self._handlers: dict[type[DomainEvent], list[EventHandler]] = {}
         self._critical: set[type[DomainEvent]] = set()
 
     def subscribe(
         self,
         event_type: type[DomainEvent],
-        handler: Callable[[Any], None],
+        handler: EventHandler,
         *,
         critical: bool = False,
     ) -> None:
@@ -77,10 +90,12 @@ class InProcessEventBus:
         if critical:
             self._critical.add(event_type)
 
-    def publish(self, event: DomainEvent) -> None:
+    async def publish(self, event: DomainEvent) -> None:
         for handler in self._handlers.get(type(event), []):
             try:
-                handler(event)
+                result = handler(event)
+                if inspect.isawaitable(result):
+                    await result
             except Exception as exc:
                 if type(event) in self._critical:
                     raise
@@ -111,6 +126,9 @@ class LessonCompleted(DomainEvent):
     correct_count: int
     total_count: int
     duration_seconds: int
+    #: XP earned by *this* completion. ``lesson_progress.xp_earned`` accumulates across
+    #: attempts, so a projection must add the delta rather than re-derive a total.
+    xp_awarded: int = 0
     is_retry: bool = False
 
 

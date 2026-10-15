@@ -42,6 +42,9 @@ BACKEND_ROOT = Path(__file__).resolve().parents[2]
 #: Every table the models declare. A downgrade that leaves one behind, or drops one
 #: it should not, shows up here as a set difference rather than as a vague later error.
 EXPECTED_TABLES = {
+    "achievements",
+    "ai_conversations",
+    "ai_messages",
     "ai_usage_records",
     "lesson_progress",
     "lessons",
@@ -53,10 +56,12 @@ EXPECTED_TABLES = {
     "review_cards",
     "review_logs",
     "units",
+    "user_achievements",
     "user_devices",
     "user_identities",
     "user_profiles",
     "user_settings",
+    "user_stats",
     "users",
 }
 

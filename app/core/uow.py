@@ -18,12 +18,18 @@ from types import TracebackType
 from typing import TYPE_CHECKING, Protocol, Self, runtime_checkable
 
 if TYPE_CHECKING:  # pragma: no cover
+    from app.modules.ai.domain.conversation import ConversationRepositoryPort
     from app.modules.ai.domain.usage import AiUsageRepositoryPort
     from app.modules.content.domain.ports import (
         LessonRepositoryPort,
         LevelRepositoryPort,
         QuestionRepositoryPort,
         UnitRepositoryPort,
+    )
+    from app.modules.gamification.domain.ports import (
+        AchievementRepositoryPort,
+        UserAchievementRepositoryPort,
+        UserStatsRepositoryPort,
     )
     from app.modules.quiz.domain.ports import (
         LessonProgressRepositoryPort,
@@ -69,6 +75,9 @@ class UnitOfWorkProtocol(Protocol):
     def ai_usage(self) -> AiUsageRepositoryPort: ...
 
     @property
+    def ai_conversations(self) -> ConversationRepositoryPort: ...
+
+    @property
     def levels(self) -> LevelRepositoryPort: ...
 
     @property
@@ -94,6 +103,15 @@ class UnitOfWorkProtocol(Protocol):
 
     @property
     def review_logs(self) -> ReviewLogRepositoryPort: ...
+
+    @property
+    def user_stats(self) -> UserStatsRepositoryPort: ...
+
+    @property
+    def achievements(self) -> AchievementRepositoryPort: ...
+
+    @property
+    def user_achievements(self) -> UserAchievementRepositoryPort: ...
 
     async def commit(self) -> None: ...
 

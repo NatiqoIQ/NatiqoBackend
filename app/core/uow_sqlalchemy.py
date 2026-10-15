@@ -15,12 +15,18 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 if TYPE_CHECKING:  # pragma: no cover
     from app.core.uow import UnitOfWorkProtocol
+    from app.modules.ai.domain.conversation import ConversationRepositoryPort
     from app.modules.ai.domain.usage import AiUsageRepositoryPort
     from app.modules.content.domain.ports import (
         LessonRepositoryPort,
         LevelRepositoryPort,
         QuestionRepositoryPort,
         UnitRepositoryPort,
+    )
+    from app.modules.gamification.domain.ports import (
+        AchievementRepositoryPort,
+        UserAchievementRepositoryPort,
+        UserStatsRepositoryPort,
     )
     from app.modules.quiz.domain.ports import (
         LessonProgressRepositoryPort,
@@ -176,6 +182,14 @@ class SqlAlchemyUnitOfWork:
         return self._repo("ai_usage", SqlAlchemyAiUsageRepository)
 
     @property
+    def ai_conversations(self) -> ConversationRepositoryPort:
+        from app.modules.ai.infrastructure.conversation_repositories import (
+            SqlAlchemyConversationRepository,
+        )
+
+        return self._repo("ai_conversations", SqlAlchemyConversationRepository)
+
+    @property
     def levels(self) -> LevelRepositoryPort:
         from app.modules.content.infrastructure.repositories import (
             SqlAlchemyLevelRepository,
@@ -244,6 +258,30 @@ class SqlAlchemyUnitOfWork:
         )
 
         return self._repo("review_logs", SqlAlchemyReviewLogRepository)
+
+    @property
+    def user_stats(self) -> UserStatsRepositoryPort:
+        from app.modules.gamification.infrastructure.repositories import (
+            SqlAlchemyUserStatsRepository,
+        )
+
+        return self._repo("user_stats", SqlAlchemyUserStatsRepository)
+
+    @property
+    def achievements(self) -> AchievementRepositoryPort:
+        from app.modules.gamification.infrastructure.repositories import (
+            SqlAlchemyAchievementRepository,
+        )
+
+        return self._repo("achievements", SqlAlchemyAchievementRepository)
+
+    @property
+    def user_achievements(self) -> UserAchievementRepositoryPort:
+        from app.modules.gamification.infrastructure.repositories import (
+            SqlAlchemyUserAchievementRepository,
+        )
+
+        return self._repo("user_achievements", SqlAlchemyUserAchievementRepository)
 
     def _repo(self, key: str, factory: Any) -> Any:
         if key not in self._repositories:
