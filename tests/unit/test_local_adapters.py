@@ -311,3 +311,25 @@ class TestLocalObjectStorage:
         download = await LocalObjectStorage().presigned_url("a.txt")
 
         assert download.expires_in_seconds > 0
+
+    async def test_a_presigned_upload_names_the_key_and_binds_the_content_type(self) -> None:
+        """The write grant is distinct from the read one, and states its requirement.
+
+        With the filesystem adapter there is nothing to actually sign, but the contract a
+        client codes against must not change between local and S3: the key is named, and the
+        ``Content-Type`` the PUT must send is returned up front.
+        """
+        storage = LocalObjectStorage()
+
+        grant = await storage.presigned_upload(
+            "avatar/abc.png", content_type="image/png", expires_in_seconds=90
+        )
+
+        assert grant.url == "local://upload/avatar/abc.png"
+        assert grant.expires_in_seconds == 90
+        assert grant.required_headers == {"Content-Type": "image/png"}
+
+    async def test_a_presigned_upload_falls_back_to_the_configured_ttl(self) -> None:
+        grant = await LocalObjectStorage().presigned_upload("a.txt", content_type="text/plain")
+
+        assert grant.expires_in_seconds > 0

@@ -27,6 +27,7 @@ import re
 import uuid
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -35,7 +36,7 @@ from httpx import ASGITransport, AsyncClient, Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import SettingsDep, UowDep
+from app.api.deps import SettingsDep, UowDep, get_storage
 from app.core.config import get_settings
 from app.core.database import create_all, dispose_engine
 from app.core.errors import ErrorCode
@@ -59,6 +60,7 @@ from app.modules.users.domain.identity import (
 )
 from app.modules.users.infrastructure.models import UserModel
 from app.modules.users.presentation.routes import auth_service
+from app.platform.storage.local import LocalObjectStorage
 
 #: The account these tests sign in as. A test fixture, not a real person or address.
 PROBE_EMAIL = "endpoint-probe@natiqo.app"
@@ -3406,3 +3408,177 @@ async def test_admin_reads_an_unknown_content_id_as_not_found(
     response = await client.get(f"/api/v1/admin/content/levels/{uuid.uuid4()}", headers=headers)
     assert response.status_code == 404, response.text
     assert error_code(response) == "LEVEL_NOT_FOUND"
+
+
+# ------------------------------------------------------------------------- media
+# The media flow has the client upload *directly* to storage, so these tests need the same
+# adapter the service will read from. ``media_storage`` points the storage port at a
+# per-test directory; a fake would let the test agree with itself about what "the object
+# exists" means, which is the one thing confirmation has to get right.
+
+#: A real PNG header, so the sniffer names it rather than guessing from a key extension.
+PNG_BYTES = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR" + b"\x00" * 64
+#: A shell script that a caller would like the server to believe is an image.
+SCRIPT_BYTES = b"#!/bin/sh\necho not-an-image\n"
+
+
+@pytest_asyncio.fixture
+async def media_storage(client: AsyncClient, tmp_path: Path) -> LocalObjectStorage:
+    """Point the storage port at a fresh directory and hand back the adapter.
+
+    Depends on ``client`` so the app (and its schema) is up first; the override is cleared
+    by the ``client`` fixture's teardown, like every other dependency override here.
+    """
+    storage = LocalObjectStorage(tmp_path)
+    app.dependency_overrides[get_storage] = lambda: storage
+    return storage
+
+
+async def _media_headers(client: AsyncClient, **identity: Any) -> dict[str, str]:
+    account = await sign_in(client, **identity)
+    return auth_headers(account["tokens"]["accessToken"])
+
+
+async def _presign(
+    client: AsyncClient, headers: dict[str, str], *, kind: str, content_type: str
+) -> dict[str, Any]:
+    response = await client.post(
+        "/api/v1/media/presign",
+        json={"kind": kind, "contentType": content_type},
+        headers=headers,
+    )
+    assert response.status_code in (200, 201), response.text
+    return response.json()
+
+
+@pytest.mark.asyncio
+async def test_media_presign_issues_a_grant_and_the_headers_it_is_bound_to(
+    client: AsyncClient,
+) -> None:
+    headers = await _media_headers(client)
+    body = await _presign(client, headers, kind="avatar", content_type="image/png")
+
+    assert re.fullmatch(r"avatar/[0-9a-f]{32}\.png", body["mediaKey"])
+    assert body["mediaKey"] in body["uploadUrl"]
+    assert body["requiredHeaders"] == {"Content-Type": "image/png"}
+    assert body["kind"] == "avatar"
+    assert body["expiresInSeconds"] > 0
+
+
+@pytest.mark.asyncio
+async def test_media_presign_refuses_a_type_the_kind_does_not_allow(
+    client: AsyncClient,
+) -> None:
+    headers = await _media_headers(client)
+    response = await client.post(
+        "/api/v1/media/presign",
+        json={"kind": "avatar", "contentType": "application/pdf"},
+        headers=headers,
+    )
+    assert response.status_code == 422, response.text
+    assert error_code(response) == "MEDIA_TYPE_NOT_ALLOWED"
+
+
+@pytest.mark.asyncio
+async def test_media_presign_rejects_an_unknown_kind(client: AsyncClient) -> None:
+    """An unknown kind is a schema failure at the edge, not a dictionary miss deep inside."""
+    headers = await _media_headers(client)
+    response = await client.post(
+        "/api/v1/media/presign",
+        json={"kind": "video", "contentType": "video/mp4"},
+        headers=headers,
+    )
+    assert response.status_code == 422, response.text
+    assert error_code(response) == "VALIDATION_ERROR"
+
+
+@pytest.mark.asyncio
+async def test_media_presign_needs_a_token(client: AsyncClient) -> None:
+    response = await client.post(
+        "/api/v1/media/presign", json={"kind": "avatar", "contentType": "image/png"}
+    )
+    assert response.status_code == 401, response.text
+
+
+@pytest.mark.asyncio
+async def test_media_confirm_records_what_the_bytes_proved(
+    client: AsyncClient, media_storage: LocalObjectStorage
+) -> None:
+    headers = await _media_headers(client)
+    grant = await _presign(client, headers, kind="avatar", content_type="image/png")
+    await media_storage.put(grant["mediaKey"], PNG_BYTES, content_type="image/png")
+
+    response = await client.post(
+        "/api/v1/media/confirm", json={"mediaKey": grant["mediaKey"]}, headers=headers
+    )
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["contentType"] == "image/png"
+    assert body["sizeBytes"] == len(PNG_BYTES)
+    assert body["kind"] == "avatar"
+    assert body["url"].startswith("local://")
+    assert re.fullmatch(r"[0-9a-f-]{36}", body["id"])
+
+
+@pytest.mark.asyncio
+async def test_media_confirm_refuses_a_file_whose_bytes_betray_the_claim(
+    client: AsyncClient, media_storage: LocalObjectStorage
+) -> None:
+    """The declared type got the key; the bytes decide whether it is stored."""
+    headers = await _media_headers(client)
+    grant = await _presign(client, headers, kind="avatar", content_type="image/png")
+    await media_storage.put(grant["mediaKey"], SCRIPT_BYTES, content_type="image/png")
+
+    response = await client.post(
+        "/api/v1/media/confirm", json={"mediaKey": grant["mediaKey"]}, headers=headers
+    )
+    assert response.status_code == 422, response.text
+    assert error_code(response) == "MEDIA_TYPE_NOT_ALLOWED"
+    assert not await media_storage.exists(grant["mediaKey"])
+
+
+@pytest.mark.asyncio
+async def test_media_confirm_refuses_an_upload_that_never_arrived(client: AsyncClient) -> None:
+    headers = await _media_headers(client)
+    grant = await _presign(client, headers, kind="image", content_type="image/jpeg")
+
+    response = await client.post(
+        "/api/v1/media/confirm", json={"mediaKey": grant["mediaKey"]}, headers=headers
+    )
+    assert response.status_code == 422, response.text
+    assert error_code(response) == "MEDIA_UPLOAD_FAILED"
+
+
+@pytest.mark.asyncio
+async def test_media_read_re_signs_a_url_for_a_stored_asset(
+    client: AsyncClient, media_storage: LocalObjectStorage
+) -> None:
+    headers = await _media_headers(client)
+    grant = await _presign(client, headers, kind="avatar", content_type="image/png")
+    await media_storage.put(grant["mediaKey"], PNG_BYTES, content_type="image/png")
+    created = (
+        await client.post(
+            "/api/v1/media/confirm", json={"mediaKey": grant["mediaKey"]}, headers=headers
+        )
+    ).json()
+
+    response = await client.get(f"/api/v1/media/{created['id']}", headers=headers)
+
+    assert response.status_code == 200, response.text
+    assert response.json()["id"] == created["id"]
+    assert response.json()["url"].startswith("local://")
+
+
+@pytest.mark.asyncio
+async def test_media_read_refuses_an_unknown_id(client: AsyncClient) -> None:
+    headers = await _media_headers(client)
+    response = await client.get(f"/api/v1/media/{uuid.uuid4()}", headers=headers)
+    assert response.status_code == 404, response.text
+    assert error_code(response) == "MEDIA_NOT_FOUND"
+
+
+@pytest.mark.asyncio
+async def test_media_read_rejects_a_non_uuid_id_before_any_lookup(client: AsyncClient) -> None:
+    headers = await _media_headers(client)
+    response = await client.get("/api/v1/media/not-a-uuid", headers=headers)
+    assert response.status_code == 422, response.text

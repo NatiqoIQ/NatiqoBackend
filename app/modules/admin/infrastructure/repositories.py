@@ -322,9 +322,7 @@ class SqlAlchemyEditorialRepository:
             stmt = stmt.where(QuestionModel.id != exclude_id)
         return (await self._session.execute(stmt.limit(1))).first() is not None
 
-    async def reorder_questions(
-        self, lesson_id: ContentId, ordered_ids: list[ContentId]
-    ) -> None:
+    async def reorder_questions(self, lesson_id: ContentId, ordered_ids: list[ContentId]) -> None:
         base = len(ordered_ids) + 1
         for offset, question_id in enumerate(ordered_ids):
             await self._session.execute(

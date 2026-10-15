@@ -37,7 +37,7 @@ from app.modules.media.domain.policy import (
     parse_storage_key,
     sniff_content_type,
 )
-from app.platform.storage.port import ObjectStoragePort
+from app.platform.storage.port import ObjectStoragePort, StorageError
 
 #: Enough leading bytes for every magic number the sniffer recognises; the RIFF
 #: discriminator sits at offset eight, so a shorter prefix would misread WebP as WAV.
@@ -119,7 +119,17 @@ class MediaService:
                 details={"field": "mediaKey"},
             )
 
-        data = await self._storage.get(media_key)
+        # ``exists`` and ``get`` are two calls, so the object can vanish between them (a
+        # lifecycle rule, a racing delete). The adapter raises rather than returning empty
+        # bytes for exactly this case, and it is an upload failure — not a 500 — here too.
+        try:
+            data = await self._storage.get(media_key)
+        except StorageError as exc:
+            raise ValidationFailed(
+                "The upload could not be read back. It may have expired.",
+                code=ErrorCode.MEDIA_UPLOAD_FAILED,
+                details={"field": "mediaKey"},
+            ) from exc
 
         max_bytes = max_bytes_allowed(
             kind,

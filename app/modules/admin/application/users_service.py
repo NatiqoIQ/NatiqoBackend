@@ -66,9 +66,7 @@ class AdminUserService:
         how to reason about.
         """
         if not command.roles:
-            raise ValidationFailed(
-                "At least one role is required.", details={"field": "roles"}
-            )
+            raise ValidationFailed("At least one role is required.", details={"field": "roles"})
         try:
             roles = tuple(UserRole(role) for role in command.roles)
         except ValueError as exc:

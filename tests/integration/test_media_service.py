@@ -38,6 +38,7 @@ from app.modules.media.domain.policy import MediaKind
 from app.modules.media.infrastructure.models import MediaAssetModel
 from app.modules.users.infrastructure.models import UserModel
 from app.platform.storage.local import LocalObjectStorage
+from app.platform.storage.port import StorageError
 
 pytestmark = pytest.mark.integration
 
@@ -45,6 +46,20 @@ pytestmark = pytest.mark.integration
 PNG = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR" + b"\x00" * 64
 #: A shell script that a caller would like the server to believe is a PNG.
 SCRIPT = b"#!/bin/sh\necho not-an-image\n"
+
+
+class _VanishingStorage(LocalObjectStorage):
+    """A store that claims an object is present and then fails to hand it back.
+
+    Stands in for the real race between ``exists`` and ``get`` — a lifecycle rule or a
+    racing delete — so the service's handling of it is exercised rather than assumed.
+    """
+
+    async def exists(self, key: str) -> bool:
+        return True
+
+    async def get(self, key: str) -> bytes:
+        raise StorageError(f"vanished: {key}")
 
 
 # ------------------------------------------------------------------------ fixtures
@@ -252,6 +267,26 @@ async def test_confirm_refuses_when_nothing_was_uploaded(
 
     with pytest.raises(ValidationFailed) as caught:
         await service.confirm(user_id, grant.media_key)
+
+    assert caught.value.code == ErrorCode.MEDIA_UPLOAD_FAILED
+    assert await _rows(session) == []
+
+
+async def test_confirm_refuses_when_the_object_vanishes_between_exists_and_read(
+    uow: SqlAlchemyUnitOfWork, session: AsyncSession, tmp_path: Path
+) -> None:
+    """The ``exists``/``get`` race is an upload failure, not a 500."""
+    user_id = _user_id(session)
+    grant = await _mint(
+        MediaService(uow, _VanishingStorage(tmp_path), get_settings()),
+        user_id,
+        MediaKind.AVATAR,
+        "image/png",
+    )
+    gated = MediaService(uow, _VanishingStorage(tmp_path), get_settings())
+
+    with pytest.raises(ValidationFailed) as caught:
+        await gated.confirm(user_id, grant.media_key)
 
     assert caught.value.code == ErrorCode.MEDIA_UPLOAD_FAILED
     assert await _rows(session) == []

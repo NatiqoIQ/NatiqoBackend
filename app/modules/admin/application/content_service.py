@@ -113,9 +113,7 @@ class AdminContentService:
     async def get_level(self, level_id: uuid.UUID) -> LevelAdminView:
         return _level_view(await self._require_level(level_id))
 
-    async def create_level(
-        self, actor_id: UserId, command: LevelCreateCommand
-    ) -> LevelAdminView:
+    async def create_level(self, actor_id: UserId, command: LevelCreateCommand) -> LevelAdminView:
         _require_text("title", command.title)
         if await self._uow.editorial.get_level_by_code(command.code) is not None:
             raise ConflictError(
@@ -254,7 +252,9 @@ class AdminContentService:
         if is_given(command.position):
             _require_position(command.position)
             if command.position != unit.position:
-                await self._assert_unit_position_free(unit.level_id, command.position, exclude_id=unit.id)
+                await self._assert_unit_position_free(
+                    unit.level_id, command.position, exclude_id=unit.id
+                )
                 unit.position = command.position
                 changes["position"] = command.position
         if is_given(command.state) and command.state is not unit.state:
@@ -373,7 +373,9 @@ class AdminContentService:
         if is_given(command.position):
             _require_position(command.position)
             if command.position != lesson.position:
-                await self._assert_lesson_position_free(lesson.unit_id, command.position, exclude_id=lesson.id)
+                await self._assert_lesson_position_free(
+                    lesson.unit_id, command.position, exclude_id=lesson.id
+                )
                 lesson.position = command.position
                 changes["position"] = command.position
         if is_given(command.state) and command.state is not lesson.state:
@@ -460,7 +462,9 @@ class AdminContentService:
         position = current.position
         if is_given(command.position) and command.position != current.position:
             _require_position(command.position)
-            await self._assert_question_position_free(current.lesson_id, command.position, exclude_id=current.id)
+            await self._assert_question_position_free(
+                current.lesson_id, command.position, exclude_id=current.id
+            )
             position = command.position
             changes["position"] = position
 
@@ -729,23 +733,17 @@ def _position_taken(entity: str, position: int) -> ConflictError:
 
 def _require_text(field: str, value: str) -> None:
     if not value or not value.strip():
-        raise ValidationFailed(
-            f"{field} must not be blank.", details={"field": field}
-        )
+        raise ValidationFailed(f"{field} must not be blank.", details={"field": field})
 
 
 def _require_positive(field: str, value: int) -> None:
     if value < 1:
-        raise ValidationFailed(
-            f"{field} must be one or greater.", details={"field": field}
-        )
+        raise ValidationFailed(f"{field} must be one or greater.", details={"field": field})
 
 
 def _require_position(value: int) -> None:
     if value < 1:
-        raise ValidationFailed(
-            "position must be one or greater.", details={"field": "position"}
-        )
+        raise ValidationFailed("position must be one or greater.", details={"field": "position"})
 
 
 def _level_view(level: Level) -> LevelAdminView:
