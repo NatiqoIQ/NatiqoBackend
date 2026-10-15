@@ -37,6 +37,12 @@ MODEL_MODULES: tuple[str, ...] = (
     "app.modules.quiz.infrastructure.models",
     "app.modules.quiz.infrastructure.review_models",
     "app.modules.gamification.infrastructure.models",
+    #: ``media`` before ``admin``: its ``media_assets`` table points at ``users.id``, which
+    #: is registered above, and it owns no other table.
+    "app.modules.media.infrastructure.models",
+    #: ``admin`` last: its ``audit_logs`` table points at ``users.id``, which is registered
+    #: above, and it owns no other table.
+    "app.modules.admin.infrastructure.models",
 )
 
 

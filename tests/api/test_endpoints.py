@@ -40,8 +40,9 @@ from app.core.config import get_settings
 from app.core.database import create_all, dispose_engine
 from app.core.errors import ErrorCode
 from app.core.registry import import_all_models
-from app.core.types import ContentState, QuestionKind, SkillKind, UserStatus
+from app.core.types import ContentState, QuestionKind, SkillKind, UserRole, UserStatus
 from app.main import app
+from app.modules.admin.infrastructure.models import AuditLogModel
 from app.modules.content.infrastructure.models import (
     LessonModel,
     LevelModel,
@@ -109,6 +110,31 @@ PUBLISHED_OPERATIONS: set[tuple[str, str]] = {
     ("POST", "/api/v1/achievements/{code}/claim"),
     ("GET", "/api/v1/streak"),
     ("POST", "/api/v1/streak/freeze"),
+    ("GET", "/api/v1/admin/content/levels"),
+    ("POST", "/api/v1/admin/content/levels"),
+    ("GET", "/api/v1/admin/content/levels/{level_id}"),
+    ("PATCH", "/api/v1/admin/content/levels/{level_id}"),
+    ("DELETE", "/api/v1/admin/content/levels/{level_id}"),
+    ("GET", "/api/v1/admin/content/levels/{level_id}/units"),
+    ("POST", "/api/v1/admin/content/levels/{level_id}/units"),
+    ("GET", "/api/v1/admin/content/units/{unit_id}"),
+    ("PATCH", "/api/v1/admin/content/units/{unit_id}"),
+    ("DELETE", "/api/v1/admin/content/units/{unit_id}"),
+    ("GET", "/api/v1/admin/content/units/{unit_id}/lessons"),
+    ("POST", "/api/v1/admin/content/units/{unit_id}/lessons"),
+    ("GET", "/api/v1/admin/content/lessons/{lesson_id}"),
+    ("PATCH", "/api/v1/admin/content/lessons/{lesson_id}"),
+    ("DELETE", "/api/v1/admin/content/lessons/{lesson_id}"),
+    ("POST", "/api/v1/admin/content/lessons/{lesson_id}/publish"),
+    ("POST", "/api/v1/admin/content/lessons/{lesson_id}/questions"),
+    ("POST", "/api/v1/admin/content/lessons/{lesson_id}/questions/reorder"),
+    ("PATCH", "/api/v1/admin/content/questions/{question_id}"),
+    ("DELETE", "/api/v1/admin/content/questions/{question_id}"),
+    ("GET", "/api/v1/admin/users"),
+    ("POST", "/api/v1/admin/users"),
+    ("POST", "/api/v1/media/presign"),
+    ("POST", "/api/v1/media/confirm"),
+    ("GET", "/api/v1/media/{media_id}"),
 }
 
 
@@ -948,6 +974,18 @@ ANSWER_KEY_FIELDS = (
     "acceptedAnswers",
     "accepted_answers",
     "explanation",
+)
+
+#: The admin schemas that are *meant* to carry the answer key: the editor's read model and
+#: the two write bodies that author it. They are served only to a caller holding
+#: ``content_editor``, so they are exempt from the public-schema check below. Naming them
+#: explicitly keeps the exemption a deliberate act rather than a blanket weakening.
+ADMIN_ANSWER_KEY_SCHEMAS = frozenset(
+    {
+        "QuestionAdminResponse",
+        "QuestionCreateRequest",
+        "QuestionUpdateRequest",
+    }
 )
 
 #: The rationale the seeder plants. Its *absence* from a pre-attempt payload is a separate
@@ -2002,6 +2040,12 @@ def test_the_published_schema_declares_no_pre_attempt_answer_key_field() -> None
     advertise the field to every caller and every generated client whether or not a response
     ever sets it. The two pre-attempt question schemas are checked by name, and the two names
     that never belong on the wire are checked across every schema in the document.
+
+    ``QuestionAdminResponse`` and the two admin question bodies are the deliberate
+    exception: they are served only behind the ``content_editor`` role gate, and the person
+    fixing a mis-keyed question is exactly who needs the key. Every learner-facing schema must
+    still declare neither field, so the allowlist names the exception rather than weakening
+    the check.
     """
     schemas = app.openapi()["components"]["schemas"]
 
@@ -2010,6 +2054,8 @@ def test_the_published_schema_declares_no_pre_attempt_answer_key_field() -> None
         assert not leaked, f"{name} declares {sorted(leaked)}"
 
     for name, schema in schemas.items():
+        if name in ADMIN_ANSWER_KEY_SCHEMAS:
+            continue
         rendered = json.dumps(schema)
         for never_public in ("correctIndex", "acceptedAnswers"):
             assert never_public not in rendered, f"{name} declares {never_public}"
@@ -2851,3 +2897,512 @@ async def test_the_quota_reports_the_daily_allowance(client: AsyncClient) -> Non
     assert body["spentUsd"] == 0.0
     assert body["limitUsd"] >= 0.0
     assert body["remainingUsd"] == pytest.approx(body["limitUsd"] - body["spentUsd"])
+
+
+# ============================================================== admin / CMS (Phase 8)
+# The authoring surface. Where the public ``/content`` prefix only ever shows published
+# rows, ``/admin`` shows the whole editorial pipeline and is the only place it can be
+# changed. Two properties are pinned here that a service-level test cannot see: the role
+# gate is on the HTTP boundary (a wrong role is a 403 envelope), and every mutation leaves
+# an audit row in the same transaction — the "who changed this" half of the double
+# protection the module docstrings describe.
+#
+# A token's role claim is never trusted: ``require_role`` reads the live account. That is
+# what lets these tests promote a just-signed-in learner by writing the roles column and
+# then reuse the same access token, which is exactly the demotion-takes-effect-immediately
+# behaviour the check exists to provide.
+
+QUESTION_BODY: dict[str, Any] = {
+    "kind": "multiple_choice",
+    "skill": "vocabulary",
+    "prompt": "Which one means 'hello'?",
+    "choices": ["Hello", "Goodbye"],
+    "correct_index": 0,
+    "explanation": "Hello is a greeting.",
+    "points": 1,
+}
+
+
+async def _grant_roles(
+    client: AsyncClient,
+    content_db: AsyncSession,
+    roles: tuple[UserRole, ...],
+    *,
+    token: str | None = None,
+    **identity: Any,
+) -> dict[str, str]:
+    """Sign in, write the roles column directly, and return auth headers.
+
+    The database write is the point: ``require_role`` reads the live account, so promoting
+    a learner here is enough for the token already in hand to carry the new authority —
+    no re-login, and no reliance on a stale claim.
+    """
+    account = await sign_in(client, token=token, **identity)
+    row = await content_db.get(UserModel, uuid.UUID(account["user"]["id"]))
+    assert row is not None, "the account the API just created is not in the database"
+    row.roles = [role.value for role in roles]
+    await content_db.commit()
+    content_db.expunge_all()
+    return auth_headers(account["tokens"]["accessToken"])
+
+
+async def _audit_actions(content_db: AsyncSession) -> list[str]:
+    """Every action string written to ``audit_logs`` so far, oldest first."""
+    content_db.expunge_all()
+    result = await content_db.execute(
+        select(AuditLogModel.action).order_by(AuditLogModel.created_at)
+    )
+    return [row[0] for row in result.all()]
+
+
+async def _create_level(
+    client: AsyncClient, headers: dict[str, str], code: str = "A1"
+) -> dict[str, Any]:
+    response = await client.post(
+        "/api/v1/admin/content/levels",
+        json={"code": code, "title": f"Level {code}", "description": "Authored by a test."},
+        headers=headers,
+    )
+    assert response.status_code == 201, response.text
+    return response.json()
+
+
+async def _approve_and_publish(client: AsyncClient, headers: dict[str, str], path: str) -> None:
+    """Walk an aggregate through ``review`` and ``approved`` to ``published``.
+
+    The lifecycle forbids skipping a step, so a test that wants a published parent has to
+    take each one — which doubles as cover for the state machine over HTTP.
+    """
+    for state in ("review", "approved", "published"):
+        response = await client.patch(path, json={"state": state}, headers=headers)
+        assert response.status_code == 200, response.text
+
+
+async def _published_lesson(client: AsyncClient, headers: dict[str, str]) -> dict[str, str]:
+    """Author a level, unit and lesson and leave the lesson ``approved``, parents published."""
+    level = await _create_level(client, headers)
+    await _approve_and_publish(client, headers, f"/api/v1/admin/content/levels/{level['id']}")
+
+    unit_response = await client.post(
+        f"/api/v1/admin/content/levels/{level['id']}/units",
+        json={"title": "Introductions"},
+        headers=headers,
+    )
+    assert unit_response.status_code == 201, unit_response.text
+    unit = unit_response.json()
+    await _approve_and_publish(client, headers, f"/api/v1/admin/content/units/{unit['id']}")
+
+    lesson_response = await client.post(
+        f"/api/v1/admin/content/units/{unit['id']}/lessons",
+        json={"title": "Saying hello", "summary": "Greetings.", "estimated_minutes": 5},
+        headers=headers,
+    )
+    assert lesson_response.status_code == 201, lesson_response.text
+    lesson = lesson_response.json()
+    for state in ("review", "approved"):
+        response = await client.patch(
+            f"/api/v1/admin/content/lessons/{lesson['id']}", json={"state": state}, headers=headers
+        )
+        assert response.status_code == 200, response.text
+    return {"level": level["id"], "unit": unit["id"], "lesson": lesson["id"]}
+
+
+@pytest.mark.asyncio
+async def test_admin_authors_a_level_and_the_trail_records_it(
+    client: AsyncClient, content_db: AsyncSession
+) -> None:
+    """Create, read back, and confirm the write left an audit row naming the actor."""
+    headers = await _grant_roles(client, content_db, (UserRole.CONTENT_EDITOR,))
+
+    created = await _create_level(client, headers)
+    assert created["code"] == "A1"
+    assert created["state"] == "draft", "a new level is never born visible"
+    assert created["position"] == 1
+
+    fetched = await client.get(f"/api/v1/admin/content/levels/{created['id']}", headers=headers)
+    assert fetched.status_code == 200, fetched.text
+    assert fetched.json()["id"] == created["id"]
+
+    page = (await client.get("/api/v1/admin/content/levels", headers=headers)).json()
+    assert [level["id"] for level in page["items"]] == [created["id"]]
+    assert page["meta"]["hasMore"] is False
+
+    assert "content.level.create" in await _audit_actions(content_db)
+
+
+@pytest.mark.asyncio
+async def test_admin_updates_a_level_field_by_field_and_deletes_it(
+    client: AsyncClient, content_db: AsyncSession
+) -> None:
+    """PATCH touches only the fields sent; DELETE removes the row and audits both moves."""
+    headers = await _grant_roles(client, content_db, (UserRole.CONTENT_EDITOR,))
+    level = await _create_level(client, headers)
+
+    patched = await client.patch(
+        f"/api/v1/admin/content/levels/{level['id']}",
+        json={"title": "Absolute beginner"},
+        headers=headers,
+    )
+    assert patched.status_code == 200, patched.text
+    body = patched.json()
+    assert body["title"] == "Absolute beginner"
+    assert body["description"] == "Authored by a test.", "an absent field must not be cleared"
+
+    removed = await client.delete(f"/api/v1/admin/content/levels/{level['id']}", headers=headers)
+    assert removed.status_code == 204, removed.text
+    assert removed.content == b""
+
+    gone = await client.get(f"/api/v1/admin/content/levels/{level['id']}", headers=headers)
+    assert gone.status_code == 404, gone.text
+    assert error_code(gone) == "LEVEL_NOT_FOUND"
+
+    actions = await _audit_actions(content_db)
+    assert "content.level.update" in actions
+    assert "content.level.delete" in actions
+
+
+@pytest.mark.asyncio
+async def test_admin_manages_units_under_a_level(
+    client: AsyncClient, content_db: AsyncSession
+) -> None:
+    headers = await _grant_roles(client, content_db, (UserRole.CONTENT_EDITOR,))
+    level = await _create_level(client, headers)
+
+    created = await client.post(
+        f"/api/v1/admin/content/levels/{level['id']}/units",
+        json={"title": "Introductions"},
+        headers=headers,
+    )
+    assert created.status_code == 201, created.text
+    unit = created.json()
+    assert unit["levelId"] == level["id"]
+    assert unit["state"] == "draft"
+
+    listed = await client.get(f"/api/v1/admin/content/levels/{level['id']}/units", headers=headers)
+    assert [item["id"] for item in listed.json()["items"]] == [unit["id"]]
+
+    fetched = await client.get(f"/api/v1/admin/content/units/{unit['id']}", headers=headers)
+    assert fetched.status_code == 200, fetched.text
+
+    patched = await client.patch(
+        f"/api/v1/admin/content/units/{unit['id']}",
+        json={"title": "First contact"},
+        headers=headers,
+    )
+    assert patched.status_code == 200, patched.text
+    assert patched.json()["title"] == "First contact"
+
+    removed = await client.delete(f"/api/v1/admin/content/units/{unit['id']}", headers=headers)
+    assert removed.status_code == 204, removed.text
+
+
+@pytest.mark.asyncio
+async def test_admin_manages_lessons_including_the_answer_key_view(
+    client: AsyncClient, content_db: AsyncSession
+) -> None:
+    """The editor's lesson read carries the answer key; the public one never does."""
+    headers = await _grant_roles(client, content_db, (UserRole.CONTENT_EDITOR,))
+    level = await _create_level(client, headers)
+    unit = (
+        await client.post(
+            f"/api/v1/admin/content/levels/{level['id']}/units",
+            json={"title": "Introductions"},
+            headers=headers,
+        )
+    ).json()
+
+    created = await client.post(
+        f"/api/v1/admin/content/units/{unit['id']}/lessons",
+        json={"title": "Saying hello", "summary": "Greetings.", "estimated_minutes": 5},
+        headers=headers,
+    )
+    assert created.status_code == 201, created.text
+    lesson = created.json()
+
+    await client.post(
+        f"/api/v1/admin/content/lessons/{lesson['id']}/questions",
+        json=QUESTION_BODY,
+        headers=headers,
+    )
+
+    detail = await client.get(f"/api/v1/admin/content/lessons/{lesson['id']}", headers=headers)
+    assert detail.status_code == 200, detail.text
+    body = detail.json()
+    assert body["title"] == "Saying hello"
+    (question,) = body["questions"]
+    assert question["correctIndex"] == 0, "the editorial view must carry the answer key"
+    assert question["prompt"] == QUESTION_BODY["prompt"]
+
+    listed = await client.get(f"/api/v1/admin/content/units/{unit['id']}/lessons", headers=headers)
+    assert [item["id"] for item in listed.json()["items"]] == [lesson["id"]]
+
+    patched = await client.patch(
+        f"/api/v1/admin/content/lessons/{lesson['id']}",
+        json={"estimated_minutes": 8},
+        headers=headers,
+    )
+    assert patched.status_code == 200, patched.text
+    assert patched.json()["estimatedMinutes"] == 8
+
+    removed = await client.delete(f"/api/v1/admin/content/lessons/{lesson['id']}", headers=headers)
+    assert removed.status_code == 204, removed.text
+
+
+@pytest.mark.asyncio
+async def test_admin_publishes_a_lesson_only_once_its_unit_is_published(
+    client: AsyncClient, content_db: AsyncSession
+) -> None:
+    """The dedicated publish endpoint, and the parent rule it cannot be used to skip."""
+    headers = await _grant_roles(
+        client, content_db, (UserRole.CONTENT_EDITOR, UserRole.CONTENT_REVIEWER)
+    )
+    ids = await _published_lesson(client, headers)
+
+    published = await client.post(
+        f"/api/v1/admin/content/lessons/{ids['lesson']}/publish", headers=headers
+    )
+    assert published.status_code == 200, published.text
+    assert published.json()["state"] == "published"
+
+    # A second publish is refused: the lifecycle runs one way.
+    again = await client.post(
+        f"/api/v1/admin/content/lessons/{ids['lesson']}/publish", headers=headers
+    )
+    assert again.status_code == 409, again.text
+    assert error_code(again) == "INVALID_STATE_TRANSITION"
+
+
+@pytest.mark.asyncio
+async def test_admin_cannot_publish_a_lesson_into_a_draft_unit(
+    client: AsyncClient, content_db: AsyncSession
+) -> None:
+    """The aggregate refuses it, so the endpoint answers 409 rather than leaking a draft."""
+    headers = await _grant_roles(
+        client, content_db, (UserRole.CONTENT_EDITOR, UserRole.CONTENT_REVIEWER)
+    )
+    level = await _create_level(client, headers)
+    unit = (
+        await client.post(
+            f"/api/v1/admin/content/levels/{level['id']}/units",
+            json={"title": "Introductions"},
+            headers=headers,
+        )
+    ).json()
+    lesson = (
+        await client.post(
+            f"/api/v1/admin/content/units/{unit['id']}/lessons",
+            json={"title": "Saying hello", "summary": "Greetings.", "estimated_minutes": 5},
+            headers=headers,
+        )
+    ).json()
+    # Approve the lesson but leave its unit in draft.
+    for state in ("review", "approved"):
+        await client.patch(
+            f"/api/v1/admin/content/lessons/{lesson['id']}", json={"state": state}, headers=headers
+        )
+
+    response = await client.post(
+        f"/api/v1/admin/content/lessons/{lesson['id']}/publish", headers=headers
+    )
+    assert response.status_code == 409, response.text
+    assert error_code(response) == "INVALID_STATE_TRANSITION"
+
+
+@pytest.mark.asyncio
+async def test_admin_manages_questions_and_reorders_them(
+    client: AsyncClient, content_db: AsyncSession
+) -> None:
+    headers = await _grant_roles(client, content_db, (UserRole.CONTENT_EDITOR,))
+    ids = await _published_lesson(client, headers)
+
+    first = await client.post(
+        f"/api/v1/admin/content/lessons/{ids['lesson']}/questions",
+        json=QUESTION_BODY,
+        headers=headers,
+    )
+    assert first.status_code == 201, first.text
+    second_body = {**QUESTION_BODY, "prompt": "Which one means 'goodbye'?", "correct_index": 1}
+    second = await client.post(
+        f"/api/v1/admin/content/lessons/{ids['lesson']}/questions",
+        json=second_body,
+        headers=headers,
+    )
+    assert second.status_code == 201, second.text
+    first_id, second_id = first.json()["id"], second.json()["id"]
+    assert first.json()["position"] == 1
+    assert second.json()["position"] == 2
+
+    reordered = await client.post(
+        f"/api/v1/admin/content/lessons/{ids['lesson']}/questions/reorder",
+        json={"question_ids": [second_id, first_id]},
+        headers=headers,
+    )
+    assert reordered.status_code == 200, reordered.text
+    assert [item["id"] for item in reordered.json()["items"]] == [second_id, first_id]
+    assert [item["position"] for item in reordered.json()["items"]] == [1, 2]
+
+    patched = await client.patch(
+        f"/api/v1/admin/content/questions/{first_id}",
+        json={"prompt": "Which one greets someone?"},
+        headers=headers,
+    )
+    assert patched.status_code == 200, patched.text
+    assert patched.json()["prompt"] == "Which one greets someone?"
+
+    removed = await client.delete(f"/api/v1/admin/content/questions/{first_id}", headers=headers)
+    assert removed.status_code == 204, removed.text
+    assert "content.lesson.reorder_questions" in await _audit_actions(content_db)
+
+
+@pytest.mark.asyncio
+async def test_admin_rejects_a_partial_reorder(
+    client: AsyncClient, content_db: AsyncSession
+) -> None:
+    """A list that omits a question would silently drop it, so it is a 422."""
+    headers = await _grant_roles(client, content_db, (UserRole.CONTENT_EDITOR,))
+    ids = await _published_lesson(client, headers)
+    created = await client.post(
+        f"/api/v1/admin/content/lessons/{ids['lesson']}/questions",
+        json=QUESTION_BODY,
+        headers=headers,
+    )
+    await client.post(
+        f"/api/v1/admin/content/lessons/{ids['lesson']}/questions",
+        json=QUESTION_BODY,
+        headers=headers,
+    )
+
+    response = await client.post(
+        f"/api/v1/admin/content/lessons/{ids['lesson']}/questions/reorder",
+        json={"question_ids": [created.json()["id"]]},
+        headers=headers,
+    )
+    assert response.status_code == 422, response.text
+
+
+@pytest.mark.asyncio
+async def test_admin_lists_accounts_and_replaces_roles(
+    client: AsyncClient, content_db: AsyncSession
+) -> None:
+    """The account surface: a paged list with a total, and a wholesale role replace."""
+    headers = await _grant_roles(client, content_db, (UserRole.ADMIN,))
+    target = await sign_in(
+        client, token="target-id-token-probe", email="target@natiqo.app", subject="target"
+    )
+    target_id = target["user"]["id"]
+
+    listed = await client.get("/api/v1/admin/users", headers=headers)
+    assert listed.status_code == 200, listed.text
+    page = listed.json()
+    assert page["total"] >= 2
+    assert target_id in [user["id"] for user in page["items"]]
+    assert page["hasMore"] is False
+
+    replaced = await client.post(
+        "/api/v1/admin/users",
+        json={"user_id": target_id, "roles": ["support", "content_editor"]},
+        headers=headers,
+    )
+    assert replaced.status_code == 200, replaced.text
+    assert set(replaced.json()["roles"]) == {"support", "content_editor"}
+
+    unknown_role = await client.post(
+        "/api/v1/admin/users",
+        json={"user_id": target_id, "roles": ["wizard"]},
+        headers=headers,
+    )
+    assert unknown_role.status_code == 422, unknown_role.text
+
+    unknown_user = await client.post(
+        "/api/v1/admin/users",
+        json={"user_id": str(uuid.uuid4()), "roles": ["support"]},
+        headers=headers,
+    )
+    assert unknown_user.status_code == 404, unknown_user.text
+    assert error_code(unknown_user) == "USER_NOT_FOUND"
+
+    assert "user.roles.update" in await _audit_actions(content_db)
+
+
+@pytest.mark.asyncio
+async def test_the_admin_surface_requires_the_matching_role(client: AsyncClient) -> None:
+    """Each prefix answers to its own minimum role, enforced at the boundary."""
+    learner = await sign_in(client)
+    learner_headers = auth_headers(learner["tokens"]["accessToken"])
+
+    refused_read = await client.get("/api/v1/admin/content/levels", headers=learner_headers)
+    assert refused_read.status_code == 403, refused_read.text
+    assert error_code(refused_read) == "AUTH_INSUFFICIENT_ROLE"
+
+    refused_users = await client.get("/api/v1/admin/users", headers=learner_headers)
+    assert refused_users.status_code == 403, refused_users.text
+
+
+async def test_an_editor_without_the_reviewer_role_cannot_publish(
+    client: AsyncClient, content_db: AsyncSession
+) -> None:
+    """Publishing is the one move split off from editing, so the split is asserted."""
+    headers = await _grant_roles(
+        client,
+        content_db,
+        (UserRole.CONTENT_EDITOR,),
+        token="editor-only-id-token-probe",
+        email="editor-only@natiqo.app",
+        subject="editor-only",
+    )
+
+    response = await client.post(
+        f"/api/v1/admin/content/lessons/{uuid.uuid4()}/publish", headers=headers
+    )
+    assert response.status_code == 403, response.text
+    assert error_code(response) == "AUTH_INSUFFICIENT_ROLE"
+
+
+@pytest.mark.asyncio
+async def test_admin_refuses_a_duplicate_level_code_or_a_taken_position(
+    client: AsyncClient, content_db: AsyncSession
+) -> None:
+    headers = await _grant_roles(client, content_db, (UserRole.CONTENT_EDITOR,))
+    await _create_level(client, headers, code="A1")
+
+    duplicate = await client.post(
+        "/api/v1/admin/content/levels",
+        json={"code": "A1", "title": "Another A1"},
+        headers=headers,
+    )
+    assert duplicate.status_code == 409, duplicate.text
+    assert error_code(duplicate) == "CONFLICT"
+
+    collided = await client.post(
+        "/api/v1/admin/content/levels",
+        json={"code": "A2", "title": "Level A2", "position": 1},
+        headers=headers,
+    )
+    assert collided.status_code == 409, collided.text
+
+
+@pytest.mark.asyncio
+async def test_admin_refuses_a_question_that_cannot_be_answered(
+    client: AsyncClient, content_db: AsyncSession
+) -> None:
+    """A multiple-choice item with no correct index is not answerable, so it is a 422."""
+    headers = await _grant_roles(client, content_db, (UserRole.CONTENT_EDITOR,))
+    ids = await _published_lesson(client, headers)
+
+    response = await client.post(
+        f"/api/v1/admin/content/lessons/{ids['lesson']}/questions",
+        json={**QUESTION_BODY, "correct_index": None},
+        headers=headers,
+    )
+    assert response.status_code == 422, response.text
+
+
+@pytest.mark.asyncio
+async def test_admin_reads_an_unknown_content_id_as_not_found(
+    client: AsyncClient, content_db: AsyncSession
+) -> None:
+    """An id that was never issued is a 404 for an editor, the same answer a learner gets."""
+    headers = await _grant_roles(client, content_db, (UserRole.CONTENT_EDITOR,))
+    response = await client.get(f"/api/v1/admin/content/levels/{uuid.uuid4()}", headers=headers)
+    assert response.status_code == 404, response.text
+    assert error_code(response) == "LEVEL_NOT_FOUND"

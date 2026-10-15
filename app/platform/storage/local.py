@@ -12,7 +12,12 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 
 from app.core.config import get_settings
-from app.platform.storage.port import PresignedDownload, StorageError, StoredObject
+from app.platform.storage.port import (
+    PresignedDownload,
+    PresignedUpload,
+    StorageError,
+    StoredObject,
+)
 
 _CHUNK = 65536
 
@@ -88,3 +93,26 @@ class LocalObjectStorage:
         """No signing in local mode — the key is served by a development-only route."""
         ttl = expires_in_seconds or get_settings().signed_url_ttl_seconds
         return PresignedDownload(url=f"local://{key}", expires_in_seconds=ttl)
+
+    async def presigned_upload(
+        self,
+        key: str,
+        *,
+        content_type: str,
+        expires_in_seconds: int | None = None,
+    ) -> PresignedUpload:
+        """No signing in local mode either.
+
+        The URL is a placeholder, not a grant a client can actually PUT to: with the
+        filesystem adapter, "uploading" means calling :meth:`put` with this same key and
+        content type. That is not a gap the media pipeline has to care about, because the
+        confirm step only asks whether the bytes arrived — never how. What is preserved is
+        the contract: the caller still learns which headers the key is bound to, so code
+        written against local storage behaves identically against S3.
+        """
+        ttl = expires_in_seconds or get_settings().signed_url_ttl_seconds
+        return PresignedUpload(
+            url=f"local://upload/{key}",
+            expires_in_seconds=ttl,
+            required_headers={"Content-Type": content_type},
+        )

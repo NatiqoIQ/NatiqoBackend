@@ -15,6 +15,10 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 if TYPE_CHECKING:  # pragma: no cover
     from app.core.uow import UnitOfWorkProtocol
+    from app.modules.admin.domain.ports import (
+        AuditLogRepositoryPort,
+        EditorialRepositoryPort,
+    )
     from app.modules.ai.domain.conversation import ConversationRepositoryPort
     from app.modules.ai.domain.usage import AiUsageRepositoryPort
     from app.modules.content.domain.ports import (
@@ -28,6 +32,7 @@ if TYPE_CHECKING:  # pragma: no cover
         UserAchievementRepositoryPort,
         UserStatsRepositoryPort,
     )
+    from app.modules.media.domain.ports import MediaRepositoryPort
     from app.modules.quiz.domain.ports import (
         LessonProgressRepositoryPort,
         QuizAnswerRepositoryPort,
@@ -282,6 +287,24 @@ class SqlAlchemyUnitOfWork:
         )
 
         return self._repo("user_achievements", SqlAlchemyUserAchievementRepository)
+
+    @property
+    def media(self) -> MediaRepositoryPort:
+        from app.modules.media.infrastructure.repositories import SqlAlchemyMediaRepository
+
+        return self._repo("media", SqlAlchemyMediaRepository)
+
+    @property
+    def editorial(self) -> EditorialRepositoryPort:
+        from app.modules.admin.infrastructure.repositories import SqlAlchemyEditorialRepository
+
+        return self._repo("editorial", SqlAlchemyEditorialRepository)
+
+    @property
+    def audit_logs(self) -> AuditLogRepositoryPort:
+        from app.modules.admin.infrastructure.repositories import SqlAlchemyAuditLogRepository
+
+        return self._repo("audit_logs", SqlAlchemyAuditLogRepository)
 
     def _repo(self, key: str, factory: Any) -> Any:
         if key not in self._repositories:

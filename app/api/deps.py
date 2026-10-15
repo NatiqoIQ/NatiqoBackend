@@ -24,10 +24,13 @@ from app.core.errors import RateLimitedError
 from app.core.events import InProcessEventBus
 from app.core.logging import get_logger
 from app.core.uow_sqlalchemy import SqlAlchemyUnitOfWork
+from app.modules.admin.application.content_service import AdminContentService
+from app.modules.admin.application.users_service import AdminUserService
 from app.modules.ai.application.tutor_service import AiTutorService
 from app.modules.content.application.catalogue_service import CatalogueService
 from app.modules.gamification.application.handlers import build_gamification_bus
 from app.modules.gamification.application.service import GamificationService
+from app.modules.media.application.service import MediaService
 from app.modules.quiz.application.progress_service import ProgressService
 from app.modules.quiz.application.quiz_service import QuizService
 from app.modules.quiz.application.review_service import ReviewService
@@ -325,6 +328,45 @@ def get_gamification_service(uow: UowDep, settings: SettingsDep) -> Gamification
 GamificationServiceDep = Annotated[GamificationService, Depends(get_gamification_service)]
 
 
+# ------------------------------------------------------------------------ admin
+def get_admin_content_service(uow: UowDep) -> AdminContentService:
+    """Build a request-scoped :class:`AdminContentService`.
+
+    Bound to the request's unit of work so an editorial write and the audit row that records
+    it share one transaction — which is the whole reason the audit trail lives in this phase
+    rather than as an afterthought: a mutation that committed without its row would leave
+    exactly the hole an incident review comes to the trail to fill.
+    """
+    return AdminContentService(uow)
+
+
+AdminContentServiceDep = Annotated[AdminContentService, Depends(get_admin_content_service)]
+
+
+def get_admin_user_service(uow: UowDep) -> AdminUserService:
+    """Build a request-scoped :class:`AdminUserService`, bound to the request's unit of work."""
+    return AdminUserService(uow)
+
+
+AdminUserServiceDep = Annotated[AdminUserService, Depends(get_admin_user_service)]
+
+
+# ------------------------------------------------------------------------ media
+def get_media_service(uow: UowDep, storage: StorageDep, settings: SettingsDep) -> MediaService:
+    """Build a request-scoped :class:`MediaService`.
+
+    Composes the three things the upload flow needs and nothing else: the request's unit of
+    work for the asset row, the process-cached storage port for the grants and the object
+    itself, and the settings for the size ceilings. The storage adapter is cached per process
+    (it owns a client pool), while the service is bound to the request's session so a confirm
+    and the row it writes commit together.
+    """
+    return MediaService(uow, storage, settings)
+
+
+MediaServiceDep = Annotated[MediaService, Depends(get_media_service)]
+
+
 # -------------------------------------------------------------------- progress
 def get_progress_service(uow: UowDep) -> ProgressService:
     """Build a request-scoped :class:`ProgressService`.
@@ -394,6 +436,8 @@ def rate_limit(scope: str = "default", limit: int | None = None) -> Callable[...
                 "review": settings.rate_limit_review_requests_per_minute,
                 "ai": settings.rate_limit_ai_requests_per_minute,
                 "gamification": settings.rate_limit_gamification_requests_per_minute,
+                "admin": settings.rate_limit_admin_requests_per_minute,
+                "media": settings.rate_limit_media_requests_per_minute,
             }.get(scope, settings.rate_limit_requests_per_minute)
         # The window key is derived server-side from the clock, never from a header.
         window = int(time.time() // 60)
@@ -441,6 +485,16 @@ AiRateLimitDep = Annotated[None, Depends(rate_limit(scope="ai"))]
 #: refresh a badge list should not spend the allowance that a progress summary needs, and
 #: claiming or freezing (the two writes here) should not spend the quiz answer budget.
 GamificationRateLimitDep = Annotated[None, Depends(rate_limit(scope="gamification"))]
+
+#: Budget for the admin surface. Its own scope because it is staff tooling rather than a
+#: learner path: a batch job editing the catalogue should not be able to consume the
+#: allowance a learner's app needs, and vice versa.
+AdminRateLimitDep = Annotated[None, Depends(rate_limit(scope="admin"))]
+
+#: Budget for the media surface. Its own scope because it is a learner path rather than staff
+#: tooling, and because presign and confirm bracket a real upload: a client retrying a flaky
+#: PUT should not be able to spend an editor's allowance, nor an editor a learner's.
+MediaRateLimitDep = Annotated[None, Depends(rate_limit(scope="media"))]
 
 #: Budget for the credential-adjacent auth routes. Separate from the default so that a
 #: burst of "resend verification" taps cannot consume the allowance that login and

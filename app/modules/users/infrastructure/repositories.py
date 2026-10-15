@@ -11,10 +11,11 @@ import uuid
 from datetime import datetime
 from typing import Any, cast
 
-from sqlalchemy import func, select, update
+from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.engine import CursorResult, Result
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.pagination import TimeCursor
 from app.core.time import ensure_aware, utc_now
 from app.core.types import UserId
 from app.modules.users.domain.entities import (
@@ -194,6 +195,27 @@ class SqlAlchemyUserRepository:
                 updated_at=utc_now(),
             )
         )
+
+    # ------------------------------------------------------ admin moderation
+    async def list_users(self, *, limit: int, after: TimeCursor | None) -> list[User]:
+        """Accounts newest first, keyset-paged on ``(created_at desc, id desc)``."""
+        stmt = select(UserModel)
+        if after is not None:
+            stmt = stmt.where(
+                or_(
+                    UserModel.created_at < after.timestamp,
+                    and_(
+                        UserModel.created_at == after.timestamp,
+                        UserModel.id < after.id,
+                    ),
+                )
+            )
+        stmt = stmt.order_by(UserModel.created_at.desc(), UserModel.id.desc()).limit(limit)
+        models = (await self._session.execute(stmt)).scalars().all()
+        return [_to_user(model) for model in models]
+
+    async def count(self) -> int:
+        return int(await self._session.scalar(select(func.count()).select_from(UserModel)) or 0)
 
     # -------------------------------------------------------------- profile
     async def get_profile(self, user_id: UserId) -> UserProfile | None:

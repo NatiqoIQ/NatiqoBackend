@@ -288,6 +288,19 @@ PERSONAS: tuple[SeedPersona, ...] = (
                 days_ago=2,
                 hours_ago=4,
             ),
+            # Appended, not inserted: an entry's id is derived from its position in this
+            # tuple, so a call placed in the middle would be re-keyed as a new row and
+            # leave the old one behind. Today's call is what ``GET /ai/quota`` reads as
+            # spend — the budget is a calendar day, so a persona whose calls are all
+            # older than midnight answers that screen with a zero it cannot explain.
+            _usage(
+                "explain_answer",
+                "mini",
+                input_tokens=260,
+                output_tokens=380,
+                latency_ms=1_100,
+                hours_ago=0,
+            ),
         ),
     ),
     SeedPersona(

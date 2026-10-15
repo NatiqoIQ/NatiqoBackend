@@ -134,11 +134,12 @@ uv run python -m scripts.seed --yes --only admin --only learner
 | `--dry-run` | Prints the plan and exits. Writes nothing, in any environment. |
 | `--yes` | Skips the confirmation prompt. Required for unattended runs. |
 | `--only PERSONA` | Restricts to one persona. Repeatable. |
+| `--adopt` | Takes over an account that holds a persona's address but has no provider identity, instead of skipping it. |
 | `--allow-production` | Permits a production write. Off unless you pass it. |
 
 The report counts what the activity pass wrote on its own line, and names the breakdown
-under the table: `admin: 16 sessions, 48 answers, 41 cards, 16 reviews, 2 threads,
-5 achievements`. See [The learning history](#the-learning-history--the-same-command).
+under the table: `admin: 16 sessions, 45 answers, 39 cards, 16 reviews, 2 threads,
+4 achievements`. See [The learning history](#the-learning-history--the-same-command).
 
 Every persona owns a **deterministic provider identity** instead of a password: the
 seeder signs each one in through the real use case with a `seed:<persona>` subject on
@@ -188,6 +189,25 @@ finds the account, completes the missing rows, and leaves the rest untouched.
 If an address already belongs to an account with no `seed:<persona>` identity behind it,
 the seeder skips that persona and says so. It never links the seeded identity onto
 somebody else's account, and it writes nothing at all for a persona it skipped.
+
+There is one deliberate exit, for the one case that is not somebody else's account: a
+development database seeded by an earlier phase of this script, whose demo accounts carry
+the demo addresses but predate the identity that marks them as the seeder's. Passing
+`--adopt` takes such an account over — it writes the `seed:<persona>` identity and then
+fills the account in like any other.
+
+The gate is the identity table, and it does not open: **an account that has any provider
+identity is refused even with the flag**. Every account this application creates is created
+by a Google or Apple sign-in, so an account with no identity row has never been signed in
+to by anybody — while one that has is a person's, and adopting it would hand their history
+to whoever reads these instructions next. That is also why the flag is opt-in: skipping a
+collision is the safe default, and an operator who is told which account collided can
+decide.
+
+```bash
+uv run python -m scripts.seed --dry-run --adopt   # see which accounts it would take over
+uv run python -m scripts.seed --yes --adopt       # then take them over, and seed them
+```
 
 ## Layout
 

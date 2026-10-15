@@ -368,6 +368,54 @@ async def test_only_the_persona_that_declares_activity_gets_history(
     )
 
 
+# ====================================================================== adoption
+@pytest.mark.asyncio
+async def test_adopting_a_legacy_admin_backfills_its_history(
+    catalogue, uow, settings, verify
+) -> None:
+    """The case this exists for: a development database seeded before identities did.
+
+    ``admin@natiqo.app`` is already there and no provider has ever signed in to it, so
+    ``--adopt`` takes it over and the same run writes the history it was missing. A legacy
+    demo database stops being a database of empty screens without being rebuilt.
+    """
+    legacy_id = UserId(uuid.uuid4())
+    verify.add(
+        UserModel(
+            id=legacy_id,
+            email=ADMIN_EMAIL,
+            status="active",
+            roles=["admin", "support"],
+        )
+    )
+    await verify.commit()
+
+    report = await run_seed(uow, settings, only=["admin"], adopt=True)
+    outcome = next(o for o in report.outcomes if o.key == "admin")
+    plan = _activity("admin")
+
+    assert outcome.action is SeedAction.ENRICH
+    assert outcome.user_id == legacy_id
+    assert outcome.activity.rows > 0
+
+    summary = await ProgressService(uow).summary(legacy_id)
+    assert summary.lessons_completed == plan.lessons_completed
+    assert summary.current_streak_days == plan.study_span_days
+    assert (await ReviewService(uow).stats(legacy_id)).total_cards > 0
+    threads = await verify.scalar(
+        select(func.count())
+        .select_from(AiConversationModel)
+        .where(AiConversationModel.user_id == legacy_id)
+    )
+    assert threads == len(plan.tutor_threads)
+
+    # And it is the seeder's account from now on, so a rerun is the ordinary no-op.
+    second = await run_seed(uow, settings, only=["admin"])
+    again = next(o for o in second.outcomes if o.key == "admin")
+    assert again.action is SeedAction.ENRICH
+    assert again.activity.rows == 0
+
+
 # ====================================================================== reruns
 @pytest.mark.asyncio
 async def test_a_second_run_writes_nothing(catalogue, uow, settings, verify) -> None:

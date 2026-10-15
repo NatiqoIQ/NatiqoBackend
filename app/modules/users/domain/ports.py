@@ -10,6 +10,7 @@ import uuid
 from datetime import datetime
 from typing import Protocol, runtime_checkable
 
+from app.core.pagination import TimeCursor
 from app.core.types import UserId
 from app.modules.users.domain.entities import (
     ExternalIdentity,
@@ -38,6 +39,18 @@ class UserRepositoryPort(Protocol):
     async def add(self, user: User) -> None: ...
 
     async def update(self, user: User) -> None: ...
+
+    async def list_users(self, *, limit: int, after: TimeCursor | None) -> list[User]:
+        """A page of accounts, newest first, for the admin moderation surface.
+
+        Ordered by ``(created_at desc, id desc)`` so a page boundary stays stable as
+        accounts are created around it — see :class:`app.core.pagination.TimeCursor`.
+        """
+        ...
+
+    async def count(self) -> int:
+        """Total number of accounts. Used for the admin list's ``total`` hint."""
+        ...
 
     async def get_profile(self, user_id: UserId) -> UserProfile | None: ...
 
