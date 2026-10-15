@@ -33,7 +33,7 @@ import asyncio
 import sys
 import uuid
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import timedelta
 from enum import StrEnum
 
@@ -53,6 +53,7 @@ from app.modules.users.domain.entities import UserDevice, UserProfile, UserSetti
 from app.modules.users.domain.identity import IdentityProvider, VerifiedIdentity
 from app.modules.users.domain.policy import normalise_email
 from app.platform.ai.providers import estimate_cost
+from scripts.seed_activity import ActivityOutcome, seed_activity
 from scripts.seed_personas import PERSONAS, SEED_NAMESPACE, SeedDevice, SeedPersona
 
 logger = get_logger("scripts.seed")
@@ -137,10 +138,18 @@ class PersonaOutcome:
     devices_added: int = 0
     sessions_issued: int = 0
     ai_usage_added: int = 0
+    #: The learning history this persona's plan produced. Empty for a persona that
+    #: declares none, which is every account but the admin today.
+    activity: ActivityOutcome = field(default_factory=ActivityOutcome)
 
     @property
     def changed(self) -> bool:
-        return bool(self.devices_added or self.sessions_issued or self.ai_usage_added)
+        return bool(
+            self.devices_added
+            or self.sessions_issued
+            or self.ai_usage_added
+            or self.activity.changed
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -163,6 +172,10 @@ class SeedReport:
     def ai_usage_added(self) -> int:
         return sum(outcome.ai_usage_added for outcome in self.outcomes)
 
+    @property
+    def activity_rows(self) -> int:
+        return sum(outcome.activity.rows for outcome in self.outcomes)
+
     def format(self) -> str:
         """Render the report for a human reading a terminal."""
         if not self.outcomes:
@@ -171,14 +184,14 @@ class SeedReport:
         verb = "would " if self.dry_run else ""
         width = max(len(outcome.key) for outcome in self.outcomes)
         lines = [
-            f"{'persona'.ljust(width)}  {'action':<10}  devices  sessions  ai-usage",
+            f"{'persona'.ljust(width)}  {'action':<10}  devices  sessions  ai-usage  activity",
         ]
         for outcome in self.outcomes:
             lines.append(
                 f"{outcome.key.ljust(width)}  "
                 f"{(verb + outcome.action.value):<10}  "
                 f"{outcome.devices_added:>7}  {outcome.sessions_issued:>9}  "
-                f"{outcome.ai_usage_added:>9}"
+                f"{outcome.ai_usage_added:>9}  {outcome.activity.rows:>8}"
             )
 
         lines.append("")
@@ -187,11 +200,16 @@ class SeedReport:
             f"{self.count(SeedAction.ENRICH)} {verb}enrich, "
             f"{self.count(SeedAction.SKIP)} skipped  "
             f"({verb}add {self.devices_added} devices, "
-            f"{self.sessions_issued} sessions, {self.ai_usage_added} AI usage rows)"
+            f"{self.sessions_issued} sessions, {self.ai_usage_added} AI usage rows, "
+            f"{self.activity_rows} activity rows)"
         )
         for outcome in self.outcomes:
             if outcome.reason:
                 lines.append(f"  {outcome.key}: {outcome.reason}")
+            if outcome.activity.changed:
+                # "activity 96" says how much was written; the breakdown says what, which
+                # is the part an operator actually reads before pointing a client at it.
+                lines.append(f"  {outcome.key}: {outcome.activity.format()}")
 
         if not self.dry_run and not any(outcome.changed for outcome in self.outcomes):
             lines.append("  Nothing changed: this environment was already seeded.")
@@ -279,6 +297,7 @@ async def run_seed(
         enrich=report.count(SeedAction.ENRICH),
         skip=report.count(SeedAction.SKIP),
         ai_usage_added=report.ai_usage_added,
+        activity_rows=report.activity_rows,
     )
     return report
 
@@ -324,8 +343,11 @@ async def _seed_one(
                 devices_added=sum(1 for d in persona.devices if d.creates_device_row),
                 sessions_issued=len(persona.devices),
                 ai_usage_added=len(persona.ai_calls),
+                # Nothing can exist for an account that does not exist yet, so this is the
+                # plan's full size — and the run it previews writes exactly that.
+                activity=await seed_activity(uow, settings, persona, None, dry_run=True),
             )
-        return await _predict_enrichment(uow, persona, existing.id)
+        return await _predict_enrichment(uow, settings, persona, existing.id)
 
     if existing is None:
         return await _create(uow, settings, persona, email)
@@ -333,7 +355,7 @@ async def _seed_one(
 
 
 async def _predict_enrichment(
-    uow: UnitOfWorkProtocol, persona: SeedPersona, user_id: UserId
+    uow: UnitOfWorkProtocol, settings: Settings, persona: SeedPersona, user_id: UserId
 ) -> PersonaOutcome:
     """Report what :func:`_enrich` *would* change, without changing it.
 
@@ -369,6 +391,7 @@ async def _predict_enrichment(
         # Deliberately omitted: enrichment never mints a session, so the honest number
         # is zero and the default already is.
         ai_usage_added=added_usage,
+        activity=await seed_activity(uow, settings, persona, user_id, dry_run=True),
     )
 
 
@@ -435,6 +458,7 @@ async def _create(
     user_id = result.user_id
     await _write_account(uow, settings, persona, user_id)
     sessions = await _mint_extra_sessions(uow, settings, persona, email)
+    activity = await seed_activity(uow, settings, persona, user_id, dry_run=False)
     return PersonaOutcome(
         key=persona.key,
         email=email,
@@ -447,6 +471,7 @@ async def _create(
         devices_added=sum(1 for d in persona.devices if d.creates_device_row),
         sessions_issued=1 + sessions,
         ai_usage_added=await _write_usage(uow, persona, user_id),
+        activity=activity,
     )
 
 
@@ -466,6 +491,7 @@ async def _enrich(
     await _write_account(uow, settings, persona, user_id)
     await _write_devices(uow, persona, user_id)
     after = await _device_ids(uow, user_id)
+    activity = await seed_activity(uow, settings, persona, user_id, dry_run=False)
     return PersonaOutcome(
         key=persona.key,
         email=normalise_email(persona.email),
@@ -476,6 +502,7 @@ async def _enrich(
         # progress that did not happen.
         devices_added=len(after - before),
         ai_usage_added=await _write_usage(uow, persona, user_id),
+        activity=activity,
     )
 
 
