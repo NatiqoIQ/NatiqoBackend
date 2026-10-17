@@ -17,8 +17,7 @@ hard-coding a zone into the query.
 from __future__ import annotations
 
 import uuid
-from datetime import date, datetime, timedelta
-from itertools import pairwise
+from datetime import datetime
 
 from app.core.errors import ErrorCode, NotFoundError, ValidationFailed
 from app.core.pagination import (
@@ -28,7 +27,7 @@ from app.core.pagination import (
     decode_time_cursor,
     paginate_time,
 )
-from app.core.time import local_date, utc_now
+from app.core.time import local_date, streak_runs, utc_now
 from app.core.types import ContentId, UserId
 from app.core.uow import UnitOfWorkProtocol
 from app.modules.content.domain.entities import LessonPlacement
@@ -169,36 +168,12 @@ def _streaks(times: list[datetime], timezone: str | None) -> tuple[int, int]:
 
     The current streak counts back from today, and only if the learner practiced today or
     yesterday — a gap of a day ends it rather than pausing it. Both runs are measured in
-    the learner's local calendar, so "midnight" is their midnight.
+    the learner's local calendar, so "midnight" is their midnight. The calendar maths is
+    shared with the gamification projection (:func:`app.core.time.streak_runs`) so the two
+    surfaces can never disagree about what a streak is.
     """
-    days = sorted({local_date(moment, timezone) for moment in times})
-    if not days:
-        return 0, 0
-
-    longest = _longest_run(days)
-
-    today = local_date(utc_now(), timezone)
-    descending = list(reversed(days))
-    current = 0
-    if descending[0] == today or descending[0] == today - timedelta(days=1):
-        current = 1
-        for later, earlier in pairwise(descending):
-            if later - earlier == timedelta(days=1):
-                current += 1
-            else:
-                break
-    return current, longest
-
-
-def _longest_run(days: list[date]) -> int:
-    longest = run = 1
-    for earlier, later in pairwise(days):
-        if later - earlier == timedelta(days=1):
-            run += 1
-            longest = max(longest, run)
-        else:
-            run = 1
-    return longest
+    days = [local_date(moment, timezone) for moment in times]
+    return streak_runs(days, today=local_date(utc_now(), timezone))
 
 
 def _lesson_view(placement: LessonPlacement, row: LessonProgress | None) -> LessonProgressView:

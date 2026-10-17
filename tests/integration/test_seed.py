@@ -481,6 +481,127 @@ async def test_an_account_missing_its_profile_and_settings_is_completed(
     assert row.daily_goal_minutes == learner.daily_goal_minutes
 
 
+# ------------------------------------------------------------------ adoption
+async def _providerless_account(verify: AsyncSession, *, subject: str | None = None) -> UserId:
+    """An account holding the admin persona's address, as an older seeder left it.
+
+    Optional ``subject`` adds a provider identity, which is what makes the account a
+    person's rather than a leftover: the difference the adoption gate is built on.
+    """
+    user_id = UserId(uuid.uuid4())
+    verify.add(
+        UserModel(
+            id=user_id,
+            email=ADMIN_EMAIL,
+            status=UserStatus.ACTIVE.value,
+            roles=[str(UserRole.USER)],
+        )
+    )
+    await verify.commit()
+    if subject is not None:
+        verify.add(
+            UserIdentityModel(
+                user_id=user_id,
+                provider=str(SEED_IDENTITY_PROVIDER),
+                subject=subject,
+                email=ADMIN_EMAIL,
+                email_verified=True,
+                last_login_at=utc_now(),
+            )
+        )
+        await verify.commit()
+    return user_id
+
+
+@pytest.mark.asyncio
+async def test_adopt_takes_over_an_account_an_earlier_run_left_behind(
+    uow, settings, verify
+) -> None:
+    """``--adopt`` is the one exit from the ownership rule, and this is its account.
+
+    The persona's own address with no provider identity behind it: nobody has ever signed
+    in to it, which is the shape the password-based seeder of an earlier phase left in a
+    development database. It keeps its row, gains the seeder's identity, and is then
+    filled in like any other seeded account.
+    """
+    legacy_id = await _providerless_account(verify)
+    persona = next(p for p in PERSONAS if p.key == "admin")
+
+    report = await run_seed(uow, settings, only=["admin"], adopt=True)
+    await uow.commit()
+
+    outcome = next(o for o in report.outcomes if o.key == "admin")
+    assert outcome.action is SeedAction.ENRICH
+    assert outcome.user_id == legacy_id
+
+    identity = await verify.scalar(
+        select(UserIdentityModel).where(UserIdentityModel.user_id == legacy_id)
+    )
+    assert identity is not None
+    assert identity.provider == str(SEED_IDENTITY_PROVIDER)
+    assert identity.subject == seed_subject("admin")
+
+    # The rest of the run treated it as its own: profile and settings are the persona's.
+    profile = await verify.scalar(
+        select(UserProfileModel).where(UserProfileModel.user_id == legacy_id)
+    )
+    assert profile is not None
+    assert profile.display_name == persona.display_name
+    assert profile.current_level == persona.current_level
+    assert await verify.scalar(select(UserModel).where(UserModel.id == legacy_id)) is not None
+
+    # And from now on the account is recognised without the flag, because the identity is
+    # what marks it — so an operator only ever passes --adopt once.
+    again = await run_seed(uow, settings, only=["admin"])
+    assert next(o for o in again.outcomes if o.key == "admin").action is SeedAction.ENRICH
+
+
+@pytest.mark.asyncio
+async def test_adopt_still_refuses_an_account_a_person_has_signed_in_to(
+    uow, settings, verify
+) -> None:
+    """The gate is the identity table, and --adopt does not open it.
+
+    An account with any provider identity has been signed in to by somebody. Taking it
+    over would hand that person's history to the next reader of the demo instructions,
+    which is the failure the ownership rule exists to prevent.
+    """
+    taken_id = await _providerless_account(verify, subject="real-person-1")
+
+    report = await run_seed(uow, settings, only=["admin"], adopt=True)
+
+    outcome = next(o for o in report.outcomes if o.key == "admin")
+    assert outcome.action is SeedAction.SKIP
+    assert outcome.reason is not None and "signed in with google" in outcome.reason
+    assert (
+        await verify.scalar(
+            select(UserIdentityModel).where(
+                UserIdentityModel.user_id == taken_id,
+                UserIdentityModel.subject == seed_subject("admin"),
+            )
+        )
+        is None
+    )
+    assert (
+        await verify.scalar(select(UserProfileModel).where(UserProfileModel.user_id == taken_id))
+        is None
+    )
+
+
+@pytest.mark.asyncio
+async def test_an_adoption_is_previewed_before_it_is_written(uow, settings, verify) -> None:
+    """A dry run has to be able to show the take-over, and must write none of it."""
+    await _providerless_account(verify)
+    before = len(await _all(verify, select(UserIdentityModel)))
+
+    preview = await run_seed(uow, settings, only=["admin"], dry_run=True, adopt=True)
+    outcome = next(o for o in preview.outcomes if o.key == "admin")
+
+    assert outcome.action is SeedAction.ENRICH
+    assert outcome.reason is not None and "adopt" in outcome.reason
+    assert len(await _all(verify, select(UserIdentityModel))) == before
+
+
 # ------------------------------------------------------------------- dry run
 @pytest.mark.asyncio
 async def test_dry_run_writes_nothing(uow, settings, verify) -> None:
@@ -663,7 +784,10 @@ async def test_cli_seeds_and_prints_a_report(capsys) -> None:
     # what is unique to this layer is the confirmation, the exit code and the guard.
     out = capsys.readouterr().out
     assert "6 create, 0 enrich, 0 skipped" in out
-    assert "11 AI usage rows" in out
+    # The count the personas declare today: 3 + 3 + 2 + 2 + 2. It moves whenever a
+    # persona gains a metered call, which is why the assertions around it are derived
+    # — this one is pinned so the rendered wording cannot drift unnoticed.
+    assert "12 AI usage rows" in out
 
 
 def test_report_says_so_when_nothing_changed() -> None:

@@ -42,10 +42,15 @@ BACKEND_ROOT = Path(__file__).resolve().parents[2]
 #: Every table the models declare. A downgrade that leaves one behind, or drops one
 #: it should not, shows up here as a set difference rather than as a vague later error.
 EXPECTED_TABLES = {
+    "achievements",
+    "ai_conversations",
+    "ai_messages",
     "ai_usage_records",
+    "audit_logs",
     "lesson_progress",
     "lessons",
     "levels",
+    "media_assets",
     "questions",
     "quiz_answers",
     "quiz_sessions",
@@ -53,10 +58,12 @@ EXPECTED_TABLES = {
     "review_cards",
     "review_logs",
     "units",
+    "user_achievements",
     "user_devices",
     "user_identities",
     "user_profiles",
     "user_settings",
+    "user_stats",
     "users",
 }
 
@@ -508,5 +515,10 @@ def test_migration_files_are_never_shadowed_by_a_stale_env() -> None:
     A developer shell with ``DATABASE_URL`` exported would otherwise point every
     migration test at whatever that is — the exact failure the throwaway-file fixture
     exists to make impossible.
+
+    The suite may itself be pointed at PostgreSQL through ``TEST_DATABASE_URL``, so the
+    check is equality with the *resolved* test DSN rather than a hard-coded SQLite
+    prefix — still the suite deciding, never the shell.
     """
-    assert os.environ["DATABASE_URL"].startswith("sqlite+aiosqlite:///:memory:")
+    expected = os.environ.get("TEST_DATABASE_URL") or "sqlite+aiosqlite:///:memory:"
+    assert os.environ["DATABASE_URL"] == expected

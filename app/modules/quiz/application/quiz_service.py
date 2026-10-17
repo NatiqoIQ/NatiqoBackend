@@ -21,8 +21,14 @@ from datetime import timedelta
 
 from app.core.config import Settings
 from app.core.errors import ConflictError, ErrorCode, NotFoundError, ValidationFailed
+<<<<<<< HEAD
 from app.core.time import utc_now
 from app.core.types import ContentId, QuestionKind, UserId, new_id
+=======
+from app.core.events import EventBus, LessonCompleted
+from app.core.time import ensure_aware, utc_now
+from app.core.types import ContentId, UserId, new_id
+>>>>>>> b7d6562841acf4f88336d08719c6611b23efd314
 from app.core.uow import UnitOfWorkProtocol
 from app.modules.content.domain.entities import Question
 from app.modules.content.domain.policy import (
@@ -64,9 +70,21 @@ __all__ = ["QuizService"]
 
 
 class QuizService:
-    def __init__(self, uow: UnitOfWorkProtocol, settings: Settings) -> None:
+    def __init__(
+        self,
+        uow: UnitOfWorkProtocol,
+        settings: Settings,
+        *,
+        bus: EventBus | None = None,
+    ) -> None:
         self._uow = uow
         self._settings = settings
+        #: Optional on purpose: the event bus is a *side channel*, not a dependency of the
+        #: engine. A completion is a complete unit of work with or without a subscriber, so a
+        #: test (or a future worker) can construct the service with no bus and the lesson
+        #: still scores. When a bus is present, ``complete_session`` publishes one
+        #: ``LessonCompleted`` and the gamification subscriber folds it into the projection.
+        self._bus = bus
 
     # ================================================================ start
     async def start_session(
@@ -276,8 +294,16 @@ class QuizService:
 
         session.complete(xp_awarded=xp_awarded)
         await self._uow.quiz_sessions.save(session)
-        await self._record_progress(
+        is_retry = await self._record_progress(
             user_id, session.lesson_id, score_percent=score_percent, xp=xp_awarded
+        )
+        await self._publish_completion(
+            user_id,
+            session,
+            score_percent=score_percent,
+            correct_count=correct_count,
+            xp_awarded=xp_awarded,
+            is_retry=is_retry,
         )
         await self._uow.commit()
 
@@ -362,14 +388,62 @@ class QuizService:
         *,
         score_percent: int,
         xp: int,
-    ) -> None:
+    ) -> bool:
+        """Fold the completion into the learner's progress row, returning ``is_retry``.
+
+        ``is_retry`` is true when the lesson was already complete before this sitting — the
+        learner replaying a lesson they have finished. It only matters for the event, but the
+        fact is known here (where the prior state is read) and nowhere else, so it is
+        returned rather than re-derived by the caller.
+        """
         if lesson_id is None:  # pragma: no cover - lesson mode always sets it
-            return
+            return False
         progress = await self._uow.lesson_progress.get(user_id, lesson_id)
         if progress is None:
             progress = LessonProgress(id=new_id(), user_id=user_id, lesson_id=lesson_id)
+        is_retry = progress.state is ProgressState.COMPLETED
         progress.record_completion(score_percent=score_percent, xp=xp)
         await self._uow.lesson_progress.save(progress)
+        return is_retry
+
+    async def _publish_completion(
+        self,
+        user_id: UserId,
+        session: QuizSession,
+        *,
+        score_percent: int,
+        correct_count: int,
+        xp_awarded: int,
+        is_retry: bool,
+    ) -> None:
+        """Announce a completed lesson to subscribers — before the commit, on the same session.
+
+        Two details are load-bearing:
+
+        * **Before the commit.** The gamification subscriber writes through this same unit of
+          work; publishing first means the completion and the XP/streak/badges it earned land
+          in one transaction, so a subscriber failure rolls the whole thing back rather than
+          leaving a scored lesson whose rewards vanished.
+        * **After an explicit flush.** The session is configured with ``autoflush=False``, so
+          the progress row and the session's ``completed_at`` are still pending in the
+          session. The subscriber reads both to project stats and completion times; without
+          the flush it would not see the very completion it is recording.
+        """
+        if self._bus is None or session.lesson_id is None:
+            return
+        await self._uow.flush()
+        await self._bus.publish(
+            LessonCompleted(
+                user_id=user_id,
+                lesson_id=session.lesson_id,
+                score_percent=score_percent,
+                correct_count=correct_count,
+                total_count=session.total,
+                duration_seconds=_duration_seconds(session),
+                xp_awarded=xp_awarded,
+                is_retry=is_retry,
+            )
+        )
 
     async def _ensure_review_card(self, user_id: UserId, question_id: uuid.UUID) -> None:
         """Seed a spaced-repetition card the first time a question is answered correctly.
@@ -416,6 +490,18 @@ def _percentage(correct: int, total: int) -> int:
     if total <= 0:  # pragma: no cover - a session always has at least one question
         return 0
     return round(correct / total * 100)
+
+
+def _duration_seconds(session: QuizSession) -> int:
+    """Wall-clock length of a finished sitting, floored at zero.
+
+    Both ends are normalised: a session read back on this request has a naive ``started_at``
+    (SQLite drops tzinfo on the way out) while ``completed_at``, set in memory by
+    ``session.complete()``, is timezone-aware. Subtracting the two raw would raise.
+    """
+    started = ensure_aware(session.started_at)
+    completed = ensure_aware(session.completed_at) if session.completed_at else utc_now()
+    return max(0, int((completed - started).total_seconds()))
 
 
 def _given_answer(answer: SubmittedAnswer) -> dict[str, str]:

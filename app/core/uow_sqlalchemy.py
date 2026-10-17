@@ -15,6 +15,11 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 if TYPE_CHECKING:  # pragma: no cover
     from app.core.uow import UnitOfWorkProtocol
+    from app.modules.admin.domain.ports import (
+        AuditLogRepositoryPort,
+        EditorialRepositoryPort,
+    )
+    from app.modules.ai.domain.conversation import ConversationRepositoryPort
     from app.modules.ai.domain.usage import AiUsageRepositoryPort
     from app.modules.content.domain.ports import (
         LessonRepositoryPort,
@@ -22,6 +27,12 @@ if TYPE_CHECKING:  # pragma: no cover
         QuestionRepositoryPort,
         UnitRepositoryPort,
     )
+    from app.modules.gamification.domain.ports import (
+        AchievementRepositoryPort,
+        UserAchievementRepositoryPort,
+        UserStatsRepositoryPort,
+    )
+    from app.modules.media.domain.ports import MediaRepositoryPort
     from app.modules.quiz.domain.ports import (
         LessonProgressRepositoryPort,
         QuizAnswerRepositoryPort,
@@ -176,6 +187,14 @@ class SqlAlchemyUnitOfWork:
         return self._repo("ai_usage", SqlAlchemyAiUsageRepository)
 
     @property
+    def ai_conversations(self) -> ConversationRepositoryPort:
+        from app.modules.ai.infrastructure.conversation_repositories import (
+            SqlAlchemyConversationRepository,
+        )
+
+        return self._repo("ai_conversations", SqlAlchemyConversationRepository)
+
+    @property
     def levels(self) -> LevelRepositoryPort:
         from app.modules.content.infrastructure.repositories import (
             SqlAlchemyLevelRepository,
@@ -244,6 +263,48 @@ class SqlAlchemyUnitOfWork:
         )
 
         return self._repo("review_logs", SqlAlchemyReviewLogRepository)
+
+    @property
+    def user_stats(self) -> UserStatsRepositoryPort:
+        from app.modules.gamification.infrastructure.repositories import (
+            SqlAlchemyUserStatsRepository,
+        )
+
+        return self._repo("user_stats", SqlAlchemyUserStatsRepository)
+
+    @property
+    def achievements(self) -> AchievementRepositoryPort:
+        from app.modules.gamification.infrastructure.repositories import (
+            SqlAlchemyAchievementRepository,
+        )
+
+        return self._repo("achievements", SqlAlchemyAchievementRepository)
+
+    @property
+    def user_achievements(self) -> UserAchievementRepositoryPort:
+        from app.modules.gamification.infrastructure.repositories import (
+            SqlAlchemyUserAchievementRepository,
+        )
+
+        return self._repo("user_achievements", SqlAlchemyUserAchievementRepository)
+
+    @property
+    def media(self) -> MediaRepositoryPort:
+        from app.modules.media.infrastructure.repositories import SqlAlchemyMediaRepository
+
+        return self._repo("media", SqlAlchemyMediaRepository)
+
+    @property
+    def editorial(self) -> EditorialRepositoryPort:
+        from app.modules.admin.infrastructure.repositories import SqlAlchemyEditorialRepository
+
+        return self._repo("editorial", SqlAlchemyEditorialRepository)
+
+    @property
+    def audit_logs(self) -> AuditLogRepositoryPort:
+        from app.modules.admin.infrastructure.repositories import SqlAlchemyAuditLogRepository
+
+        return self._repo("audit_logs", SqlAlchemyAuditLogRepository)
 
     def _repo(self, key: str, factory: Any) -> Any:
         if key not in self._repositories:

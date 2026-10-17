@@ -90,6 +90,73 @@ class SeedAiCall:
 
 
 @dataclass(frozen=True, slots=True)
+class SeedThread:
+    """One tutor conversation, as the learner would have held it.
+
+    Only the learner's own turns are declared. The replies are not written here: they are
+    produced by the tutor the app ships with (``app.platform.ai.service``, whose
+    deterministic fallback is what a learner sees whenever a model is unavailable or
+    switched off), so the thread reads like the product rather than like a fixture. See
+    :mod:`scripts.seed_activity` for why that matters.
+    """
+
+    #: The learner's turns, in order. One entry opens the thread; later ones continue it.
+    learner_messages: tuple[str, ...]
+    days_ago: int = 1
+    #: Position of the seeded lesson the thread was opened from, or ``None`` for a thread
+    #: that is not anchored to one. Out of range is treated as ``None``.
+    lesson_index: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class SeedActivity:
+    """A persona's learning history, declared as a *shape* rather than as rows.
+
+    The catalogue it is written against is not declared here, because it must not be:
+    which lesson is the fourth one is a property of the curriculum, and a copy of it in
+    this file would rot the first time a lesson was inserted. The plan says "fourteen
+    lessons, spread over nine days, at these scores" and :mod:`scripts.seed_activity`
+    resolves that against whatever is actually published.
+
+    Everything here is a *choice about the demo*, never a rule about the product: the
+    points, the XP, the review schedule and the achievements are all produced by the same
+    code the app runs. A persona that declares no activity gets exactly the account it
+    did before this existed.
+    """
+
+    #: How many lessons, in curriculum order, the learner has finished. Capped at the
+    #: size of the published catalogue.
+    lessons_completed: int = 0
+    #: Score, as a percentage, cycled over those completions. The spread is the point: a
+    #: screen that only ever shows 100% hides every "needs work" state in the app.
+    score_pattern: tuple[int, ...] = (100, 90, 100, 75, 100, 60, 85)
+    #: How many days the completions are spread over, ending today. The streak is derived
+    #: from these dates, so this is also what decides the streak the account shows.
+    study_span_days: int = 7
+    #: Local hour the first sitting of a day starts at. Later sittings on the same day
+    #: follow it 25 minutes apart.
+    first_hour: int = 17
+    #: Leave the next lesson half answered, the way closing the app mid-lesson does.
+    lesson_in_progress: bool = False
+    #: Sessions started and never finished, in lessons after the one above.
+    abandoned_sessions: int = 0
+    #: How many review cards carry a real SM-2 schedule (i.e. were reviewed). Cards are
+    #: drawn from the earliest completions, because a card cannot be reviewed before the
+    #: question that created it was answered.
+    reviews_reviewed: int = 0
+    #: How long before today each review of a card happened, oldest first. The tuple's
+    #: length is therefore also how many times each reviewed card was reviewed.
+    review_days_ago: tuple[int, ...] = (3, 1)
+    #: Whether review *k* was passed, cycled over every review in order. A failed review is
+    #: a real lapse: the card goes back to relearning and its interval resets.
+    review_pass_pattern: tuple[bool, ...] = (True, True, True, False)
+    tutor_threads: tuple[SeedThread, ...] = ()
+    #: How many unlocked achievements the learner has already claimed, oldest first.
+    #: Claiming pays the reward, so this also decides the gem balance.
+    claimed_achievements: int = 0
+
+
+@dataclass(frozen=True, slots=True)
 class SeedPersona:
     """A complete account, as the seeder should find it afterwards."""
 
@@ -113,6 +180,9 @@ class SeedPersona:
     daily_goal_new_words: int = 10
     devices: tuple[SeedDevice, ...] = ()
     ai_calls: tuple[SeedAiCall, ...] = ()
+    #: The learning history to write for this account, or ``None`` for an account that
+    #: should hold nothing but a profile. See :class:`SeedActivity`.
+    activity: SeedActivity | None = None
 
 
 _GPT_MINI = ("openai", "gpt-4o-mini")
@@ -158,6 +228,39 @@ PERSONAS: tuple[SeedPersona, ...] = (
         display_name="Ali Al-Hashemi",
         roles=(UserRole.ADMIN, UserRole.SUPPORT),
         current_level=CEFRLevel.B2,
+        # The admin is the account a reviewer signs in with, so it is the one that has to
+        # have something on every screen. Staff also work the course from the beginning
+        # when they check content in order, which is why the history starts at A1 even
+        # though the profile sits at B2.
+        activity=SeedActivity(
+            lessons_completed=14,
+            score_pattern=(100, 90, 100, 75, 100, 60, 85),
+            study_span_days=9,
+            lesson_in_progress=True,
+            abandoned_sessions=1,
+            reviews_reviewed=8,
+            review_days_ago=(4, 1),
+            # Three passes and a lapse: a retention figure of 75%, which is what an
+            # honest review log looks like. A log where nothing is ever forgotten would
+            # hide the relearning state the schedule exists to produce.
+            review_pass_pattern=(True, True, True, False),
+            tutor_threads=(
+                SeedThread(
+                    learner_messages=("What is the difference between 'make' and 'do'?",),
+                    days_ago=3,
+                    lesson_index=0,
+                ),
+                SeedThread(
+                    learner_messages=(
+                        "Can you explain when to use the past simple?",
+                        "And how do I make a negative sentence?",
+                    ),
+                    days_ago=1,
+                    lesson_index=4,
+                ),
+            ),
+            claimed_achievements=2,
+        ),
         devices=(
             SeedDevice(platform="web", user_agent="Chrome 128 (macOS)", ip_address="127.0.0.1"),
             SeedDevice(
@@ -184,6 +287,19 @@ PERSONAS: tuple[SeedPersona, ...] = (
                 latency_ms=1_870,
                 days_ago=2,
                 hours_ago=4,
+            ),
+            # Appended, not inserted: an entry's id is derived from its position in this
+            # tuple, so a call placed in the middle would be re-keyed as a new row and
+            # leave the old one behind. Today's call is what ``GET /ai/quota`` reads as
+            # spend — the budget is a calendar day, so a persona whose calls are all
+            # older than midnight answers that screen with a zero it cannot explain.
+            _usage(
+                "explain_answer",
+                "mini",
+                input_tokens=260,
+                output_tokens=380,
+                latency_ms=1_100,
+                hours_ago=0,
             ),
         ),
     ),
@@ -368,7 +484,9 @@ PERSONAS: tuple[SeedPersona, ...] = (
 __all__ = [
     "PERSONAS",
     "SEED_NAMESPACE",
+    "SeedActivity",
     "SeedAiCall",
     "SeedDevice",
     "SeedPersona",
+    "SeedThread",
 ]

@@ -136,6 +136,24 @@ class Settings(BaseSettings):
     #: progress budget rather than the tighter write one: a learner working a queue of
     #: twenty cards should not share the allowance with their progress polling.
     rate_limit_review_requests_per_minute: int = 240
+    #: The tutor is the one surface where a request can trigger an upstream, billable call,
+    #: so it gets its own, tighter allowance. A runaway client looping the chat burns money
+    #: rather than merely bandwidth, which is why this is the tightest scope in the app.
+    rate_limit_ai_requests_per_minute: int = 30
+    #: The gamification screens are authenticated reads with two rare writes (claim, freeze),
+    #: so the scope mirrors the progress budget: a client refreshing a badge list should not
+    #: share the allowance with the progress summary or the quiz answer burst.
+    rate_limit_gamification_requests_per_minute: int = 240
+    #: The admin surface is authenticated, low-traffic and write-heavy (an editor saving a
+    #: lesson, reordering questions), so it gets a modest budget of its own. It is deliberately
+    #: *not* the generous public allowance: this is staff tooling, not a learner-facing path, and
+    #: a runaway script here edits the catalogue rather than merely reading it.
+    rate_limit_admin_requests_per_minute: int = 120
+    #: The media upload surface. Separate from the admin scope because it is a learner path
+    #: (avatars, pronunciation clips) rather than staff tooling, and because the presign and
+    #: confirm calls bracket a real upload — a client retrying a flaky PUT should not be able
+    #: to spend an editor's budget, nor an editor a learner's.
+    rate_limit_media_requests_per_minute: int = 120
     max_request_body_bytes: int = 1_048_576
     #: How long a client-supplied ``Idempotency-Key`` is honoured. 24h covers a client
     #: retrying after a night of no signal, which is the realistic mobile failure.
@@ -157,6 +175,13 @@ class Settings(BaseSettings):
     #: same-origin at ``/media``. This is content baked with the release, not user
     #: uploads — those go through the object-storage port above.
     media_root: str = "./media"
+    #: Ceilings applied when an upload is confirmed, measured from the stored object rather
+    #: than trusted from a request header. Images and audio are separate because the two are
+    #: genuinely different sizes: a 5 MiB avatar is already generous, while a 5 MiB
+    #: pronunciation clip would cut off mid-sentence. These never meet the request-body
+    #: ceiling above — the bytes go straight to storage, not through the API process.
+    media_max_image_bytes: int = 5_242_880
+    media_max_audio_bytes: int = 10_485_760
 
     # --------------------------------------------------------- push (FCM)
     fcm_credentials_json: str | None = None
@@ -183,6 +208,14 @@ class Settings(BaseSettings):
     heart_regen_seconds: int = 1800
     premium_unlimited_hearts: bool = True
     daily_goal_default: int = 30
+    #: Free streak freezes a learner may hold. Granted when their stats row is first built.
+    max_streak_freezes: int = 2
+    #: The simple premium gate for this phase. Real subscriptions arrive in a later phase;
+    #: until then every learner is treated as non-premium, so ``POST /streak/freeze`` answers
+    #: ``PREMIUM_REQUIRED`` with the purchase link below. Flip this on to exercise the paid
+    #: path — there is no per-account plan yet, on purpose.
+    premium_enabled: bool = False
+    premium_purchase_url: str = "https://natiqo.app/premium"
 
     # ----------------------------------------------------- observability
     log_level: str = "INFO"

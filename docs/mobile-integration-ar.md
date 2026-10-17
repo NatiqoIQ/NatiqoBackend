@@ -11,8 +11,7 @@
 > والـquiz **ثلاثة** (بدأ / استئناف / أمر موحَّد عبر `op`)، والتقدّم **قراءتان** (`/progress` +
 > `/progress/unlocks`). المراجعة المتباعدة (SRS) لم تبنَ بعد. ومسار الشرح المستقل
 > `GET /content/questions/{id}/explanation` **حُذف** — صار الشرح يُعاد مع إجابة الـquiz.
-> للمعمارية التفصيلية راجع [`backend-system-ar.md`](backend-system-ar.md) و
-> [`mobile-app-architecture.md`](mobile-app-architecture.md).
+> للمعمارية التفصيلية راجع [`mobile-app-architecture.md`](mobile-app-architecture.md).
 
 ---
 

@@ -26,14 +26,23 @@ from types import ModuleType
 #: Ordering matters: ``users`` is listed before ``ai`` because ``ai_usage_records``
 #: carries a foreign key to ``users.id``, and metadata resolves foreign keys in
 #: declaration order when generating DDL. ``content`` is self-contained (its foreign keys
-#: point only at its own tables, in parent-to-child order). ``quiz`` is last because its
-#: three tables point at both ``users`` and ``content``, so both must be registered first.
+#: point only at its own tables, in parent-to-child order). ``quiz`` comes after ``content``
+#: because its three tables point at both ``users`` and ``content``. ``gamification`` sits
+#: after ``users`` for the same reason ``ai`` does: its tables point only at ``users`` (and
+#: at its own ``achievements`` table, in parent-to-child order).
 MODEL_MODULES: tuple[str, ...] = (
     "app.modules.users.infrastructure.models",
     "app.modules.ai.infrastructure.models",
     "app.modules.content.infrastructure.models",
     "app.modules.quiz.infrastructure.models",
     "app.modules.quiz.infrastructure.review_models",
+    "app.modules.gamification.infrastructure.models",
+    #: ``media`` before ``admin``: its ``media_assets`` table points at ``users.id``, which
+    #: is registered above, and it owns no other table.
+    "app.modules.media.infrastructure.models",
+    #: ``admin`` last: its ``audit_logs`` table points at ``users.id``, which is registered
+    #: above, and it owns no other table.
+    "app.modules.admin.infrastructure.models",
 )
 
 

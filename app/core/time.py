@@ -13,6 +13,7 @@ Two rules are enforced across the whole backend:
 from __future__ import annotations
 
 from datetime import UTC, date, datetime, time, timedelta
+from itertools import pairwise
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 DEFAULT_TIMEZONE = "Asia/Baghdad"
@@ -96,6 +97,39 @@ def local_day_bounds(
 def days_between(earlier: date, later: date) -> int:
     """Whole calendar days from ``earlier`` to ``later`` (may be negative)."""
     return (later - earlier).days
+
+
+def streak_runs(days: list[date], *, today: date) -> tuple[int, int]:
+    """Current and longest run of consecutive days, read from a set of calendar days.
+
+    ``days`` need not be sorted or unique — both are normalised here, so a caller can hand
+    over the raw local dates of a learner's sessions. The current run only counts if it
+    reaches today or yesterday (a gap of a day ends a streak rather than pausing it); the
+    longest run is over all history. Every streak in the app is measured through this one
+    function, so ``/progress`` and ``/gamification`` cannot disagree about what a streak is.
+    """
+    ordered = sorted(set(days))
+    if not ordered:
+        return 0, 0
+
+    longest = run = 1
+    for earlier, later in pairwise(ordered):
+        if (later - earlier).days == 1:
+            run += 1
+            longest = max(longest, run)
+        else:
+            run = 1
+
+    descending = list(reversed(ordered))
+    current = 0
+    if descending[0] == today or descending[0] == today - timedelta(days=1):
+        current = 1
+        for later, earlier in pairwise(descending):
+            if (later - earlier).days == 1:
+                current += 1
+            else:
+                break
+    return current, longest
 
 
 def add_days(moment: datetime, days: float) -> datetime:

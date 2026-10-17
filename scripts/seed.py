@@ -17,6 +17,13 @@ ownership check. A seeded account carries a deterministic provider identity
 (:func:`seed_subject`), and that is what marks it as the seeder's; an account holding a
 demo address without that identity is skipped without a single write.
 
+That last case has one deliberate exit: ``--adopt``. It takes over an account that holds
+a persona's address but has **no provider identity at all** — the shape an older run of
+this seeder left behind — and it refuses the same account the moment any provider has
+been used to sign in to it. Adoption writes one identity row and then treats the account
+exactly like one this seeder had created, so its history is filled in around whatever is
+already there and nothing is deleted.
+
 **A production environment is refused by default.** Seeding a live database would
 overwrite real profile and settings rows with fictional data, so the guard is on unless
 the operator passes ``--allow-production``. ``--dry-run`` is exempt: it only reads.
@@ -33,7 +40,7 @@ import asyncio
 import sys
 import uuid
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from datetime import timedelta
 from enum import StrEnum
 
@@ -44,15 +51,21 @@ from app.core.database import dispose_engine, make_uow
 from app.core.errors import AppError
 from app.core.logging import get_logger
 from app.core.time import utc_now
-from app.core.types import CEFRLevel, UserId, UserStatus
+from app.core.types import CEFRLevel, UserId, UserStatus, new_id
 from app.core.uow import UnitOfWorkProtocol
 from app.modules.ai.domain.usage import AiUsageEntry
 from app.modules.users.application.auth_service import AuthService
 from app.modules.users.application.dto import DeviceContext, SocialLoginCommand
-from app.modules.users.domain.entities import UserDevice, UserProfile, UserSettings
+from app.modules.users.domain.entities import (
+    ExternalIdentity,
+    UserDevice,
+    UserProfile,
+    UserSettings,
+)
 from app.modules.users.domain.identity import IdentityProvider, VerifiedIdentity
 from app.modules.users.domain.policy import normalise_email
 from app.platform.ai.providers import estimate_cost
+from scripts.seed_activity import ActivityOutcome, seed_activity
 from scripts.seed_personas import PERSONAS, SEED_NAMESPACE, SeedDevice, SeedPersona
 
 logger = get_logger("scripts.seed")
@@ -137,10 +150,18 @@ class PersonaOutcome:
     devices_added: int = 0
     sessions_issued: int = 0
     ai_usage_added: int = 0
+    #: The learning history this persona's plan produced. Empty for a persona that
+    #: declares none, which is every account but the admin today.
+    activity: ActivityOutcome = field(default_factory=ActivityOutcome)
 
     @property
     def changed(self) -> bool:
-        return bool(self.devices_added or self.sessions_issued or self.ai_usage_added)
+        return bool(
+            self.devices_added
+            or self.sessions_issued
+            or self.ai_usage_added
+            or self.activity.changed
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -163,6 +184,10 @@ class SeedReport:
     def ai_usage_added(self) -> int:
         return sum(outcome.ai_usage_added for outcome in self.outcomes)
 
+    @property
+    def activity_rows(self) -> int:
+        return sum(outcome.activity.rows for outcome in self.outcomes)
+
     def format(self) -> str:
         """Render the report for a human reading a terminal."""
         if not self.outcomes:
@@ -171,14 +196,14 @@ class SeedReport:
         verb = "would " if self.dry_run else ""
         width = max(len(outcome.key) for outcome in self.outcomes)
         lines = [
-            f"{'persona'.ljust(width)}  {'action':<10}  devices  sessions  ai-usage",
+            f"{'persona'.ljust(width)}  {'action':<10}  devices  sessions  ai-usage  activity",
         ]
         for outcome in self.outcomes:
             lines.append(
                 f"{outcome.key.ljust(width)}  "
                 f"{(verb + outcome.action.value):<10}  "
                 f"{outcome.devices_added:>7}  {outcome.sessions_issued:>9}  "
-                f"{outcome.ai_usage_added:>9}"
+                f"{outcome.ai_usage_added:>9}  {outcome.activity.rows:>8}"
             )
 
         lines.append("")
@@ -187,11 +212,16 @@ class SeedReport:
             f"{self.count(SeedAction.ENRICH)} {verb}enrich, "
             f"{self.count(SeedAction.SKIP)} skipped  "
             f"({verb}add {self.devices_added} devices, "
-            f"{self.sessions_issued} sessions, {self.ai_usage_added} AI usage rows)"
+            f"{self.sessions_issued} sessions, {self.ai_usage_added} AI usage rows, "
+            f"{self.activity_rows} activity rows)"
         )
         for outcome in self.outcomes:
             if outcome.reason:
                 lines.append(f"  {outcome.key}: {outcome.reason}")
+            if outcome.activity.changed:
+                # "activity 96" says how much was written; the breakdown says what, which
+                # is the part an operator actually reads before pointing a client at it.
+                lines.append(f"  {outcome.key}: {outcome.activity.format()}")
 
         if not self.dry_run and not any(outcome.changed for outcome in self.outcomes):
             lines.append("  Nothing changed: this environment was already seeded.")
@@ -253,18 +283,21 @@ async def run_seed(
     allow_production: bool = False,
     only: Sequence[str] | None = None,
     dry_run: bool = False,
+    adopt: bool = False,
 ) -> SeedReport:
     """Seed ``uow`` and return what changed.
 
     The unit of work is passed in already open, because the auth service commits on it
-    and the caller owns its lifetime.
+    and the caller owns its lifetime. ``adopt`` opts in to taking over an account that
+    holds a persona's address and has never been signed in with a provider; see
+    :func:`_adopt_or_skip`.
     """
     personas = select_personas(only)
     _assert_writable(settings, allow_production=allow_production, dry_run=dry_run)
 
     outcomes: list[PersonaOutcome] = []
     for persona in personas:
-        outcomes.append(await _seed_one(uow, settings, persona, dry_run=dry_run))
+        outcomes.append(await _seed_one(uow, settings, persona, dry_run=dry_run, adopt=adopt))
         if not dry_run:
             # One commit per persona. A failure at persona four leaves three complete
             # accounts and one untouched, and the next run resumes from there.
@@ -279,6 +312,8 @@ async def run_seed(
         enrich=report.count(SeedAction.ENRICH),
         skip=report.count(SeedAction.SKIP),
         ai_usage_added=report.ai_usage_added,
+        activity_rows=report.activity_rows,
+        adopt=adopt,
     )
     return report
 
@@ -289,13 +324,15 @@ async def _seed_one(
     persona: SeedPersona,
     *,
     dry_run: bool,
+    adopt: bool = False,
 ) -> PersonaOutcome:
     """Decide what to do with one persona, and do it unless this is a dry run.
 
     Ownership is carried by the identity row, not by a shared credential: an account
     this seeder created is the one whose ``(provider, subject)`` pair is
     :func:`seed_subject`. An account that merely holds a demo address is somebody
-    else's and is left entirely alone.
+    else's and is left entirely alone — unless the operator asks for it explicitly and
+    nothing about the account says a person has used it; see :func:`_adopt_or_skip`.
     """
     email = normalise_email(persona.email)
     identity = await uow.identities.find(str(SEED_IDENTITY_PROVIDER), seed_subject(persona.key))
@@ -303,16 +340,18 @@ async def _seed_one(
 
     if existing is None:
         # No seeded identity behind this persona. If the address is taken anyway, it
-        # belongs to a real person or another environment, and this script has no
-        # business editing it — nor a demo password to prove otherwise any more.
+        # belongs to a real person, another environment, or an older run of this seeder
+        # — and only the operator can tell which, so ``--adopt`` is what decides.
         collision = await uow.users.get_by_email(email)
         if collision is not None:
-            return PersonaOutcome(
-                key=persona.key,
-                email=email,
-                action=SeedAction.SKIP,
-                user_id=collision.id,
-                reason="address already belongs to an unseeded account; left untouched",
+            return await _adopt_or_skip(
+                uow,
+                settings,
+                persona,
+                email,
+                collision.id,
+                adopt=adopt,
+                dry_run=dry_run,
             )
 
     if dry_run:
@@ -324,16 +363,86 @@ async def _seed_one(
                 devices_added=sum(1 for d in persona.devices if d.creates_device_row),
                 sessions_issued=len(persona.devices),
                 ai_usage_added=len(persona.ai_calls),
+                # Nothing can exist for an account that does not exist yet, so this is the
+                # plan's full size — and the run it previews writes exactly that.
+                activity=await seed_activity(uow, settings, persona, None, dry_run=True),
             )
-        return await _predict_enrichment(uow, persona, existing.id)
+        return await _predict_enrichment(uow, settings, persona, existing.id)
 
     if existing is None:
         return await _create(uow, settings, persona, email)
     return await _enrich(uow, settings, persona, existing.id)
 
 
+async def _adopt_or_skip(
+    uow: UnitOfWorkProtocol,
+    settings: Settings,
+    persona: SeedPersona,
+    email: str,
+    user_id: UserId,
+    *,
+    adopt: bool,
+    dry_run: bool,
+) -> PersonaOutcome:
+    """Take over an existing account, or leave it alone and say why.
+
+    The gate is the identity table. Every account this application creates is created by
+    a provider sign-in, so an account with *no* identity row has never been signed in to
+    by anybody — it is the shape an older, password-based run of this seeder left behind.
+    That is the account ``--adopt`` is for, and the moment a Google or Apple identity
+    exists the account is refused however the flag was set: a real learner's history must
+    not be handed to whoever reads the demo instructions next.
+
+    Adoption is one write — the seeder's own ``seed:<persona>`` identity — after which the
+    account is indistinguishable from one this seeder created, so the rest of the run
+    takes the enrichment path and fills in around whatever is already stored.
+    """
+    held = await uow.identities.list_for_user(user_id)
+    if held:
+        return PersonaOutcome(
+            key=persona.key,
+            email=email,
+            action=SeedAction.SKIP,
+            user_id=user_id,
+            reason=(
+                "address belongs to an account that has signed in with "
+                f"{', '.join(sorted({identity.provider for identity in held}))}; "
+                "left untouched even with --adopt"
+            ),
+        )
+    if not adopt:
+        return PersonaOutcome(
+            key=persona.key,
+            email=email,
+            action=SeedAction.SKIP,
+            user_id=user_id,
+            reason=(
+                "address already belongs to an unseeded account; left untouched. "
+                "Re-run with --adopt if it is a demo account this seeder should take over."
+            ),
+        )
+    if dry_run:
+        predicted = await _predict_enrichment(uow, settings, persona, user_id)
+        return replace(predicted, reason="would adopt this account and take it over")
+
+    await uow.identities.add(
+        ExternalIdentity(
+            id=new_id(),
+            user_id=user_id,
+            provider=str(SEED_IDENTITY_PROVIDER),
+            subject=seed_subject(persona.key),
+            email=email,
+            email_verified=persona.email_verified,
+            display_name=persona.display_name,
+        )
+    )
+    # Deliberately enrichment, not creation: the account already exists, so there is
+    # nothing to register and no reason to mint a session the operator never asked for.
+    return await _enrich(uow, settings, persona, user_id)
+
+
 async def _predict_enrichment(
-    uow: UnitOfWorkProtocol, persona: SeedPersona, user_id: UserId
+    uow: UnitOfWorkProtocol, settings: Settings, persona: SeedPersona, user_id: UserId
 ) -> PersonaOutcome:
     """Report what :func:`_enrich` *would* change, without changing it.
 
@@ -369,6 +478,7 @@ async def _predict_enrichment(
         # Deliberately omitted: enrichment never mints a session, so the honest number
         # is zero and the default already is.
         ai_usage_added=added_usage,
+        activity=await seed_activity(uow, settings, persona, user_id, dry_run=True),
     )
 
 
@@ -435,6 +545,7 @@ async def _create(
     user_id = result.user_id
     await _write_account(uow, settings, persona, user_id)
     sessions = await _mint_extra_sessions(uow, settings, persona, email)
+    activity = await seed_activity(uow, settings, persona, user_id, dry_run=False)
     return PersonaOutcome(
         key=persona.key,
         email=email,
@@ -447,6 +558,7 @@ async def _create(
         devices_added=sum(1 for d in persona.devices if d.creates_device_row),
         sessions_issued=1 + sessions,
         ai_usage_added=await _write_usage(uow, persona, user_id),
+        activity=activity,
     )
 
 
@@ -466,6 +578,7 @@ async def _enrich(
     await _write_account(uow, settings, persona, user_id)
     await _write_devices(uow, persona, user_id)
     after = await _device_ids(uow, user_id)
+    activity = await seed_activity(uow, settings, persona, user_id, dry_run=False)
     return PersonaOutcome(
         key=persona.key,
         email=normalise_email(persona.email),
@@ -476,6 +589,7 @@ async def _enrich(
         # progress that did not happen.
         devices_added=len(after - before),
         ai_usage_added=await _write_usage(uow, persona, user_id),
+        activity=activity,
     )
 
 
@@ -650,6 +764,15 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Report what would change without writing anything.",
     )
+    parser.add_argument(
+        "--adopt",
+        action="store_true",
+        help=(
+            "Take over an account that holds a persona's address but has no provider "
+            "identity, instead of skipping it. An account that has ever been signed in "
+            "with Google or Apple is still refused."
+        ),
+    )
     return parser
 
 
@@ -684,21 +807,28 @@ async def _run(args: argparse.Namespace) -> int:
     try:
         if args.dry_run:
             async with uow:
-                report = await run_seed(uow, settings, only=args.only, dry_run=True)
+                report = await run_seed(
+                    uow, settings, only=args.only, dry_run=True, adopt=args.adopt
+                )
             print(report.format())
             return 0
 
         # The confirmation needs a plan and a plan needs a dry run. Two passes over the
-        # same code path is the price of not writing rows before the operator agrees.
+        # same code path is the price of not writing rows before the operator agrees —
+        # and the same ``adopt`` on both, or the preview would describe another run.
         async with uow:
-            preview = await run_seed(uow, settings, only=args.only, dry_run=True)
+            preview = await run_seed(uow, settings, only=args.only, dry_run=True, adopt=args.adopt)
         if not _confirm(preview.format(), assume_yes=args.yes):
             print("Nothing written.", file=sys.stderr)
             return 1
 
         async with uow:
             report = await run_seed(
-                uow, settings, only=args.only, allow_production=args.allow_production
+                uow,
+                settings,
+                only=args.only,
+                allow_production=args.allow_production,
+                adopt=args.adopt,
             )
         print(report.format())
         return 0
