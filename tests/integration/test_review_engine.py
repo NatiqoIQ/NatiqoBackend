@@ -28,7 +28,7 @@ from app.core.config import get_settings
 from app.core.database import create_all, dispose_engine, get_session_factory
 from app.core.errors import ErrorCode, NotFoundError
 from app.core.registry import import_all_models
-from app.core.types import ContentState, UserId
+from app.core.types import ContentState, QuestionKind, SkillKind, UserId
 from app.core.uow_sqlalchemy import SqlAlchemyUnitOfWork
 from app.modules.content.infrastructure.models import (
     LessonModel,
@@ -226,6 +226,68 @@ class TestDueQueue:
         assert card.repetitions == 2
         assert card.interval_days == 6
         assert card.state == "review"
+
+    async def test_the_two_column_kinds_are_not_served_in_their_authored_order(
+        self, service: ReviewService, session: AsyncSession, uow: SqlAlchemyUnitOfWork
+    ) -> None:
+        """The queue is a read like any other, so it must not hand over a shape that *is* the key.
+
+        An ordering question's ``choices`` are its answer in sequence, and a matching question's
+        prompts and bank line up with each other in the order its pairs were authored. Both are
+        reshuffled here instead — seeded by the card, because a review has no session to derive
+        one from — while every other kind is served exactly as stored.
+        """
+        user = _user_row(session)
+        lesson, _ = _published_lesson(session)
+        ordering = QuestionModel(
+            id=uuid.uuid4(),
+            lesson_id=lesson.id,
+            position=2,
+            kind=QuestionKind.ORDERING.value,
+            skill=SkillKind.GRAMMAR.value,
+            prompt="Put the greeting in order.",
+            choices=["Hello!", "How are you?", "Goodbye!"],
+            accepted_answers=[],
+            correct_index=None,
+            explanation="A greeting opens and closes.",
+            points=1,
+        )
+        matching = QuestionModel(
+            id=uuid.uuid4(),
+            lesson_id=lesson.id,
+            position=3,
+            kind=QuestionKind.MATCHING.value,
+            skill=SkillKind.VOCABULARY.value,
+            prompt="Match each animal to its Arabic word.",
+            choices=["kelb", "qitt", "far"],
+            accepted_answers=["Dog => kelb", "Cat => qitt"],
+            correct_index=None,
+            explanation="'Kelb' is a dog.",
+            points=1,
+        )
+        session.add_all([ordering, matching])
+        await session.flush()
+        due_at = _now() - timedelta(days=1)
+        await _card(uow, UserId(user.id), ordering.id, due_at=due_at)
+        await _card(uow, UserId(user.id), matching.id, due_at=due_at)
+
+        page = await service.due_cards(UserId(user.id), limit=20)
+        by_id = {card.question.id: card.question for card in page.cards}
+
+        sequence = by_id[ordering.id].choices
+        assert sorted(sequence) == ["Goodbye!", "Hello!", "How are you?"]
+        assert sequence != ("Hello!", "How are you?", "Goodbye!")
+
+        served = by_id[matching.id]
+        key = {"Dog": "kelb", "Cat": "qitt"}
+        assert served.prompts == ("Dog", "Cat")
+        assert sorted(served.choices) == ["far", "kelb", "qitt"]
+        assert all(
+            served.choices[position] != key[prompt]
+            for position, prompt in enumerate(served.prompts)
+        )
+        for leaked in ("correct_index", "accepted_answers", "explanation"):
+            assert not hasattr(served, leaked), f"{leaked} would hand out the pairing"
 
     async def test_a_card_whose_lesson_slipped_back_to_draft_is_dropped(
         self, service: ReviewService, session: AsyncSession, uow: SqlAlchemyUnitOfWork

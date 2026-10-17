@@ -254,8 +254,8 @@ Level (A1..C2) → Unit → Lesson → Question
 - **الظهور يورَث للأسفل:** السؤال مرئي بالضبط عندما يكون درسه منشورًا (لا `state` للسؤال).
 - **دورة الحالة:** `draft → review → approved → published → archived` مع انتقالات محكومة
   ([`types.py`](../app/core/types.py))، ولا يُنشر ابن قبل أبيه.
-- **أنواع الأسئلة:** `multiple_choice`, `true_false`, `fill_blank` (تُضاف أنواع جديدة فقط
-  بُعد أن يقدّر المحرّك تصحيحها).
+- **أنواع الأسئلة:** `multiple_choice`, `multi_select`, `true_false`, `fill_blank`,
+  `word_bank`, `ordering`, `matching` (تُضاف أنواع جديدة فقط بُعد أن يقدّر المحرّك تصحيحها).
 
 ### 8.2 مفتاح الإجابة محجوب عمدًا
 

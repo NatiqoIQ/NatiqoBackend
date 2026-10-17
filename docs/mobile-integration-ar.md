@@ -570,17 +570,22 @@ Bearer. `204` (بلا جسم).
   "questions": [
     { "id": "...", "kind": "multiple_choice", "skill": "vocabulary",
       "prompt": "Choose the correct word.", "points": 1,
-      "choices": ["greeting", "greater", "grounded"],
+      "choices": ["greeting", "greater", "grounded"], "prompts": [],
       "imageUrl": "/media/images/<question-id>.jpg",
       "audioUrl": "/media/audio/<question-id>.mp3" },
     { "id": "...", "kind": "fill_blank", "skill": "grammar",
-      "prompt": "She ___ from Baghdad.", "points": 2, "choices": [],
+      "prompt": "She ___ from Baghdad.", "points": 2, "choices": [], "prompts": [],
+      "imageUrl": null, "audioUrl": null },
+    { "id": "...", "kind": "matching", "skill": "vocabulary",
+      "prompt": "Match each number to the word for it.", "points": 1,
+      "choices": [], "prompts": ["1", "2", "3", "4"],
       "imageUrl": null, "audioUrl": null }
   ]
 }
 ```
 
-`kind`: `multiple_choice` · `true_false` · `fill_blank`
+`kind`: `multiple_choice` · `multi_select` · `true_false` · `fill_blank` · `word_bank` · `ordering` · `matching`
+`prompts`: العناصر المجرّدة المطلوب توصيلها — تُملأ لسؤال `matching` وحده، و`[]` لكل نوع آخر.
 `skill`: `vocabulary` · `grammar` · `listening` · `reading` · `writing` · `pronunciation`
 
 > `imageUrl` و`audioUrl` وسيطتان اختياريتان تُعرضان مع السؤال قبل الإجابة (توضيح/لفظ).
@@ -596,6 +601,16 @@ Bearer. `204` (بلا جسم).
 > على الكتالوج تعرض الأسئلة فقط، **ولا تستطيع تحديد الصح والخطأ**، ولا حفظ النتيجة. للتصحيح
 > والشرح استخدم محرّك الـquiz
 > (انظر [`mobile-app-architecture.md`](mobile-app-architecture.md) §6.3).
+
+> ⚠️ **`ordering` لا يعرض `choices` في الكتالوج.** ترتيب `choices` المخزَّن هو الترتيب الصحيح
+> نفسه، فإظهاره على سطح مشترك ومُخزَّن مؤقتًا يسرّب الجواب. لذلك يعيد الكتالوج `choices: []`
+> لسؤال `ordering`؛ القائمة القابلة للسحب (بترتيب مبعثر لكل محاولة) تأتي فقط من جلسة الـquiz.
+
+> ⚠️ **`matching` يعرض `prompts` ولا يعرض `choices` في الكتالوج.** العناصر المطلوب توصيلها
+> (`prompts`) عامة — معرفة أن `Dog` تُوصَل بشيء لا تقول بشيء — بينما بنك الخيارات يُقرأ
+> جنبًا إلى جنب معها، وترتيبه المخزَّن هو ترتيب الأزواج نفسه، فإظهاره على سطح مشترك ومُخزَّن
+> مؤقتًا يسرّب التوصيل. لذلك يعيد الكتالوج `choices: []` لسؤال `matching`، ويأتي البنك
+> (مبعثرًا بحيث لا يقف خيار أمام ما يجيبه) من جلسة الـquiz فقط.
 
 ### مسار الشرح المستقل — **حُذف**
 

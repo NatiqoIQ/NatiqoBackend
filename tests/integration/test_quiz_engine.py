@@ -729,6 +729,332 @@ class TestRetryingAWrongAnswer:
         assert completed.session.correct_count == 3
 
 
+# ================================================================ multi-select
+def _multi_select_row(lesson_id: uuid.UUID, position: int = 4) -> QuestionModel:
+    return QuestionModel(
+        id=uuid.uuid4(),
+        lesson_id=lesson_id,
+        position=position,
+        kind="multi_select",
+        skill="vocabulary",
+        prompt="Which of these can greet someone?",
+        choices=["Hello", "Good morning", "Goodbye", "Thank you"],
+        accepted_answers=["Hello", "Good morning"],
+        correct_index=None,
+        explanation="'Hello' and 'good morning' are greetings.",
+        points=2,
+    )
+
+
+class TestMultiSelectAnswer:
+    """A multi-select is graded as a set, and the key never reaches the client."""
+
+    async def test_the_exact_set_scores_full_points(
+        self, service: QuizService, session: AsyncSession
+    ) -> None:
+        user_id, lesson_id, _ = await _seed(session)
+        question = _multi_select_row(lesson_id)
+        session.add(question)
+        await session.flush()
+        session_id = await _start(service, user_id, lesson_id)
+
+        graded = await service.submit_answer(
+            user_id,
+            session_id,
+            question_id=question.id,
+            answer=SubmittedAnswer(choices=("Hello", "Good morning")),
+        )
+
+        assert graded.is_correct is True
+        assert graded.points_awarded == 2
+        # Reported in the order the options were served, so the string matches what the
+        # learner was looking at rather than the stored order behind the reshuffle.
+        reported = graded.correct_answer["choices"]
+        assert set(reported.split(", ")) == {"Hello", "Good morning"}
+
+    async def test_the_selection_order_does_not_matter(
+        self, service: QuizService, session: AsyncSession
+    ) -> None:
+        user_id, lesson_id, _ = await _seed(session)
+        question = _multi_select_row(lesson_id)
+        session.add(question)
+        await session.flush()
+        session_id = await _start(service, user_id, lesson_id)
+
+        graded = await service.submit_answer(
+            user_id,
+            session_id,
+            question_id=question.id,
+            answer=SubmittedAnswer(choices=("Good morning", "Hello")),
+        )
+
+        assert graded.is_correct is True
+
+    async def test_a_subset_is_wrong_and_the_retry_is_worth_half(
+        self, service: QuizService, session: AsyncSession
+    ) -> None:
+        user_id, lesson_id, _ = await _seed(session)
+        question = _multi_select_row(lesson_id)
+        session.add(question)
+        await session.flush()
+        session_id = await _start(service, user_id, lesson_id)
+
+        wrong = await service.submit_answer(
+            user_id,
+            session_id,
+            question_id=question.id,
+            answer=SubmittedAnswer(choices=("Hello",)),
+        )
+        right = await service.submit_answer(
+            user_id,
+            session_id,
+            question_id=question.id,
+            answer=SubmittedAnswer(choices=("Hello", "Good morning")),
+        )
+
+        assert wrong.is_correct is False
+        assert wrong.points_awarded == 0
+        assert right.is_correct is True
+        assert right.points_awarded == 1  # half of two points on the second attempt
+
+    async def test_the_pre_attempt_payload_carries_no_key(
+        self, service: QuizService, session: AsyncSession
+    ) -> None:
+        user_id, lesson_id, _ = await _seed(session)
+        question = _multi_select_row(lesson_id)
+        session.add(question)
+        await session.flush()
+
+        detail = await service.start_session(user_id, mode=SessionMode.LESSON, lesson_id=lesson_id)
+        served = next(q for q in detail.questions if q.id == question.id)
+
+        assert served.kind == "multi_select"
+        assert set(served.choices) == {"Hello", "Good morning", "Goodbye", "Thank you"}
+        for leaked in ("correct_index", "accepted_answers", "explanation"):
+            assert not hasattr(served, leaked)
+
+
+def _word_bank_row(lesson_id: uuid.UUID, position: int = 5) -> QuestionModel:
+    return QuestionModel(
+        id=uuid.uuid4(),
+        lesson_id=lesson_id,
+        position=position,
+        kind="word_bank",
+        skill="grammar",
+        prompt="Complete the sentence: 'Good ___, how are you?'",
+        choices=["morning", "night", "afternoon", "teacher"],
+        accepted_answers=["Morning"],
+        correct_index=None,
+        explanation="'Good morning' is the greeting that fits 'how are you?'.",
+        points=2,
+    )
+
+
+class TestWordBankAnswer:
+    """A word-bank item is free text with a tile bank, and the bank is never the key."""
+
+    async def test_the_assembled_word_scores_full_points(
+        self, service: QuizService, session: AsyncSession
+    ) -> None:
+        user_id, lesson_id, _ = await _seed(session)
+        question = _word_bank_row(lesson_id)
+        session.add(question)
+        await session.flush()
+        session_id = await _start(service, user_id, lesson_id)
+
+        graded = await service.submit_answer(
+            user_id,
+            session_id,
+            question_id=question.id,
+            answer=SubmittedAnswer(text="morning"),
+        )
+
+        assert graded.is_correct is True
+        assert graded.points_awarded == 2
+        # The reported key is the stored (folded) accepted answer, like fill_blank.
+        assert graded.correct_answer == {"text": "morning"}
+
+    async def test_a_distractor_tile_is_wrong_and_the_retry_is_worth_half(
+        self, service: QuizService, session: AsyncSession
+    ) -> None:
+        user_id, lesson_id, _ = await _seed(session)
+        question = _word_bank_row(lesson_id)
+        session.add(question)
+        await session.flush()
+        session_id = await _start(service, user_id, lesson_id)
+
+        wrong = await service.submit_answer(
+            user_id,
+            session_id,
+            question_id=question.id,
+            answer=SubmittedAnswer(text="night"),
+        )
+        right = await service.submit_answer(
+            user_id,
+            session_id,
+            question_id=question.id,
+            answer=SubmittedAnswer(text="Morning"),
+        )
+
+        assert wrong.is_correct is False
+        assert wrong.points_awarded == 0
+        assert right.is_correct is True
+        assert right.points_awarded == 1  # half of two points on the second attempt
+
+    async def test_the_pre_attempt_payload_serves_shuffled_tiles_and_no_key(
+        self, service: QuizService, session: AsyncSession
+    ) -> None:
+        """The bank is offered to assemble from; the key stays on the server until answered."""
+        user_id, lesson_id, _ = await _seed(session)
+        question = _word_bank_row(lesson_id)
+        session.add(question)
+        await session.flush()
+
+        detail = await service.start_session(user_id, mode=SessionMode.LESSON, lesson_id=lesson_id)
+        served = next(q for q in detail.questions if q.id == question.id)
+
+        assert served.kind == "word_bank"
+        assert set(served.choices) == {"morning", "night", "afternoon", "teacher"}
+        for leaked in ("correct_index", "accepted_answers", "explanation"):
+            assert not hasattr(served, leaked)
+
+    async def test_the_bank_is_reoffered_in_the_same_order_on_resume(
+        self, service: QuizService, session: AsyncSession
+    ) -> None:
+        """A learner who reloads sees the tiles in the layout they were already working with."""
+        user_id, lesson_id, _ = await _seed(session)
+        question = _word_bank_row(lesson_id)
+        session.add(question)
+        await session.flush()
+        session_id = await _start(service, user_id, lesson_id)
+
+        first = await service.resume_session(user_id, session_id)
+        again = await service.resume_session(user_id, session_id)
+        served_first = next(q for q in first.questions if q.id == question.id)
+        served_again = next(q for q in again.questions if q.id == question.id)
+
+        assert served_first.choices == served_again.choices
+
+
+def _ordering_row(lesson_id: uuid.UUID, position: int = 6) -> QuestionModel:
+    return QuestionModel(
+        id=uuid.uuid4(),
+        lesson_id=lesson_id,
+        position=position,
+        kind="ordering",
+        skill="reading",
+        prompt="Put the lines of the greeting in order.",
+        choices=["Hello!", "How are you?", "I am fine.", "Goodbye!"],
+        accepted_answers=[],
+        correct_index=None,
+        explanation="A greeting opens, asks, answers, then closes.",
+        points=2,
+    )
+
+
+class TestOrderingAnswer:
+    """An ordering answer is graded against the authored sequence, all or nothing."""
+
+    async def test_the_authored_order_scores_full_points(
+        self, service: QuizService, session: AsyncSession
+    ) -> None:
+        user_id, lesson_id, _ = await _seed(session)
+        question = _ordering_row(lesson_id)
+        session.add(question)
+        await session.flush()
+        session_id = await _start(service, user_id, lesson_id)
+
+        graded = await service.submit_answer(
+            user_id,
+            session_id,
+            question_id=question.id,
+            answer=SubmittedAnswer(order=("Hello!", "How are you?", "I am fine.", "Goodbye!")),
+        )
+
+        assert graded.is_correct is True
+        assert graded.points_awarded == 2
+        assert graded.correct_answer == {"order": "Hello! → How are you? → I am fine. → Goodbye!"}
+
+    async def test_a_wrong_order_is_zero_and_the_retry_is_worth_half(
+        self, service: QuizService, session: AsyncSession
+    ) -> None:
+        user_id, lesson_id, _ = await _seed(session)
+        question = _ordering_row(lesson_id)
+        session.add(question)
+        await session.flush()
+        session_id = await _start(service, user_id, lesson_id)
+
+        wrong = await service.submit_answer(
+            user_id,
+            session_id,
+            question_id=question.id,
+            answer=SubmittedAnswer(order=("Hello!", "I am fine.", "How are you?", "Goodbye!")),
+        )
+        right = await service.submit_answer(
+            user_id,
+            session_id,
+            question_id=question.id,
+            answer=SubmittedAnswer(order=("Hello!", "How are you?", "I am fine.", "Goodbye!")),
+        )
+
+        assert wrong.is_correct is False
+        assert wrong.points_awarded == 0
+        assert right.is_correct is True
+        assert right.points_awarded == 1  # half of two points on the second attempt
+
+    async def test_the_served_order_never_reveals_the_authored_order(
+        self, service: QuizService, session: AsyncSession
+    ) -> None:
+        """The identity permutation is the answer, so the served order must never be it."""
+        user_id, lesson_id, _ = await _seed(session)
+        question = _ordering_row(lesson_id)
+        session.add(question)
+        await session.flush()
+
+        detail = await service.start_session(user_id, mode=SessionMode.LESSON, lesson_id=lesson_id)
+        served = next(q for q in detail.questions if q.id == question.id)
+
+        assert served.kind == "ordering"
+        assert sorted(served.choices) == sorted(question.choices)
+        assert tuple(served.choices) != tuple(question.choices)
+        for leaked in ("correct_index", "accepted_answers", "explanation"):
+            assert not hasattr(served, leaked)
+
+    async def test_an_unknown_item_is_rejected(
+        self, service: QuizService, session: AsyncSession
+    ) -> None:
+        user_id, lesson_id, _ = await _seed(session)
+        question = _ordering_row(lesson_id)
+        session.add(question)
+        await session.flush()
+        session_id = await _start(service, user_id, lesson_id)
+
+        with pytest.raises(ValidationFailed):
+            await service.submit_answer(
+                user_id,
+                session_id,
+                question_id=question.id,
+                answer=SubmittedAnswer(order=("Hello!", "How are you?", "I am fine.", "Nonsense!")),
+            )
+
+    async def test_a_length_mismatch_is_rejected(
+        self, service: QuizService, session: AsyncSession
+    ) -> None:
+        user_id, lesson_id, _ = await _seed(session)
+        question = _ordering_row(lesson_id)
+        session.add(question)
+        await session.flush()
+        session_id = await _start(service, user_id, lesson_id)
+
+        with pytest.raises(ValidationFailed):
+            await service.submit_answer(
+                user_id,
+                session_id,
+                question_id=question.id,
+                answer=SubmittedAnswer(order=("Hello!", "How are you?")),
+            )
+
+
 # =================================================================== complete
 class TestCompleteSession:
     async def test_completing_scores_the_session_and_records_progress(

@@ -431,18 +431,33 @@ Wire shapes (camelCase; field names are exact):
   "questions": [ { "id":"uuid", "position":0, "kind":"multiple_choice",
                    "skill":"vocabulary", "prompt":"…", "choices":["a","b","c"],
                    "points":1, "imageUrl":"/media/images/….jpg",
-                   "audioUrl":"/media/audio/….mp3" } ]   // ← no correctIndex / explanation
-}
+                   "audioUrl":"/media/audio/….mp3", "prompts":[] } ]
+}   // ← no correctIndex / explanation; a matching question fills "prompts" instead of
+    // leaving it empty, and its "choices" are the bank, shuffled so no option faces its
+    // own prompt. Every other kind serves "prompts": [].
 
 // POST /quiz/sessions/{id}   — one route, the verb is chosen by op
 { "op":"answer", "questionId":"uuid", "answer": { "choice":"b" } }   // or { "text":"meet" }
 // or  { "op":"complete" }        // or  { "op":"abandon" }
+// multi_select sends every chosen option:
+{ "op":"answer", "questionId":"uuid", "answer": { "choices":["a","b"] } }
+// ordering sends the items back in the order the learner arranged them:
+{ "op":"answer", "questionId":"uuid", "answer": { "order":["Hello!","How are you?","I am fine.","Goodbye!"] } }
+// matching sends every pair the learner built, as "prompt => option"; their order is irrelevant:
+{ "op":"answer", "questionId":"uuid",
+  "answer": { "matching":["Monday => 1","Tuesday => 2","Wednesday => 3"] } }
 
 // 200 (op=answer) — the result mirrors op
 { "op":"answer",
   "result": { "isCorrect":true, "correctAnswer":{"choice":"c"},      // only after answering
               "explanation":"…", "pointsAwarded":1,
               "answeredCount":1, "totalCount":6, "correctCount":1, "isComplete":false } }
+// multi_select reports the full correct set (comma-joined, in the served order):
+//   "correctAnswer": { "choices": "a, b" }
+// ordering reports the correct sequence (arrow-joined, in the authored order):
+//   "correctAnswer": { "order": "Hello! → How are you? → I am fine. → Goodbye!" }
+// matching reports the correct pairing (double arrow, semicolon-separated, sorted):
+//   "correctAnswer": { "pairs": "Monday ⇒ 1; Tuesday ⇒ 2; Wednesday ⇒ 3" }
 
 // POST /quiz/sessions/{id}  { "op":"complete" } → 200
 { "op":"complete",
@@ -457,9 +472,21 @@ Client rules:
 - **Submit answers one at a time, each as `{"op":"answer", …}` with an `Idempotency-Key`.**
   A network retry must not double-count.
 - For a choice question, send the **choice's text** (`{"choice":"b"}` also accepts the
-  zero-based index or the letter `a`–`f`); for `fill_blank`, send `{"text":"…"}` (graded
-  case- and whitespace-insensitively). Sending the wrong shape is `422`, not a silent
-  "wrong".
+  zero-based index or the letter `a`–`f`); for `fill_blank` and `word_bank`, send
+  `{"text":"…"}` (graded case- and whitespace-insensitively — a `word_bank`'s `choices`
+  are the tiles to assemble from, not options to pick, so the answer is still its text).
+  For `multi_select`, send `{"choices":[…]}` — the
+  full set the learner picked, each entry as text, index or letter; grading is exact-set,
+  so a partial pick is wrong. For `ordering`, send `{"order":[…]}` — every item exactly once,
+  in the learner's chosen sequence; grading is element-wise against the authored order and
+  all-or-nothing, so one item out of place is wrong. The items come back in `choices` as a
+  shuffled sequence that is **never** the correct one, so never replay the payload order as
+  an answer. Sending the wrong shape, an item not in the question, or a partial/full sequence
+  is `422`, not a silent "wrong". For `matching`, send `{"matching":[…]}` — every prompt
+  exactly once, each entry as `"prompt => option"` with the option's **text** as it was
+  served. The pair order never matters: grading is set equality, so all-or-nothing per set.
+  A pair with no arrow, an unknown prompt or option, or a prompt left out is `422`; a
+  complete set that simply disagrees with the key is a wrong answer.
 - **The session survives process death.** Persist `sessionId`; on relaunch call
   `GET /quiz/sessions/{id}` and skip exactly `answeredQuestionIds`.
 - A **wrong** answer can be re-answered: a correct retry is worth half (integer
@@ -668,17 +695,27 @@ Every screen implements the same five states — build them once in `shared/widg
   /content/tree` response, with counts on each tile. Keep scroll position on back
   (ValueKey per route + `AutomaticKeepAlive`). Only the XP feed paginates cursor-style;
   prefetch its next page when the last visible row is within 5 of the end.
-- **Lesson reader:** question card with choice buttons / true-false / text field per
-  `kind` (`multiple_choice`, `true_false`, `fill_blank`), showing the `imageUrl`/
-  `audioUrl` aid when present. The catalogue is for **reading**; the moment the learner
-  wants to answer for a result, hand off to the quiz player — never grade locally or show
-  a score the server did not produce.
+- **Lesson reader:** question card with choice buttons / true-false / text field / tile bank
+  per `kind` (`multiple_choice`, `multi_select`, `true_false`, `fill_blank`, `word_bank`),
+  showing the `imageUrl`/`audioUrl` aid when present. An `ordering` question has **no
+  `choices` in the catalogue** — they are stored in the answer order, so the reader shows
+  the prompt and defers to the quiz player, which serves the reshuffled list. A `matching`
+  question shows its `prompts` but **no `choices`** — the bank can be paired back by
+  position, so it waits for the quiz session too. The catalogue
+  is for **reading**; the moment the learner wants to answer for a result, hand off to the
+  quiz player — never grade locally or show a score the server did not produce.
 - **Quiz player:** one question at a time, with a progress indicator
-  (`answeredCount`/`totalCount`). Disable the choices while an answer is in flight; show
-  the verdict, the correct answer and the explanation from the answer response in place;
-  advance on the learner's tap, not automatically. Persist `sessionId` so an app kill
-  resumes via `GET /quiz/sessions/{id}`. Enable **Finish** only when the server says
-  `isComplete`. On `QUIZ_SESSION_EXPIRED`, offer "start again"; on
+  (`answeredCount`/`totalCount`). Render `multi_select` as checkboxes that collect a set
+  before one submit, and `ordering` as a reorderable list the learner arranges before one
+  submit; `matching` as two columns — `prompts` fixed on the left, the `choices` bank on the
+  right — where a prompt takes at most one option and the pair list is submitted once every
+  prompt has one. Never pre-select a pairing from the two lists' positions: the server
+  guarantees no option is served opposite the prompt it answers. The others submit on tap.
+  Disable the choices while an answer is in
+  flight; show the verdict, the correct answer and the explanation from the answer
+  response in place; advance on the learner's tap, not automatically. Persist `sessionId`
+  so an app kill resumes via `GET /quiz/sessions/{id}`. Enable **Finish** only when the
+  server says `isComplete`. On `QUIZ_SESSION_EXPIRED`, offer "start again"; on
   `QUESTION_ALREADY_ANSWERED`, re-read the session instead of erroring.
 - **Profile:** `currentLevel` shown read-only; `PATCH` sends only changed fields —
   never send the whole object back (that is how `422` on `currentLevel` happens).

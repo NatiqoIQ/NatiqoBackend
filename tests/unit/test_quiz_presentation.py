@@ -21,8 +21,10 @@ import pytest
 
 from app.modules.quiz.domain.presentation import (
     choice_order,
+    deranged_order,
     order_choices,
     order_correct_index,
+    ordering_order,
     question_seed,
 )
 
@@ -109,3 +111,101 @@ class TestOrderCorrectIndex:
 
         for original_index, text in enumerate(choices):
             assert served[order_correct_index(order, original_index)] == text
+
+
+class TestOrderingOrder:
+    """The ordering reshuffle must never equal the authored order.
+
+    For an ordering question the served sequence *is* a candidate answer, so an identity
+    permutation — which :func:`choice_order` is allowed to produce — would leak the key in
+    the payload. :func:`ordering_order` guarantees a non-identity permutation instead.
+    """
+
+    def test_it_is_never_the_identity(self) -> None:
+        for size in range(2, 7):
+            for n in range(50):
+                order = ordering_order(size, seed=_seed(session=n, question=n, attempt=1))
+
+                assert order != tuple(range(size))
+
+    def test_it_is_still_a_permutation(self) -> None:
+        for size in range(2, 7):
+            order = ordering_order(size, seed=_seed(question=size))
+
+            assert sorted(order) == list(range(size))
+
+    def test_it_is_deterministic(self) -> None:
+        assert ordering_order(4, seed=_seed(attempt=2)) == ordering_order(4, seed=_seed(attempt=2))
+
+    def test_a_single_item_has_nothing_to_shuffle(self) -> None:
+        assert ordering_order(1, seed=_seed()) == (0,)
+
+    def test_it_still_reorders_across_attempts(self) -> None:
+        first = [ordering_order(4, seed=_seed(session=n, attempt=1)) for n in range(12)]
+        second = [ordering_order(4, seed=_seed(session=n, attempt=2)) for n in range(12)]
+
+        assert all(sorted(order) == [0, 1, 2, 3] for order in first + second)
+        assert any(a != b for a, b in zip(first, second, strict=True))
+
+
+class TestDerangedOrder:
+    """The matching bank's shuffle: never seat an option opposite the prompt it answers.
+
+    A matching question is served as two columns read side by side, so the arrangement that
+    must not come out is the one where every option faces the prompt it answers — which is the
+    order the pairs were authored in, and therefore the most likely coincidence of a plain
+    shuffle. Where :func:`ordering_order` avoids a single arrangement, this has to avoid one
+    per position; ``forbidden[j]`` says which option may not stand at position ``j``.
+    """
+
+    def test_it_is_a_permutation_with_nothing_lost(self) -> None:
+        for size in range(2, 7):
+            order = deranged_order(size, forbidden=tuple(range(size)), seed=_seed(question=size))
+
+            assert sorted(order) == list(range(size))
+
+    def test_no_option_is_left_facing_the_prompt_it_answers(self) -> None:
+        """The strictest case there is: every position constrained, in the authored order."""
+        for size in range(2, 7):
+            for n in range(50):
+                forbidden = tuple(range(size))
+                order = deranged_order(
+                    size, forbidden=forbidden, seed=_seed(session=n, question=n, attempt=1)
+                )
+
+                assert all(order[position] != forbidden[position] for position in range(size))
+
+    def test_a_bank_with_distractors_only_constrains_the_prompts(self) -> None:
+        """Three prompts against a five-option bank: the last two positions are free."""
+        order = deranged_order(5, forbidden=(0, 1, 2), seed=_seed())
+
+        assert sorted(order) == [0, 1, 2, 3, 4]
+        assert all(order[position] != position for position in range(3))
+
+    def test_an_unanswered_position_is_left_free(self) -> None:
+        order = deranged_order(4, forbidden=(None, 1, None, 3), seed=_seed())
+
+        assert sorted(order) == [0, 1, 2, 3]
+        assert order[1] != 1
+        assert order[3] != 3
+
+    def test_it_is_deterministic(self) -> None:
+        assert deranged_order(4, forbidden=(0, 1, 2, 3), seed=_seed(attempt=2)) == deranged_order(
+            4, forbidden=(0, 1, 2, 3), seed=_seed(attempt=2)
+        )
+
+    def test_a_single_option_has_nothing_to_avoid(self) -> None:
+        assert deranged_order(1, forbidden=(0,), seed=_seed()) == (0,)
+
+    def test_it_still_reorders_across_attempts(self) -> None:
+        first = [
+            deranged_order(4, forbidden=(0, 1, 2, 3), seed=_seed(session=n, attempt=1))
+            for n in range(12)
+        ]
+        second = [
+            deranged_order(4, forbidden=(0, 1, 2, 3), seed=_seed(session=n, attempt=2))
+            for n in range(12)
+        ]
+
+        assert all(sorted(order) == [0, 1, 2, 3] for order in first + second)
+        assert any(a != b for a, b in zip(first, second, strict=True))

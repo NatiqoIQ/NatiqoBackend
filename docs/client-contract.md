@@ -44,6 +44,7 @@ Every error has the same shape. Branch on `code`; `message` is for humans and ma
   "error": {
     "code": "LESSON_NOT_FOUND",
     "message": "There is no published lesson with that id.",
+    "details": null,
     "requestId": "fb11336eeb1745bf82510f84206fdf39"
   }
 }

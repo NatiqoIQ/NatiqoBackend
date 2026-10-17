@@ -152,14 +152,19 @@ class SkillKind(StrEnum):
 class QuestionKind(StrEnum):
     """How a practice question is answered.
 
-    A kind is only listed here once the attempt engine can score it. ``MATCHING`` and
-    ``ORDERING`` are the obvious next entries; adding them before anything can grade
-    them would mean shipping a question type that silently scores as wrong.
+    A kind is only listed here once the attempt engine can score it: ``grade_answer`` has a
+    branch for every value here, and a test enumerates the enum to keep that promise honest.
+    Adding a kind without its grading rule would mean shipping a question type that silently
+    scores every learner wrong.
     """
 
     MULTIPLE_CHOICE = "multiple_choice"
+    MULTI_SELECT = "multi_select"
     TRUE_FALSE = "true_false"
     FILL_BLANK = "fill_blank"
+    WORD_BANK = "word_bank"
+    ORDERING = "ordering"
+    MATCHING = "matching"
 
 
 class ContentState(StrEnum):

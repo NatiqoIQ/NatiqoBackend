@@ -61,7 +61,14 @@ class LessonSummaryView:
 
 @dataclass(frozen=True, slots=True)
 class QuestionView:
-    """A practice item as a learner sees it *before* attempting it."""
+    """A practice item as a learner sees it *before* attempting it.
+
+    ``prompts`` is the items a matching question asks the learner to pair up — public for the
+    same reason a multiple choice's options are: it says what is being asked without saying
+    what the answer is. The bank they are paired *against* is deliberately absent here; see
+    ``pre_attempt_choices``, which is why a matching question shows no ``choices`` in this
+    shared, cacheable read.
+    """
 
     id: uuid.UUID
     kind: QuestionKind
@@ -71,6 +78,7 @@ class QuestionView:
     points: int
     image_url: str | None
     audio_url: str | None
+    prompts: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

@@ -45,6 +45,7 @@ from app.modules.content.application.dto import (
     UnitView,
 )
 from app.modules.content.domain.entities import Lesson, Level, Question, Unit
+from app.modules.content.domain.policy import pre_attempt_choices, pre_attempt_prompts
 
 
 def _key(row: Level | Unit | Lesson) -> tuple[int, uuid.UUID]:
@@ -273,17 +274,19 @@ def _question_view(question: Question) -> QuestionView:
     See the docstring in ``dto.py``: this projection is a security boundary, and the
     fields left off it are the answer key. ``image_url`` and ``audio_url`` are left *on*
     it on purpose — they are pre-attempt aids that teach the item, not a reveal of the
-    answer.
+    answer. ``choices`` is filtered through :func:`pre_attempt_choices`, because an
+    ordering question's choices are stored in the correct sequence and would be the key.
     """
     return QuestionView(
         id=question.id,
         kind=question.kind,
         skill=question.skill,
         prompt=question.prompt,
-        choices=question.choices,
+        choices=pre_attempt_choices(question.kind, question.choices),
         points=question.points,
         image_url=question.image_url,
         audio_url=question.audio_url,
+        prompts=pre_attempt_prompts(question.kind, question.accepted_answers),
     )
 
 

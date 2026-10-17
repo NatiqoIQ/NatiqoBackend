@@ -1,87 +1,299 @@
 {
   "a1-accessories-basic-q1": {
     "audio": "https://dict.youdao.com/dictvoice?type=2&audio=belt",
-    "image": "https://picsum.photos/seed/a1-accessories-basic-q1/640/360"
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "A watch.",
+    "image": "https://thumb.wikimedia.org/wikipedia/commons/thumb/d/d1/Fossil_Wrist_PDA_on_wrist.JPG/960px-Fossil_Wrist_PDA_on_wrist.JPG?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+    "image_credit": "Danski14",
+    "image_license": "GFDL",
+    "image_page": "https://commons.wikimedia.org/wiki/File:Fossil_Wrist_PDA_on_wrist.JPG",
+    "image_query": "wristwatch on a wrist close up",
+    "image_source": "commons"
   },
   "a1-accessories-basic-q2": {
     "audio": "https://dict.youdao.com/dictvoice?type=2&audio=scarf",
-    "image": "https://picsum.photos/seed/a1-accessories-basic-q2/640/360"
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "I need my sunglasses.",
+    "image": "https://thumb.wikimedia.org/wikipedia/commons/thumb/4/45/Sunny_day_in_Mexico.jpg/960px-Sunny_day_in_Mexico.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+    "image_credit": "RachLWard",
+    "image_license": "CC BY-SA 4.0",
+    "image_page": "https://commons.wikimedia.org/wiki/File:Sunny_day_in_Mexico.jpg",
+    "image_query": "sunglasses on a sunny beach",
+    "image_source": "commons"
   },
   "a1-accessories-basic-q3": {
     "audio": "https://dict.youdao.com/dictvoice?type=2&audio=hat",
-    "image": "https://picsum.photos/seed/a1-accessories-basic-q3/640/360"
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "I have got a new bag.",
+    "image": "https://thumb.wikimedia.org/wikipedia/commons/thumb/e/e2/%E9%AB%98%E7%B4%9A%E3%80%8C%E7%94%9F%E3%80%8D%E9%A3%9F%E3%83%91%E3%83%B3%E5%B0%82%E9%96%80%E5%BA%97_%E4%B9%83%E3%81%8C%E7%BE%8E_%2852007790251%29.jpg/960px-%E9%AB%98%E7%B4%9A%E3%80%8C%E7%94%9F%E3%80%8D%E9%A3%9F%E3%83%91%E3%83%B3%E5%B0%82%E9%96%80%E5%BA%97_%E4%B9%83%E3%81%8C%E7%BE%8E_%2852007790251%29.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+    "image_credit": "mrhayata from Tokyo, Japan",
+    "image_license": "CC BY-SA 2.0",
+    "image_page": "https://commons.wikimedia.org/wiki/File:高級「生」食パン専門店_乃が美_(52007790251).jpg",
+    "image_query": "leather handbag on a bench",
+    "image_source": "commons"
+  },
+  "a1-accessories-basic-q4": {
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "She has got a hat.",
+    "image": "https://thumb.wikimedia.org/wikipedia/commons/thumb/e/ee/The_great_outdoors_%28Unsplash%29.jpg/960px-The_great_outdoors_%28Unsplash%29.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+    "image_credit": "Clarisse Meyer clarissemeyer",
+    "image_license": "CC0",
+    "image_page": "https://commons.wikimedia.org/wiki/File:The_great_outdoors_(Unsplash).jpg",
+    "image_query": "woman wearing a hat outdoors",
+    "image_source": "commons"
   },
   "a1-actions-basic-q1": {
     "audio": "https://dict.youdao.com/dictvoice?type=2&audio=run",
-    "image": "https://picsum.photos/seed/a1-actions-basic-q1/640/360"
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "Run",
+    "image": "https://thumb.wikimedia.org/wikipedia/commons/thumb/5/55/When_it_comes_to_everyday_actions_to_fight_climate_change%2C_people_have_a_wide_variety_of_priorities.jpg/960px-When_it_comes_to_everyday_actions_to_fight_climate_change%2C_people_have_a_wide_variety_of_priorities.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+    "image_credit": "European Investment Bank",
+    "image_license": "CC BY-SA 3.0 igo",
+    "image_page": "https://commons.wikimedia.org/wiki/File:When_it_comes_to_everyday_actions_to_fight_climate_change,_people_have_a_wide_variety_of_priorities.jpg",
+    "image_query": "Everyday actions Actions",
+    "image_source": "commons"
   },
   "a1-actions-basic-q2": {
     "audio": "https://dict.youdao.com/dictvoice?type=2&audio=see",
-    "image": "https://picsum.photos/seed/a1-actions-basic-q2/640/360"
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "see",
+    "image": "https://thumb.wikimedia.org/wikipedia/commons/thumb/5/55/When_it_comes_to_everyday_actions_to_fight_climate_change%2C_people_have_a_wide_variety_of_priorities.jpg/960px-When_it_comes_to_everyday_actions_to_fight_climate_change%2C_people_have_a_wide_variety_of_priorities.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+    "image_credit": "European Investment Bank",
+    "image_license": "CC BY-SA 3.0 igo",
+    "image_page": "https://commons.wikimedia.org/wiki/File:When_it_comes_to_everyday_actions_to_fight_climate_change,_people_have_a_wide_variety_of_priorities.jpg",
+    "image_query": "Everyday actions Actions",
+    "image_source": "commons"
   },
   "a1-actions-basic-q3": {
     "audio": "https://dict.youdao.com/dictvoice?type=2&audio=sleep",
-    "image": "https://picsum.photos/seed/a1-actions-basic-q3/640/360"
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "True",
+    "image": "https://thumb.wikimedia.org/wikipedia/commons/thumb/5/55/When_it_comes_to_everyday_actions_to_fight_climate_change%2C_people_have_a_wide_variety_of_priorities.jpg/960px-When_it_comes_to_everyday_actions_to_fight_climate_change%2C_people_have_a_wide_variety_of_priorities.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+    "image_credit": "European Investment Bank",
+    "image_license": "CC BY-SA 3.0 igo",
+    "image_page": "https://commons.wikimedia.org/wiki/File:When_it_comes_to_everyday_actions_to_fight_climate_change,_people_have_a_wide_variety_of_priorities.jpg",
+    "image_query": "Everyday actions Actions",
+    "image_source": "commons"
   },
   "a1-animals-basic-q1": {
     "audio": "https://dict.youdao.com/dictvoice?type=2&audio=cow",
-    "image": "https://picsum.photos/seed/a1-animals-basic-q1/640/360"
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "A cow",
+    "image": "https://thumb.wikimedia.org/wikipedia/commons/thumb/4/47/ANIMAL_FARM_National_Youth_Theatre_outdoors_at_Soulton_Hall.jpg/960px-ANIMAL_FARM_National_Youth_Theatre_outdoors_at_Soulton_Hall.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+    "image_credit": "Hatsle",
+    "image_license": "CC0",
+    "image_page": "https://commons.wikimedia.org/wiki/File:ANIMAL_FARM_National_Youth_Theatre_outdoors_at_Soulton_Hall.jpg",
+    "image_query": "On the farm Farm animals",
+    "image_source": "commons"
   },
   "a1-animals-basic-q2": {
     "audio": "https://dict.youdao.com/dictvoice?type=2&audio=sheep",
-    "image": "https://picsum.photos/seed/a1-animals-basic-q2/640/360"
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "sheep",
+    "image": "https://thumb.wikimedia.org/wikipedia/commons/thumb/4/47/ANIMAL_FARM_National_Youth_Theatre_outdoors_at_Soulton_Hall.jpg/960px-ANIMAL_FARM_National_Youth_Theatre_outdoors_at_Soulton_Hall.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+    "image_credit": "Hatsle",
+    "image_license": "CC0",
+    "image_page": "https://commons.wikimedia.org/wiki/File:ANIMAL_FARM_National_Youth_Theatre_outdoors_at_Soulton_Hall.jpg",
+    "image_query": "On the farm Farm animals",
+    "image_source": "commons"
   },
   "a1-animals-basic-q3": {
     "audio": "https://dict.youdao.com/dictvoice?type=2&audio=horse",
-    "image": "https://picsum.photos/seed/a1-animals-basic-q3/640/360"
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "True",
+    "image": "https://thumb.wikimedia.org/wikipedia/commons/thumb/4/47/ANIMAL_FARM_National_Youth_Theatre_outdoors_at_Soulton_Hall.jpg/960px-ANIMAL_FARM_National_Youth_Theatre_outdoors_at_Soulton_Hall.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+    "image_credit": "Hatsle",
+    "image_license": "CC0",
+    "image_page": "https://commons.wikimedia.org/wiki/File:ANIMAL_FARM_National_Youth_Theatre_outdoors_at_Soulton_Hall.jpg",
+    "image_query": "On the farm Farm animals",
+    "image_source": "commons"
   },
   "a1-appearance-basic-q1": {
     "audio": "https://dict.youdao.com/dictvoice?type=2&audio=straight",
-    "image": "https://picsum.photos/seed/a1-appearance-basic-q1/640/360"
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "Straight",
+    "image": "https://thumb.wikimedia.org/wikipedia/commons/thumb/9/97/How_to_look_amourously._%28BM_1868%2C0808.12483%29.jpg/960px-How_to_look_amourously._%28BM_1868%2C0808.12483%29.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+    "image_credit": "",
+    "image_license": "Public domain",
+    "image_page": "https://commons.wikimedia.org/wiki/File:How_to_look_amourously._(BM_1868,0808.12483).jpg",
+    "image_query": "How people look Appearance",
+    "image_source": "commons"
   },
   "a1-appearance-basic-q2": {
     "audio": "https://dict.youdao.com/dictvoice?type=2&audio=tall",
-    "image": "https://picsum.photos/seed/a1-appearance-basic-q2/640/360"
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "tall",
+    "image": "https://thumb.wikimedia.org/wikipedia/commons/thumb/9/97/How_to_look_amourously._%28BM_1868%2C0808.12483%29.jpg/960px-How_to_look_amourously._%28BM_1868%2C0808.12483%29.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+    "image_credit": "",
+    "image_license": "Public domain",
+    "image_page": "https://commons.wikimedia.org/wiki/File:How_to_look_amourously._(BM_1868,0808.12483).jpg",
+    "image_query": "How people look Appearance",
+    "image_source": "commons"
   },
   "a1-appearance-basic-q3": {
     "audio": "https://dict.youdao.com/dictvoice?type=2&audio=hair",
-    "image": "https://picsum.photos/seed/a1-appearance-basic-q3/640/360"
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "True",
+    "image": "https://thumb.wikimedia.org/wikipedia/commons/thumb/9/97/How_to_look_amourously._%28BM_1868%2C0808.12483%29.jpg/960px-How_to_look_amourously._%28BM_1868%2C0808.12483%29.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+    "image_credit": "",
+    "image_license": "Public domain",
+    "image_page": "https://commons.wikimedia.org/wiki/File:How_to_look_amourously._(BM_1868,0808.12483).jpg",
+    "image_query": "How people look Appearance",
+    "image_source": "commons"
   },
   "a1-body-basic-q1": {
     "audio": "https://dict.youdao.com/dictvoice?type=2&audio=eyes",
-    "image": "https://picsum.photos/seed/a1-body-basic-q1/640/360"
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "Eyes",
+    "image": "https://thumb.wikimedia.org/wikipedia/commons/thumb/5/5c/Hieratic_ostracon_inscribed_with_names_of_body_parts%2C_limestone_-_Museo_Egizio%2C_Turin_S_6433_p01.jpg/960px-Hieratic_ostracon_inscribed_with_names_of_body_parts%2C_limestone_-_Museo_Egizio%2C_Turin_S_6433_p01.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+    "image_credit": "",
+    "image_license": "CC0",
+    "image_page": "https://commons.wikimedia.org/wiki/File:Hieratic_ostracon_inscribed_with_names_of_body_parts,_limestone_-_Museo_Egizio,_Turin_S_6433_p01.jpg",
+    "image_query": "Parts of the body Body parts",
+    "image_source": "commons"
   },
   "a1-body-basic-q2": {
     "audio": "https://dict.youdao.com/dictvoice?type=2&audio=fingers",
-    "image": "https://picsum.photos/seed/a1-body-basic-q2/640/360"
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "fingers",
+    "image": "https://thumb.wikimedia.org/wikipedia/commons/thumb/5/5c/Hieratic_ostracon_inscribed_with_names_of_body_parts%2C_limestone_-_Museo_Egizio%2C_Turin_S_6433_p01.jpg/960px-Hieratic_ostracon_inscribed_with_names_of_body_parts%2C_limestone_-_Museo_Egizio%2C_Turin_S_6433_p01.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+    "image_credit": "",
+    "image_license": "CC0",
+    "image_page": "https://commons.wikimedia.org/wiki/File:Hieratic_ostracon_inscribed_with_names_of_body_parts,_limestone_-_Museo_Egizio,_Turin_S_6433_p01.jpg",
+    "image_query": "Parts of the body Body parts",
+    "image_source": "commons"
   },
   "a1-body-basic-q3": {
     "audio": "https://dict.youdao.com/dictvoice?type=2&audio=foot",
-    "image": "https://picsum.photos/seed/a1-body-basic-q3/640/360"
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "False",
+    "image": "https://thumb.wikimedia.org/wikipedia/commons/thumb/5/5c/Hieratic_ostracon_inscribed_with_names_of_body_parts%2C_limestone_-_Museo_Egizio%2C_Turin_S_6433_p01.jpg/960px-Hieratic_ostracon_inscribed_with_names_of_body_parts%2C_limestone_-_Museo_Egizio%2C_Turin_S_6433_p01.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+    "image_credit": "",
+    "image_license": "CC0",
+    "image_page": "https://commons.wikimedia.org/wiki/File:Hieratic_ostracon_inscribed_with_names_of_body_parts,_limestone_-_Museo_Egizio,_Turin_S_6433_p01.jpg",
+    "image_query": "Parts of the body Body parts",
+    "image_source": "commons"
   },
   "a1-clothes-basic-q1": {
     "audio": "https://dict.youdao.com/dictvoice?type=2&audio=shoes",
-    "image": "https://picsum.photos/seed/a1-clothes-basic-q1/640/360"
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "Shoes.",
+    "image": "https://thumb.wikimedia.org/wikipedia/commons/thumb/b/ba/Brown_leather_boots_on_a_wood_floor_%28Unsplash%29.jpg/960px-Brown_leather_boots_on_a_wood_floor_%28Unsplash%29.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+    "image_credit": "Radek Skrzypczak radziu",
+    "image_license": "CC0",
+    "image_page": "https://commons.wikimedia.org/wiki/File:Brown_leather_boots_on_a_wood_floor_(Unsplash).jpg",
+    "image_query": "pair of shoes on the floor",
+    "image_source": "commons"
   },
   "a1-clothes-basic-q2": {
     "audio": "https://dict.youdao.com/dictvoice?type=2&audio=coat",
-    "image": "https://picsum.photos/seed/a1-clothes-basic-q2/640/360"
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "She is wearing a blue dress today.",
+    "image": "https://thumb.wikimedia.org/wikipedia/commons/thumb/8/8b/Woman%27s_Blue%2C_Silver_and_Gold_Floral_Brocade_Evening_Dress_-_DPLA_-_198d61db4c836f70edcec54460b24080_%28page_1%29.jpg/960px-Woman%27s_Blue%2C_Silver_and_Gold_Floral_Brocade_Evening_Dress_-_DPLA_-_198d61db4c836f70edcec54460b24080_%28page_1%29.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+    "image_credit": "Coon, Mary Frances, 1888-1981",
+    "image_license": "Public domain",
+    "image_page": "https://commons.wikimedia.org/wiki/File:Woman's_Blue,_Silver_and_Gold_Floral_Brocade_Evening_Dress_-_DPLA_-_198d61db4c836f70edcec54460b24080_(page_1).jpg",
+    "image_query": "blue dress woman fashion",
+    "image_source": "commons"
   },
   "a1-clothes-basic-q3": {
     "audio": "https://dict.youdao.com/dictvoice?type=2&audio=trousers",
-    "image": "https://picsum.photos/seed/a1-clothes-basic-q3/640/360"
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "A coat and a scarf.",
+    "image": "https://thumb.wikimedia.org/wikipedia/commons/thumb/1/17/A_Tennessee_Winter_Wonderland.jpg/960px-A_Tennessee_Winter_Wonderland.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+    "image_credit": "Carol (vanhookc)",
+    "image_license": "CC BY-SA 2.0",
+    "image_page": "https://commons.wikimedia.org/wiki/File:A_Tennessee_Winter_Wonderland.jpg",
+    "image_query": "winter coat and scarf snow",
+    "image_source": "commons"
+  },
+  "a1-clothes-basic-q4": {
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "I am wearing a jacket.",
+    "image": "https://thumb.wikimedia.org/wikipedia/commons/thumb/4/40/Portret_van_een_jonge_man_-_Jeremias_Schultz.jpg/960px-Portret_van_een_jonge_man_-_Jeremias_Schultz.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+    "image_credit": "Creator:Jeremias Schultz",
+    "image_license": "Public domain",
+    "image_page": "https://commons.wikimedia.org/wiki/File:Portret_van_een_jonge_man_-_Jeremias_Schultz.jpg",
+    "image_query": "man wearing a jacket portrait",
+    "image_source": "commons"
+  },
+  "a1-clothes-basic-q5": {
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "Can I try these trousers on?",
+    "image": "https://thumb.wikimedia.org/wikipedia/commons/thumb/0/0d/Intel_3-D_graphics_architect_Nola_Donato_shows_augmented_reality_dressing_room.jpg/960px-Intel_3-D_graphics_architect_Nola_Donato_shows_augmented_reality_dressing_room.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+    "image_credit": "Intel Free Press",
+    "image_license": "CC BY-SA 2.0",
+    "image_page": "https://commons.wikimedia.org/wiki/File:Intel_3-D_graphics_architect_Nola_Donato_shows_augmented_reality_dressing_room.jpg",
+    "image_query": "clothes shop fitting room mirror",
+    "image_source": "commons"
   },
   "a1-colours-basic-q1": {
     "audio": "https://dict.youdao.com/dictvoice?type=2&audio=blue",
-    "image": "https://picsum.photos/seed/a1-colours-basic-q1/640/360"
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "A banana is yellow.",
+    "image": "https://thumb.wikimedia.org/wikipedia/commons/thumb/2/28/DFC_1274_Two_vendors_chat_behind_a_stall_piled_high_with_ripe_bananas_at_a_local_market.jpg/960px-DFC_1274_Two_vendors_chat_behind_a_stall_piled_high_with_ripe_bananas_at_a_local_market.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+    "image_credit": "PattayaPatrol",
+    "image_license": "CC BY-SA 4.0",
+    "image_page": "https://commons.wikimedia.org/wiki/File:DFC_1274_Two_vendors_chat_behind_a_stall_piled_high_with_ripe_bananas_at_a_local_market.jpg",
+    "image_query": "ripe yellow bananas bunch",
+    "image_source": "commons"
   },
   "a1-colours-basic-q2": {
     "audio": "https://dict.youdao.com/dictvoice?type=2&audio=grey",
-    "image": "https://picsum.photos/seed/a1-colours-basic-q2/640/360"
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "The sky is blue today.",
+    "image": "https://thumb.wikimedia.org/wikipedia/commons/thumb/7/71/Colorful_clouds_and_blue_sky_with_water_reflection_of_an_island_hosting_trees_at_sunrise_in_Si_Phan_Don%2C_Laos.jpg/960px-Colorful_clouds_and_blue_sky_with_water_reflection_of_an_island_hosting_trees_at_sunrise_in_Si_Phan_Don%2C_Laos.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+    "image_credit": "Basile Morin",
+    "image_license": "CC BY-SA 4.0",
+    "image_page": "https://commons.wikimedia.org/wiki/File:Colorful_clouds_and_blue_sky_with_water_reflection_of_an_island_hosting_trees_at_sunrise_in_Si_Phan_Don,_Laos.jpg",
+    "image_query": "blue sky with white clouds",
+    "image_source": "commons"
   },
   "a1-colours-basic-q3": {
     "audio": "https://dict.youdao.com/dictvoice?type=2&audio=green",
-    "image": "https://picsum.photos/seed/a1-colours-basic-q3/640/360"
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "She has a red car.",
+    "image": "https://thumb.wikimedia.org/wikipedia/commons/thumb/9/9d/Northbound_Red_Line_train_at_Park_Street_station%2C_February_2018.jpg/960px-Northbound_Red_Line_train_at_Park_Street_station%2C_February_2018.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+    "image_credit": "Daderot",
+    "image_license": "CC0",
+    "image_page": "https://commons.wikimedia.org/wiki/File:Northbound_Red_Line_train_at_Park_Street_station,_February_2018.jpg",
+    "image_query": "red car parked on a street",
+    "image_source": "commons"
+  },
+  "a1-colours-basic-q4": {
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "Green. Purple.",
+    "image": "",
+    "image_credit": "Natiqo",
+    "image_license": "generated",
+    "image_page": "",
+    "image_query": "colourful paint palette green purple",
+    "image_source": "card"
   },
   "a1-colours-clothes-q1": {
     "audio": "https://dict.youdao.com/dictvoice?type=2&audio=shoes",
@@ -97,319 +309,1336 @@
   },
   "a1-days-month-q1": {
     "audio": "https://dict.youdao.com/dictvoice?type=2&audio=January",
-    "image": "https://picsum.photos/seed/a1-days-month-q1/640/360"
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "January is the first month of the year.",
+    "image": "https://thumb.wikimedia.org/wikipedia/commons/thumb/2/20/Webster%27s_calendar_or%2C_the_Albany_almanack_for_the_year_of_our_Lord_1824_-_DPLA_-_ce93243943c3cbf9cd859be372e93d58_%28page_17%29.jpg/960px-Webster%27s_calendar_or%2C_the_Albany_almanack_for_the_year_of_our_Lord_1824_-_DPLA_-_ce93243943c3cbf9cd859be372e93d58_%28page_17%29.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+    "image_credit": "Beers, Andrew, 1749-1824",
+    "image_license": "Public domain",
+    "image_page": "https://commons.wikimedia.org/wiki/File:Webster's_calendar_or,_the_Albany_almanack_for_the_year_of_our_Lord_1824_-_DPLA_-_ce93243943c3cbf9cd859be372e93d58_(page_17).jpg",
+    "image_query": "calendar page January new year",
+    "image_source": "commons"
   },
   "a1-days-month-q2": {
     "audio": "https://dict.youdao.com/dictvoice?type=2&audio=February",
-    "image": "https://picsum.photos/seed/a1-days-month-q2/640/360"
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "January, February, March.",
+    "image": "",
+    "image_credit": "Natiqo",
+    "image_license": "generated",
+    "image_page": "",
+    "image_query": "handwritten calendar months text",
+    "image_source": "card"
   },
   "a1-days-month-q3": {
     "audio": "https://dict.youdao.com/dictvoice?type=2&audio=May",
-    "image": "https://picsum.photos/seed/a1-days-month-q3/640/360"
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "My birthday is on the fifth of May.",
+    "image": "",
+    "image_credit": "Natiqo",
+    "image_license": "generated",
+    "image_page": "",
+    "image_query": "birthday calendar circled date",
+    "image_source": "card"
+  },
+  "a1-days-month-q4": {
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "Summer and winter.",
+    "image": "https://upload.wikimedia.org/wikipedia/commons/b/b7/Friedrich_Brentel_I_-_The_Four_Seasons_after_Aegidius_Sadeler.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail_unscaled",
+    "image_credit": "Friedrich Brentel",
+    "image_license": "Public domain",
+    "image_page": "https://commons.wikimedia.org/wiki/File:Friedrich_Brentel_I_-_The_Four_Seasons_after_Aegidius_Sadeler.jpg",
+    "image_query": "four seasons trees summer winter",
+    "image_source": "commons"
   },
   "a1-days-week-q1": {
     "audio": "https://dict.youdao.com/dictvoice?type=2&audio=Tuesday",
-    "image": "https://picsum.photos/seed/a1-days-week-q1/640/360"
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "Tuesday, Wednesday.",
+    "image": "",
+    "image_credit": "Natiqo",
+    "image_license": "generated",
+    "image_page": "",
+    "image_query": "weekly planner calendar days",
+    "image_source": "card"
   },
   "a1-days-week-q2": {
     "audio": "https://dict.youdao.com/dictvoice?type=2&audio=Friday",
-    "image": "https://picsum.photos/seed/a1-days-week-q2/640/360"
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "Friday and Saturday are the weekend.",
+    "image": "https://thumb.wikimedia.org/wikipedia/commons/thumb/f/fa/Alternate_Reality%2C_Part_I_-_Flickr_-_snowpeak.jpg/960px-Alternate_Reality%2C_Part_I_-_Flickr_-_snowpeak.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+    "image_credit": "John Fowler from Placitas, NM, USA",
+    "image_license": "CC BY 2.0",
+    "image_page": "https://commons.wikimedia.org/wiki/File:Alternate_Reality,_Part_I_-_Flickr_-_snowpeak.jpg",
+    "image_query": "family relaxing weekend at home",
+    "image_source": "commons"
   },
   "a1-days-week-q3": {
     "audio": "https://dict.youdao.com/dictvoice?type=2&audio=Monday",
-    "image": "https://picsum.photos/seed/a1-days-week-q3/640/360"
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "I go to school on Sunday.",
+    "image": "",
+    "image_credit": "Natiqo",
+    "image_license": "generated",
+    "image_page": "",
+    "image_query": "schoolchildren walking to school morning",
+    "image_source": "card"
+  },
+  "a1-days-week-q4": {
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "My birthday is on Friday.",
+    "image": "https://thumb.wikimedia.org/wikipedia/commons/thumb/b/b0/DZ6_0704_Birthday_celebrations_and_smiles_all_around_-_friends_gather_in_pink_for_a_fun_night_by_the_pool_table.jpg/960px-DZ6_0704_Birthday_celebrations_and_smiles_all_around_-_friends_gather_in_pink_for_a_fun_night_by_the_pool_table.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+    "image_credit": "PattayaPatrol",
+    "image_license": "CC BY-SA 4.0",
+    "image_page": "https://commons.wikimedia.org/wiki/File:DZ6_0704_Birthday_celebrations_and_smiles_all_around_-_friends_gather_in_pink_for_a_fun_night_by_the_pool_table.jpg",
+    "image_query": "birthday party balloons celebration",
+    "image_source": "commons"
+  },
+  "a1-days-week-q5": {
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "Monday, Tuesday, Wednesday, Friday.",
+    "image": "",
+    "image_credit": "Natiqo",
+    "image_license": "generated",
+    "image_page": "",
+    "image_query": "weekly planner calendar seven days",
+    "image_source": "card"
   },
   "a1-drinks-basic-q1": {
     "audio": "https://dict.youdao.com/dictvoice?type=2&audio=juice",
-    "image": "https://picsum.photos/seed/a1-drinks-basic-q1/640/360"
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "Juice",
+    "image": "https://upload.wikimedia.org/wikipedia/commons/d/d6/Charles_Sims--What_are_these_to_me_and_you_who_deeply_drink_of_wine--1895.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail_unscaled",
+    "image_credit": "Charles Sims",
+    "image_license": "Public domain",
+    "image_page": "https://commons.wikimedia.org/wiki/File:Charles_Sims--What_are_these_to_me_and_you_who_deeply_drink_of_wine--1895.jpg",
+    "image_query": "What you drink Drinks",
+    "image_source": "commons"
   },
   "a1-drinks-basic-q2": {
     "audio": "https://dict.youdao.com/dictvoice?type=2&audio=tea",
-    "image": "https://picsum.photos/seed/a1-drinks-basic-q2/640/360"
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "tea",
+    "image": "https://upload.wikimedia.org/wikipedia/commons/d/d6/Charles_Sims--What_are_these_to_me_and_you_who_deeply_drink_of_wine--1895.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail_unscaled",
+    "image_credit": "Charles Sims",
+    "image_license": "Public domain",
+    "image_page": "https://commons.wikimedia.org/wiki/File:Charles_Sims--What_are_these_to_me_and_you_who_deeply_drink_of_wine--1895.jpg",
+    "image_query": "What you drink Drinks",
+    "image_source": "commons"
   },
   "a1-drinks-basic-q3": {
     "audio": "https://dict.youdao.com/dictvoice?type=2&audio=water",
-    "image": "https://picsum.photos/seed/a1-drinks-basic-q3/640/360"
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "True",
+    "image": "https://upload.wikimedia.org/wikipedia/commons/d/d6/Charles_Sims--What_are_these_to_me_and_you_who_deeply_drink_of_wine--1895.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail_unscaled",
+    "image_credit": "Charles Sims",
+    "image_license": "Public domain",
+    "image_page": "https://commons.wikimedia.org/wiki/File:Charles_Sims--What_are_these_to_me_and_you_who_deeply_drink_of_wine--1895.jpg",
+    "image_query": "What you drink Drinks",
+    "image_source": "commons"
   },
   "a1-family-people-q1": {
     "audio": "https://dict.youdao.com/dictvoice?type=2&audio=uncle",
-    "image": "https://picsum.photos/seed/a1-family-people-q1/640/360"
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "My grandmother.",
+    "image": "https://thumb.wikimedia.org/wikipedia/commons/thumb/6/61/Jane_Kingdon_%28paternal_grandmother_of_Mr_Kent_Kingdon%29_-_Andrew_Plimer_-_K225.jpg/960px-Jane_Kingdon_%28paternal_grandmother_of_Mr_Kent_Kingdon%29_-_Andrew_Plimer_-_K225.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+    "image_credit": "Andrew Plimer",
+    "image_license": "Public domain",
+    "image_page": "https://commons.wikimedia.org/wiki/File:Jane_Kingdon_(paternal_grandmother_of_Mr_Kent_Kingdon)_-_Andrew_Plimer_-_K225.jpg",
+    "image_query": "elderly woman grandmother portrait",
+    "image_source": "commons"
   },
   "a1-family-people-q2": {
     "audio": "https://dict.youdao.com/dictvoice?type=2&audio=cousin",
-    "image": "https://picsum.photos/seed/a1-family-people-q2/640/360"
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "Brother. Aunt.",
+    "image": "https://thumb.wikimedia.org/wikipedia/commons/thumb/8/82/Arthur_Devis_-_The_John_Bacon_Family_-_Google_Art_Project.jpg/960px-Arthur_Devis_-_The_John_Bacon_Family_-_Google_Art_Project.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+    "image_credit": "Arthur Devis",
+    "image_license": "Public domain",
+    "image_page": "https://commons.wikimedia.org/wiki/File:Arthur_Devis_-_The_John_Bacon_Family_-_Google_Art_Project.jpg",
+    "image_query": "family portrait parents children together",
+    "image_source": "commons"
   },
   "a1-family-people-q3": {
     "audio": "https://dict.youdao.com/dictvoice?type=2&audio=parents",
-    "image": "https://picsum.photos/seed/a1-family-people-q3/640/360"
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "How many brothers do you have?",
+    "image": "",
+    "image_credit": "Natiqo",
+    "image_license": "generated",
+    "image_page": "",
+    "image_query": "two boys brothers playing together",
+    "image_source": "card"
+  },
+  "a1-family-people-q4": {
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "I have two sisters.",
+    "image": "",
+    "image_credit": "Natiqo",
+    "image_license": "generated",
+    "image_page": "",
+    "image_query": "two sisters girls smiling together",
+    "image_source": "card"
   },
   "a1-family-possessive-q1": {
     "audio": "https://dict.youdao.com/dictvoice?type=2&audio=her",
-    "image": "https://picsum.photos/seed/a1-family-possessive-q1/640/360"
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "This is my sister. Her name is Noor.",
+    "image": "https://upload.wikimedia.org/wikipedia/commons/3/3f/Catie_Ball_1967.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail_unscaled",
+    "image_credit": "UPI",
+    "image_license": "Public domain",
+    "image_page": "https://commons.wikimedia.org/wiki/File:Catie_Ball_1967.jpg",
+    "image_query": "girl portrait smiling schoolgirl",
+    "image_source": "commons"
   },
   "a1-family-possessive-q2": {
     "audio": "https://dict.youdao.com/dictvoice?type=2&audio=his",
-    "image": "https://picsum.photos/seed/a1-family-possessive-q2/640/360"
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "This is Ali. His father is a doctor.",
+    "image": "https://thumb.wikimedia.org/wikipedia/commons/thumb/0/0e/Father_and_Son_Reunite_While_Serving_Together_in_Kosovo_%289394055%29.jpg/960px-Father_and_Son_Reunite_While_Serving_Together_in_Kosovo_%289394055%29.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+    "image_credit": "U.S. Army National Guard photo by Staff Sgt. Alyssa Lisenbe",
+    "image_license": "Public domain",
+    "image_page": "https://commons.wikimedia.org/wiki/File:Father_and_Son_Reunite_While_Serving_Together_in_Kosovo_(9394055).jpg",
+    "image_query": "father and son together",
+    "image_source": "commons"
   },
   "a1-family-possessive-q3": {
     "audio": "https://dict.youdao.com/dictvoice?type=2&audio=their",
-    "image": "https://picsum.photos/seed/a1-family-possessive-q3/640/360"
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "This is Ahmed's house.",
+    "image": "https://thumb.wikimedia.org/wikipedia/commons/thumb/b/bd/Moore_family_home%2C_Oakesdale%2C_Washington%2C_1894_-_DPLA_-_01a8cd21dbb9c98a98acf9ebad49390c.jpg/960px-Moore_family_home%2C_Oakesdale%2C_Washington%2C_1894_-_DPLA_-_01a8cd21dbb9c98a98acf9ebad49390c.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+    "image_credit": "",
+    "image_license": "Public domain",
+    "image_page": "https://commons.wikimedia.org/wiki/File:Moore_family_home,_Oakesdale,_Washington,_1894_-_DPLA_-_01a8cd21dbb9c98a98acf9ebad49390c.jpg",
+    "image_query": "family house front door home",
+    "image_source": "commons"
+  },
+  "a1-family-possessive-q4": {
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "My parents love their garden.",
+    "image": "https://thumb.wikimedia.org/wikipedia/commons/thumb/b/b2/The_English_flower_garden_and_home_grounds_%28Page_197%29_BHL20205056.jpg/960px-The_English_flower_garden_and_home_grounds_%28Page_197%29_BHL20205056.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+    "image_credit": "Robinson, W.",
+    "image_license": "Public domain",
+    "image_page": "https://commons.wikimedia.org/wiki/File:The_English_flower_garden_and_home_grounds_(Page_197)_BHL20205056.jpg",
+    "image_query": "garden flowers plants home",
+    "image_source": "commons"
   },
   "a1-food-cafe-q1": {
     "audio": "https://dict.youdao.com/dictvoice?type=2&audio=tea",
-    "image": "https://picsum.photos/seed/a1-food-cafe-q1/640/360"
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "I'd like a tea, please.",
+    "image": "https://thumb.wikimedia.org/wikipedia/commons/thumb/6/6c/Caf%C3%A9_Biard%2C_caf%C3%A9_10_c_la_tasse%2C_chocolat_20_c%2C_caf%C3%A9_au_lait..._-_affiche_-_Maurice_Neumont_%2819%2908_-_btv1b90164670.jpg/960px-Caf%C3%A9_Biard%2C_caf%C3%A9_10_c_la_tasse%2C_chocolat_20_c%2C_caf%C3%A9_au_lait..._-_affiche_-_Maurice_Neumont_%2819%2908_-_btv1b90164670.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+    "image_credit": "Neumont, Maurice (1868-1930). Illustrateur\n\nAtelier Maurice Neumont (Paris). Illustrateur",
+    "image_license": "Public domain",
+    "image_page": "https://commons.wikimedia.org/wiki/File:Café_Biard,_café_10_c_la_tasse,_chocolat_20_c,_café_au_lait..._-_affiche_-_Maurice_Neumont_(19)08_-_btv1b90164670.jpg",
+    "image_query": "Ordering in a café Food and drink",
+    "image_source": "commons"
   },
   "a1-food-cafe-q2": {
     "audio": "https://dict.youdao.com/dictvoice?type=2&audio=table",
-    "image": "https://picsum.photos/seed/a1-food-cafe-q2/640/360"
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "for",
+    "image": "https://thumb.wikimedia.org/wikipedia/commons/thumb/6/6c/Caf%C3%A9_Biard%2C_caf%C3%A9_10_c_la_tasse%2C_chocolat_20_c%2C_caf%C3%A9_au_lait..._-_affiche_-_Maurice_Neumont_%2819%2908_-_btv1b90164670.jpg/960px-Caf%C3%A9_Biard%2C_caf%C3%A9_10_c_la_tasse%2C_chocolat_20_c%2C_caf%C3%A9_au_lait..._-_affiche_-_Maurice_Neumont_%2819%2908_-_btv1b90164670.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+    "image_credit": "Neumont, Maurice (1868-1930). Illustrateur\n\nAtelier Maurice Neumont (Paris). Illustrateur",
+    "image_license": "Public domain",
+    "image_page": "https://commons.wikimedia.org/wiki/File:Café_Biard,_café_10_c_la_tasse,_chocolat_20_c,_café_au_lait..._-_affiche_-_Maurice_Neumont_(19)08_-_btv1b90164670.jpg",
+    "image_query": "Ordering in a café Food and drink",
+    "image_source": "commons"
   },
   "a1-food-cafe-q3": {
     "audio": "https://dict.youdao.com/dictvoice?type=2&audio=menu",
-    "image": "https://picsum.photos/seed/a1-food-cafe-q3/640/360"
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "True",
+    "image": "https://thumb.wikimedia.org/wikipedia/commons/thumb/6/6c/Caf%C3%A9_Biard%2C_caf%C3%A9_10_c_la_tasse%2C_chocolat_20_c%2C_caf%C3%A9_au_lait..._-_affiche_-_Maurice_Neumont_%2819%2908_-_btv1b90164670.jpg/960px-Caf%C3%A9_Biard%2C_caf%C3%A9_10_c_la_tasse%2C_chocolat_20_c%2C_caf%C3%A9_au_lait..._-_affiche_-_Maurice_Neumont_%2819%2908_-_btv1b90164670.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+    "image_credit": "Neumont, Maurice (1868-1930). Illustrateur\n\nAtelier Maurice Neumont (Paris). Illustrateur",
+    "image_license": "Public domain",
+    "image_page": "https://commons.wikimedia.org/wiki/File:Café_Biard,_café_10_c_la_tasse,_chocolat_20_c,_café_au_lait..._-_affiche_-_Maurice_Neumont_(19)08_-_btv1b90164670.jpg",
+    "image_query": "Ordering in a café Food and drink",
+    "image_source": "commons"
   },
   "a1-food-meals-q1": {
     "audio": "https://dict.youdao.com/dictvoice?type=2&audio=breakfast",
-    "image": "https://picsum.photos/seed/a1-food-meals-q1/640/360"
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "Breakfast",
+    "image": "https://upload.wikimedia.org/wikipedia/commons/d/d2/Bill_of_sale_for_food%2C_drink%2C_and_workmen_-_DPLA_-_90dceb50031a045b7d62d5eb9dbfc11d_%28page_4%29.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail_unscaled",
+    "image_credit": "",
+    "image_license": "Public domain",
+    "image_page": "https://commons.wikimedia.org/wiki/File:Bill_of_sale_for_food,_drink,_and_workmen_-_DPLA_-_90dceb50031a045b7d62d5eb9dbfc11d_(page_4).jpg",
+    "image_query": "Meals of the day Food and drink",
+    "image_source": "commons"
   },
   "a1-food-meals-q2": {
     "audio": "https://dict.youdao.com/dictvoice?type=2&audio=coffee",
-    "image": "https://picsum.photos/seed/a1-food-meals-q2/640/360"
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "coffee",
+    "image": "https://upload.wikimedia.org/wikipedia/commons/d/d2/Bill_of_sale_for_food%2C_drink%2C_and_workmen_-_DPLA_-_90dceb50031a045b7d62d5eb9dbfc11d_%28page_4%29.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail_unscaled",
+    "image_credit": "",
+    "image_license": "Public domain",
+    "image_page": "https://commons.wikimedia.org/wiki/File:Bill_of_sale_for_food,_drink,_and_workmen_-_DPLA_-_90dceb50031a045b7d62d5eb9dbfc11d_(page_4).jpg",
+    "image_query": "Meals of the day Food and drink",
+    "image_source": "commons"
   },
   "a1-food-meals-q3": {
     "audio": "https://dict.youdao.com/dictvoice?type=2&audio=carrot",
-    "image": "https://picsum.photos/seed/a1-food-meals-q3/640/360"
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "Carrot",
+    "image": "https://upload.wikimedia.org/wikipedia/commons/d/d2/Bill_of_sale_for_food%2C_drink%2C_and_workmen_-_DPLA_-_90dceb50031a045b7d62d5eb9dbfc11d_%28page_4%29.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail_unscaled",
+    "image_credit": "",
+    "image_license": "Public domain",
+    "image_page": "https://commons.wikimedia.org/wiki/File:Bill_of_sale_for_food,_drink,_and_workmen_-_DPLA_-_90dceb50031a045b7d62d5eb9dbfc11d_(page_4).jpg",
+    "image_query": "Meals of the day Food and drink",
+    "image_source": "commons"
   },
   "a1-fruit-basic-q1": {
     "audio": "https://dict.youdao.com/dictvoice?type=2&audio=banana",
-    "image": "https://picsum.photos/seed/a1-fruit-basic-q1/640/360"
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "A banana",
+    "image": "https://thumb.wikimedia.org/wikipedia/commons/thumb/a/a6/Aiguille_du_Fruit_and_C%C3%B4te_Brune_chairlift.jpg/960px-Aiguille_du_Fruit_and_C%C3%B4te_Brune_chairlift.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+    "image_credit": "DimiTalen",
+    "image_license": "CC0",
+    "image_page": "https://commons.wikimedia.org/wiki/File:Aiguille_du_Fruit_and_Côte_Brune_chairlift.jpg",
+    "image_query": "Fruit Fruit",
+    "image_source": "commons"
   },
   "a1-fruit-basic-q2": {
     "audio": "https://dict.youdao.com/dictvoice?type=2&audio=orange",
-    "image": "https://picsum.photos/seed/a1-fruit-basic-q2/640/360"
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "orange",
+    "image": "https://thumb.wikimedia.org/wikipedia/commons/thumb/a/a6/Aiguille_du_Fruit_and_C%C3%B4te_Brune_chairlift.jpg/960px-Aiguille_du_Fruit_and_C%C3%B4te_Brune_chairlift.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+    "image_credit": "DimiTalen",
+    "image_license": "CC0",
+    "image_page": "https://commons.wikimedia.org/wiki/File:Aiguille_du_Fruit_and_Côte_Brune_chairlift.jpg",
+    "image_query": "Fruit Fruit",
+    "image_source": "commons"
   },
   "a1-fruit-basic-q3": {
     "audio": "https://dict.youdao.com/dictvoice?type=2&audio=apple",
-    "image": "https://picsum.photos/seed/a1-fruit-basic-q3/640/360"
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "True",
+    "image": "https://thumb.wikimedia.org/wikipedia/commons/thumb/a/a6/Aiguille_du_Fruit_and_C%C3%B4te_Brune_chairlift.jpg/960px-Aiguille_du_Fruit_and_C%C3%B4te_Brune_chairlift.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+    "image_credit": "DimiTalen",
+    "image_license": "CC0",
+    "image_page": "https://commons.wikimedia.org/wiki/File:Aiguille_du_Fruit_and_Côte_Brune_chairlift.jpg",
+    "image_query": "Fruit Fruit",
+    "image_source": "commons"
   },
   "a1-greetings-goodbye-q1": {
     "audio": "https://dict.youdao.com/dictvoice?type=2&audio=goodbye",
-    "image": "https://picsum.photos/seed/a1-greetings-goodbye-q1/640/360"
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "Good night. See you tomorrow.",
+    "image": "https://thumb.wikimedia.org/wikipedia/commons/thumb/2/20/Erizos_en_Dresden_Zschieren_4.jpg/960px-Erizos_en_Dresden_Zschieren_4.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+    "image_credit": "Bambizoe from Dresden, Germany",
+    "image_license": "CC0",
+    "image_page": "https://commons.wikimedia.org/wiki/File:Erizos_en_Dresden_Zschieren_4.jpg",
+    "image_query": "person waving goodbye night street",
+    "image_source": "commons"
   },
   "a1-greetings-goodbye-q2": {
     "audio": "https://dict.youdao.com/dictvoice?type=2&audio=tomorrow",
-    "image": "https://picsum.photos/seed/a1-greetings-goodbye-q2/640/360"
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "See you tomorrow, Ali.",
+    "image": "",
+    "image_credit": "Natiqo",
+    "image_license": "generated",
+    "image_page": "",
+    "image_query": "wall calendar next day date",
+    "image_source": "card"
   },
   "a1-greetings-goodbye-q3": {
     "audio": "https://dict.youdao.com/dictvoice?type=2&audio=goodbye",
-    "image": "https://picsum.photos/seed/a1-greetings-goodbye-q3/640/360"
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "Goodbye, everyone.",
+    "image": "https://thumb.wikimedia.org/wikipedia/commons/thumb/0/02/Print%2C_People_Leaving_the_New_Theater%2C_Amsterdam%2C_1775%E2%80%931787_%28CH_18348591%29.jpg/960px-Print%2C_People_Leaving_the_New_Theater%2C_Amsterdam%2C_1775%E2%80%931787_%28CH_18348591%29.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+    "image_credit": "Unknown artistUnknown artist",
+    "image_license": "Public domain",
+    "image_page": "https://commons.wikimedia.org/wiki/File:Print,_People_Leaving_the_New_Theater,_Amsterdam,_1775–1787_(CH_18348591).jpg",
+    "image_query": "people leaving office door",
+    "image_source": "commons"
+  },
+  "a1-greetings-goodbye-q4": {
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "Have a nice day!",
+    "image": "",
+    "image_credit": "Natiqo",
+    "image_license": "generated",
+    "image_page": "",
+    "image_query": "smiling shop assistant sunny day",
+    "image_source": "card"
   },
   "a1-greetings-hello-q1": {
     "audio": "https://dict.youdao.com/dictvoice?type=2&audio=hello",
-    "image": "https://picsum.photos/seed/a1-greetings-hello-q1/640/360"
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "Hello! Good morning!",
+    "image": "https://thumb.wikimedia.org/wikipedia/commons/thumb/3/31/President_Donald_Trump_greeting_Ursula_Von_der_Leyen_in_Davos.jpg/960px-President_Donald_Trump_greeting_Ursula_Von_der_Leyen_in_Davos.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+    "image_credit": "European Communities",
+    "image_license": "CC BY 4.0",
+    "image_page": "https://commons.wikimedia.org/wiki/File:President_Donald_Trump_greeting_Ursula_Von_der_Leyen_in_Davos.jpg",
+    "image_query": "two people shaking hands greeting",
+    "image_source": "commons"
   },
   "a1-greetings-hello-q2": {
     "audio": "https://dict.youdao.com/dictvoice?type=2&audio=meet",
-    "image": "https://picsum.photos/seed/a1-greetings-hello-q2/640/360"
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "Nice to meet you.",
+    "image": "",
+    "image_credit": "Natiqo",
+    "image_license": "generated",
+    "image_page": "",
+    "image_query": "handshake meeting someone new",
+    "image_source": "card"
   },
   "a1-greetings-hello-q3": {
     "audio": "https://dict.youdao.com/dictvoice?type=2&audio=night",
-    "image": "https://picsum.photos/seed/a1-greetings-hello-q3/640/360"
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "Good night.",
+    "image": "https://thumb.wikimedia.org/wikipedia/commons/thumb/6/63/Night_sky_with_moon_and_stars_over_cotton_field_in_Batesville%2C_Texas.jpg/960px-Night_sky_with_moon_and_stars_over_cotton_field_in_Batesville%2C_Texas.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+    "image_credit": "U.S. Department of Agriculture",
+    "image_license": "Public domain",
+    "image_page": "https://commons.wikimedia.org/wiki/File:Night_sky_with_moon_and_stars_over_cotton_field_in_Batesville,_Texas.jpg",
+    "image_query": "night sky moon stars",
+    "image_source": "commons"
+  },
+  "a1-greetings-hello-q4": {
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "Hello. Good morning.",
+    "image": "",
+    "image_credit": "Natiqo",
+    "image_license": "generated",
+    "image_page": "",
+    "image_query": "waving hand greeting cheerful",
+    "image_source": "card"
+  },
+  "a1-greetings-hello-q5": {
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "Good morning, everyone.",
+    "image": "",
+    "image_credit": "Natiqo",
+    "image_license": "generated",
+    "image_page": "",
+    "image_query": "classroom students greeting teacher",
+    "image_source": "card"
+  },
+  "a1-greetings-hello-q6": {
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "I'm fine, thank you.",
+    "image": "",
+    "image_credit": "Natiqo",
+    "image_license": "generated",
+    "image_page": "",
+    "image_query": "two friends talking happy conversation",
+    "image_source": "card"
   },
   "a1-greetings-name-q1": {
     "audio": "https://dict.youdao.com/dictvoice?type=2&audio=name",
-    "image": "https://picsum.photos/seed/a1-greetings-name-q1/640/360"
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "What is your name?",
+    "image": "",
+    "image_credit": "Natiqo",
+    "image_license": "generated",
+    "image_page": "",
+    "image_query": "two people meeting introduction conversation",
+    "image_source": "card"
   },
   "a1-greetings-name-q2": {
     "audio": "https://dict.youdao.com/dictvoice?type=2&audio=name",
-    "image": "https://picsum.photos/seed/a1-greetings-name-q2/640/360"
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "My name is Zainab.",
+    "image": "https://thumb.wikimedia.org/wikipedia/commons/thumb/1/12/Woman_in_bikini_smiling.jpg/960px-Woman_in_bikini_smiling.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+    "image_credit": "AnthonyRob2026",
+    "image_license": "CC0",
+    "image_page": "https://commons.wikimedia.org/wiki/File:Woman_in_bikini_smiling.jpg",
+    "image_query": "woman smiling portrait",
+    "image_source": "commons"
   },
   "a1-greetings-name-q3": {
     "audio": "https://dict.youdao.com/dictvoice?type=2&audio=friend",
-    "image": "https://picsum.photos/seed/a1-greetings-name-q3/640/360"
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "This is my friend Ali.",
+    "image": "",
+    "image_credit": "Natiqo",
+    "image_license": "generated",
+    "image_page": "",
+    "image_query": "two friends introducing each other",
+    "image_source": "card"
   },
   "a1-greetings-name-q4": {
     "audio": "https://dict.youdao.com/dictvoice?type=2&audio=goodbye",
-    "image": "https://picsum.photos/seed/a1-greetings-name-q4/640/360"
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "The English alphabet has twenty-six letters.",
+    "image": "",
+    "image_credit": "Natiqo",
+    "image_license": "generated",
+    "image_page": "",
+    "image_query": "colourful alphabet letters",
+    "image_source": "card"
+  },
+  "a1-greetings-name-q5": {
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "Hello, my name is Ali.",
+    "image": "",
+    "image_credit": "Natiqo",
+    "image_license": "generated",
+    "image_page": "",
+    "image_query": "boy waving introducing himself",
+    "image_source": "card"
   },
   "a1-holidays-basic-q1": {
     "audio": "https://dict.youdao.com/dictvoice?type=2&audio=suitcase",
-    "image": "https://picsum.photos/seed/a1-holidays-basic-q1/640/360"
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "A suitcase",
+    "image": "https://thumb.wikimedia.org/wikipedia/commons/thumb/3/37/Lewis_Carroll_-_Henry_Holiday_-_Hunting_of_the_Snark_-_Plate_9.jpg/960px-Lewis_Carroll_-_Henry_Holiday_-_Hunting_of_the_Snark_-_Plate_9.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+    "image_credit": "Henry Holiday (1839-1927) after Lewis Carroll [Real name: Charles Lutwidge Dodgson] (1832-1896)",
+    "image_license": "Public domain",
+    "image_page": "https://commons.wikimedia.org/wiki/File:Lewis_Carroll_-_Henry_Holiday_-_Hunting_of_the_Snark_-_Plate_9.jpg",
+    "image_query": "Going on holiday Holidays",
+    "image_source": "commons"
   },
   "a1-holidays-basic-q2": {
     "audio": "https://dict.youdao.com/dictvoice?type=2&audio=passport",
-    "image": "https://picsum.photos/seed/a1-holidays-basic-q2/640/360"
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "passport",
+    "image": "https://thumb.wikimedia.org/wikipedia/commons/thumb/3/37/Lewis_Carroll_-_Henry_Holiday_-_Hunting_of_the_Snark_-_Plate_9.jpg/960px-Lewis_Carroll_-_Henry_Holiday_-_Hunting_of_the_Snark_-_Plate_9.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+    "image_credit": "Henry Holiday (1839-1927) after Lewis Carroll [Real name: Charles Lutwidge Dodgson] (1832-1896)",
+    "image_license": "Public domain",
+    "image_page": "https://commons.wikimedia.org/wiki/File:Lewis_Carroll_-_Henry_Holiday_-_Hunting_of_the_Snark_-_Plate_9.jpg",
+    "image_query": "Going on holiday Holidays",
+    "image_source": "commons"
   },
   "a1-holidays-basic-q3": {
     "audio": "https://dict.youdao.com/dictvoice?type=2&audio=beach",
-    "image": "https://picsum.photos/seed/a1-holidays-basic-q3/640/360"
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "True",
+    "image": "https://thumb.wikimedia.org/wikipedia/commons/thumb/3/37/Lewis_Carroll_-_Henry_Holiday_-_Hunting_of_the_Snark_-_Plate_9.jpg/960px-Lewis_Carroll_-_Henry_Holiday_-_Hunting_of_the_Snark_-_Plate_9.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+    "image_credit": "Henry Holiday (1839-1927) after Lewis Carroll [Real name: Charles Lutwidge Dodgson] (1832-1896)",
+    "image_license": "Public domain",
+    "image_page": "https://commons.wikimedia.org/wiki/File:Lewis_Carroll_-_Henry_Holiday_-_Hunting_of_the_Snark_-_Plate_9.jpg",
+    "image_query": "Going on holiday Holidays",
+    "image_source": "commons"
   },
   "a1-house-furniture-q1": {
     "audio": "https://dict.youdao.com/dictvoice?type=2&audio=chair",
-    "image": "https://picsum.photos/seed/a1-house-furniture-q1/640/360"
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "A chair.",
+    "image": "https://thumb.wikimedia.org/wikipedia/commons/thumb/d/da/Chairs_in_a_meeting_room_%28Unsplash%29.jpg/960px-Chairs_in_a_meeting_room_%28Unsplash%29.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+    "image_credit": "Breather breather",
+    "image_license": "CC0",
+    "image_page": "https://commons.wikimedia.org/wiki/File:Chairs_in_a_meeting_room_(Unsplash).jpg",
+    "image_query": "wooden chair in a room",
+    "image_source": "commons"
   },
   "a1-house-furniture-q2": {
     "audio": "https://dict.youdao.com/dictvoice?type=2&audio=table",
-    "image": "https://picsum.photos/seed/a1-house-furniture-q2/640/360"
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "There is a lamp next to the bed.",
+    "image": "https://thumb.wikimedia.org/wikipedia/commons/thumb/3/3e/DZ6_0461_Cozy_neatly_made_hotel_room_with_a_king_bed_soft_pillows_bedside_lamps_and_calming_neutral_decor.jpg/960px-DZ6_0461_Cozy_neatly_made_hotel_room_with_a_king_bed_soft_pillows_bedside_lamps_and_calming_neutral_decor.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+    "image_credit": "PattayaPatrol",
+    "image_license": "CC BY-SA 4.0",
+    "image_page": "https://commons.wikimedia.org/wiki/File:DZ6_0461_Cozy_neatly_made_hotel_room_with_a_king_bed_soft_pillows_bedside_lamps_and_calming_neutral_decor.jpg",
+    "image_query": "bedside lamp on a small table",
+    "image_source": "commons"
   },
   "a1-house-furniture-q3": {
     "audio": "https://dict.youdao.com/dictvoice?type=2&audio=fridge",
-    "image": "https://picsum.photos/seed/a1-house-furniture-q3/640/360"
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "A sofa and a television.",
+    "image": "https://thumb.wikimedia.org/wikipedia/commons/thumb/7/75/Laptop_in_the_living_room_%28Unsplash%29.jpg/960px-Laptop_in_the_living_room_%28Unsplash%29.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+    "image_credit": "Oliur Rahman ultralinx",
+    "image_license": "CC0",
+    "image_page": "https://commons.wikimedia.org/wiki/File:Laptop_in_the_living_room_(Unsplash).jpg",
+    "image_query": "living room sofa and television",
+    "image_source": "commons"
+  },
+  "a1-house-furniture-q4": {
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "There is a table near the window.",
+    "image": "https://thumb.wikimedia.org/wikipedia/commons/thumb/f/f9/Elegant_white_chairs_with_floral_upholstery_and_a_small_table_in_a_sunlit_room.jpg/960px-Elegant_white_chairs_with_floral_upholstery_and_a_small_table_in_a_sunlit_room.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+    "image_credit": "Shixart1985",
+    "image_license": "CC BY 2.0",
+    "image_page": "https://commons.wikimedia.org/wiki/File:Elegant_white_chairs_with_floral_upholstery_and_a_small_table_in_a_sunlit_room.jpg",
+    "image_query": "table beside a window in a room",
+    "image_source": "commons"
   },
   "a1-house-rooms-q1": {
     "audio": "https://dict.youdao.com/dictvoice?type=2&audio=kitchen",
-    "image": "https://picsum.photos/seed/a1-house-rooms-q1/640/360"
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "The kitchen.",
+    "image": "https://thumb.wikimedia.org/wikipedia/commons/thumb/b/b1/Kitchen%2C_Piermaster%27s_House%2C_Albert_Dock_1.jpg/960px-Kitchen%2C_Piermaster%27s_House%2C_Albert_Dock_1.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+    "image_credit": "Rodhullandemu",
+    "image_license": "CC BY-SA 4.0",
+    "image_page": "https://commons.wikimedia.org/wiki/File:Kitchen,_Piermaster's_House,_Albert_Dock_1.jpg",
+    "image_query": "kitchen with sink and cooker",
+    "image_source": "commons"
   },
   "a1-house-rooms-q2": {
     "audio": "https://dict.youdao.com/dictvoice?type=2&audio=bedroom",
-    "image": "https://picsum.photos/seed/a1-house-rooms-q2/640/360"
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "There are two bedrooms in my house.",
+    "image": "https://thumb.wikimedia.org/wikipedia/commons/thumb/5/52/Bedroom_in_home_of_Murray_Price%2C_miner%2C_six_people_sleep_in_these_two_beds._One_larger_boy_is_missing_in_picture._He..._-_NARA_-_541268.jpg/960px-Bedroom_in_home_of_Murray_Price%2C_miner%2C_six_people_sleep_in_these_two_beds._One_larger_boy_is_missing_in_picture._He..._-_NARA_-_541268.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+    "image_credit": "Russell Lee",
+    "image_license": "Public domain",
+    "image_page": "https://commons.wikimedia.org/wiki/File:Bedroom_in_home_of_Murray_Price,_miner,_six_people_sleep_in_these_two_beds._One_larger_boy_is_missing_in_picture._He..._-_NARA_-_541268.jpg",
+    "image_query": "bedroom with two beds",
+    "image_source": "commons"
   },
   "a1-house-rooms-q3": {
     "audio": "https://dict.youdao.com/dictvoice?type=2&audio=bathroom",
-    "image": "https://picsum.photos/seed/a1-house-rooms-q3/640/360"
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "The cat is under the table.",
+    "image": "https://thumb.wikimedia.org/wikipedia/commons/thumb/4/41/Sleepy_Cat_Under_a_Table.png/960px-Sleepy_Cat_Under_a_Table.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+    "image_credit": "Clyrmze",
+    "image_license": "CC0",
+    "image_page": "https://commons.wikimedia.org/wiki/File:Sleepy_Cat_Under_a_Table.png",
+    "image_query": "cat sitting under a table",
+    "image_source": "commons"
+  },
+  "a1-house-rooms-q4": {
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "I sleep in my bedroom.",
+    "image": "https://thumb.wikimedia.org/wikipedia/commons/thumb/6/6a/GD_%E5%BB%A3%E6%9D%B1_Guangdong_%E5%BB%A3%E5%B7%9E_Guangzhou_Huangpu_MUSTEL_Hotel_Knowledge_City_bed_room_double_sigle_beds_June_2025_R12S_01.jpg/960px-GD_%E5%BB%A3%E6%9D%B1_Guangdong_%E5%BB%A3%E5%B7%9E_Guangzhou_Huangpu_MUSTEL_Hotel_Knowledge_City_bed_room_double_sigle_beds_June_2025_R12S_01.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+    "image_credit": "MeiOLA 2290 WMENSZ",
+    "image_license": "CC0",
+    "image_page": "https://commons.wikimedia.org/wiki/File:GD_廣東_Guangdong_廣州_Guangzhou_Huangpu_MUSTEL_Hotel_Knowledge_City_bed_room_double_sigle_beds_June_2025_R12S_01.jpg",
+    "image_query": "bed with pillows in bedroom",
+    "image_source": "commons"
+  },
+  "a1-house-rooms-q5": {
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "A flat and a house are both places where people live.",
+    "image": "https://thumb.wikimedia.org/wikipedia/commons/thumb/c/c6/Homes_and_an_apartment_building_on_the_4000_block_of_Washington_Avenue_in_the_Central_West_End.jpg/960px-Homes_and_an_apartment_building_on_the_4000_block_of_Washington_Avenue_in_the_Central_West_End.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+    "image_credit": "Unknown authorUnknown author",
+    "image_license": "Public domain",
+    "image_page": "https://commons.wikimedia.org/wiki/File:Homes_and_an_apartment_building_on_the_4000_block_of_Washington_Avenue_in_the_Central_West_End.jpg",
+    "image_query": "apartment building city homes",
+    "image_source": "commons"
   },
   "a1-jobs-basic-q1": {
     "audio": "https://dict.youdao.com/dictvoice?type=2&audio=teacher",
-    "image": "https://picsum.photos/seed/a1-jobs-basic-q1/640/360"
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "A teacher",
+    "image": "https://thumb.wikimedia.org/wikipedia/commons/thumb/a/a2/Steve_Jobs_and_Bill_Gates_%28522695099%29.jpg/960px-Steve_Jobs_and_Bill_Gates_%28522695099%29.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+    "image_credit": "Joi Ito from Inbamura, Japan",
+    "image_license": "CC BY 2.0",
+    "image_page": "https://commons.wikimedia.org/wiki/File:Steve_Jobs_and_Bill_Gates_(522695099).jpg",
+    "image_query": "What people do Jobs",
+    "image_source": "commons"
   },
   "a1-jobs-basic-q2": {
     "audio": "https://dict.youdao.com/dictvoice?type=2&audio=driver",
-    "image": "https://picsum.photos/seed/a1-jobs-basic-q2/640/360"
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "driver",
+    "image": "https://thumb.wikimedia.org/wikipedia/commons/thumb/a/a2/Steve_Jobs_and_Bill_Gates_%28522695099%29.jpg/960px-Steve_Jobs_and_Bill_Gates_%28522695099%29.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+    "image_credit": "Joi Ito from Inbamura, Japan",
+    "image_license": "CC BY 2.0",
+    "image_page": "https://commons.wikimedia.org/wiki/File:Steve_Jobs_and_Bill_Gates_(522695099).jpg",
+    "image_query": "What people do Jobs",
+    "image_source": "commons"
   },
   "a1-jobs-basic-q3": {
     "audio": "https://dict.youdao.com/dictvoice?type=2&audio=doctor",
-    "image": "https://picsum.photos/seed/a1-jobs-basic-q3/640/360"
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "True",
+    "image": "https://thumb.wikimedia.org/wikipedia/commons/thumb/a/a2/Steve_Jobs_and_Bill_Gates_%28522695099%29.jpg/960px-Steve_Jobs_and_Bill_Gates_%28522695099%29.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+    "image_credit": "Joi Ito from Inbamura, Japan",
+    "image_license": "CC BY 2.0",
+    "image_page": "https://commons.wikimedia.org/wiki/File:Steve_Jobs_and_Bill_Gates_(522695099).jpg",
+    "image_query": "What people do Jobs",
+    "image_source": "commons"
   },
   "a1-money-basic-q1": {
     "audio": "https://dict.youdao.com/dictvoice?type=2&audio=cheap",
-    "image": "https://picsum.photos/seed/a1-money-basic-q1/640/360"
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "Cheap",
+    "image": "https://thumb.wikimedia.org/wikipedia/commons/thumb/3/35/%22A_sure_horse_for_the_first_money%22_LCCN2002695764-restored.jpg/960px-%22A_sure_horse_for_the_first_money%22_LCCN2002695764-restored.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+    "image_credit": "Popular Graphic Arts",
+    "image_license": "Public domain",
+    "image_page": "https://commons.wikimedia.org/wiki/File:\"A_sure_horse_for_the_first_money\"_LCCN2002695764-restored.jpg",
+    "image_query": "Money Money",
+    "image_source": "commons"
   },
   "a1-money-basic-q2": {
     "audio": "https://dict.youdao.com/dictvoice?type=2&audio=pound",
-    "image": "https://picsum.photos/seed/a1-money-basic-q2/640/360"
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "pound",
+    "image": "https://thumb.wikimedia.org/wikipedia/commons/thumb/3/35/%22A_sure_horse_for_the_first_money%22_LCCN2002695764-restored.jpg/960px-%22A_sure_horse_for_the_first_money%22_LCCN2002695764-restored.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+    "image_credit": "Popular Graphic Arts",
+    "image_license": "Public domain",
+    "image_page": "https://commons.wikimedia.org/wiki/File:\"A_sure_horse_for_the_first_money\"_LCCN2002695764-restored.jpg",
+    "image_query": "Money Money",
+    "image_source": "commons"
   },
   "a1-money-basic-q3": {
     "audio": "https://dict.youdao.com/dictvoice?type=2&audio=coin",
-    "image": "https://picsum.photos/seed/a1-money-basic-q3/640/360"
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "True",
+    "image": "https://thumb.wikimedia.org/wikipedia/commons/thumb/3/35/%22A_sure_horse_for_the_first_money%22_LCCN2002695764-restored.jpg/960px-%22A_sure_horse_for_the_first_money%22_LCCN2002695764-restored.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+    "image_credit": "Popular Graphic Arts",
+    "image_license": "Public domain",
+    "image_page": "https://commons.wikimedia.org/wiki/File:\"A_sure_horse_for_the_first_money\"_LCCN2002695764-restored.jpg",
+    "image_query": "Money Money",
+    "image_source": "commons"
   },
   "a1-numbers-age-q1": {
     "audio": "https://dict.youdao.com/dictvoice?type=2&audio=twelve",
-    "image": "https://picsum.photos/seed/a1-numbers-age-q1/640/360"
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "How old are you?",
+    "image": "https://thumb.wikimedia.org/wikipedia/commons/thumb/8/8c/Single_birthday_candle_black_background.jpg/960px-Single_birthday_candle_black_background.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+    "image_credit": "Mvolz",
+    "image_license": "CC0",
+    "image_page": "https://commons.wikimedia.org/wiki/File:Single_birthday_candle_black_background.jpg",
+    "image_query": "birthday cake candles celebration",
+    "image_source": "commons"
   },
   "a1-numbers-age-q2": {
     "audio": "https://dict.youdao.com/dictvoice?type=2&audio=old",
-    "image": "https://picsum.photos/seed/a1-numbers-age-q2/640/360"
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "I am twenty years old.",
+    "image": "https://thumb.wikimedia.org/wikipedia/commons/thumb/1/1d/Portrait_of_a_Young_Man%2C_c._1535-40%2C_Hans_Holbein_the_Younger.jpg/960px-Portrait_of_a_Young_Man%2C_c._1535-40%2C_Hans_Holbein_the_Younger.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+    "image_credit": "Hans Holbein the Younger",
+    "image_license": "Public domain",
+    "image_page": "https://commons.wikimedia.org/wiki/File:Portrait_of_a_Young_Man,_c._1535-40,_Hans_Holbein_the_Younger.jpg",
+    "image_query": "young man portrait twenty years old",
+    "image_source": "commons"
   },
   "a1-numbers-age-q3": {
     "audio": "https://dict.youdao.com/dictvoice?type=2&audio=twenty",
-    "image": "https://picsum.photos/seed/a1-numbers-age-q3/640/360"
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "I am thirteen years old.",
+    "image": "https://thumb.wikimedia.org/wikipedia/commons/thumb/e/eb/European_teenager_2008.JPG/960px-European_teenager_2008.JPG?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+    "image_credit": "jeanne (talk)",
+    "image_license": "Public domain",
+    "image_page": "https://commons.wikimedia.org/wiki/File:European_teenager_2008.JPG",
+    "image_query": "teenager portrait smiling",
+    "image_source": "commons"
+  },
+  "a1-numbers-age-q4": {
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "How old is your sister?",
+    "image": "https://thumb.wikimedia.org/wikipedia/commons/thumb/1/11/Two_children_sit_closely_on_a_soft_surface%2C_engrossed_in_a_book.jpg/960px-Two_children_sit_closely_on_a_soft_surface%2C_engrossed_in_a_book.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+    "image_credit": "Shixart1985",
+    "image_license": "CC BY 2.0",
+    "image_page": "https://commons.wikimedia.org/wiki/File:Two_children_sit_closely_on_a_soft_surface,_engrossed_in_a_book.jpg",
+    "image_query": "brother and sister children together",
+    "image_source": "commons"
+  },
+  "a1-numbers-age-q5": {
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "One, two, three, four.",
+    "image": "",
+    "image_credit": "Natiqo",
+    "image_license": "generated",
+    "image_page": "",
+    "image_query": "numbers one two three four flashcards",
+    "image_source": "card"
   },
   "a1-numbers-time-q1": {
     "audio": "https://dict.youdao.com/dictvoice?type=2&audio=time",
-    "image": "https://picsum.photos/seed/a1-numbers-time-q1/640/360"
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "It is three o'clock.",
+    "image": "",
+    "image_credit": "Natiqo",
+    "image_license": "generated",
+    "image_page": "",
+    "image_query": "wall clock showing three o'clock",
+    "image_source": "card"
   },
   "a1-numbers-time-q2": {
     "audio": "https://dict.youdao.com/dictvoice?type=2&audio=half",
-    "image": "https://picsum.photos/seed/a1-numbers-time-q2/640/360"
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "It is half past six.",
+    "image": "https://thumb.wikimedia.org/wikipedia/commons/thumb/e/e0/Slow_Time_in_Wrist_Watch_on_Dry_Leaf.jpg/960px-Slow_Time_in_Wrist_Watch_on_Dry_Leaf.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+    "image_credit": "epSos.de",
+    "image_license": "CC BY 2.0",
+    "image_page": "https://commons.wikimedia.org/wiki/File:Slow_Time_in_Wrist_Watch_on_Dry_Leaf.jpg",
+    "image_query": "analog clock half past",
+    "image_source": "commons"
   },
   "a1-numbers-time-q3": {
     "audio": "https://dict.youdao.com/dictvoice?type=2&audio=quarter",
-    "image": "https://picsum.photos/seed/a1-numbers-time-q3/640/360"
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "Excuse me, what time is it?",
+    "image": "https://thumb.wikimedia.org/wikipedia/commons/thumb/c/c7/Lone_Stranger_in_the_Snow_%28Unsplash%29.jpg/960px-Lone_Stranger_in_the_Snow_%28Unsplash%29.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+    "image_credit": "Austin Scherbarth ascherby",
+    "image_license": "CC0",
+    "image_page": "https://commons.wikimedia.org/wiki/File:Lone_Stranger_in_the_Snow_(Unsplash).jpg",
+    "image_query": "person asking stranger the time street",
+    "image_source": "commons"
+  },
+  "a1-numbers-time-q4": {
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "It is nine o'clock.",
+    "image": "",
+    "image_credit": "Natiqo",
+    "image_license": "generated",
+    "image_page": "",
+    "image_query": "clock face nine o'clock morning",
+    "image_source": "card"
   },
   "a1-objects-basic-q1": {
     "audio": "https://dict.youdao.com/dictvoice?type=2&audio=key",
-    "image": "https://picsum.photos/seed/a1-objects-basic-q1/640/360"
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "I have an umbrella.",
+    "image": "https://thumb.wikimedia.org/wikipedia/commons/thumb/5/54/%28Sculpture%29_%22Out_in_the_rain.%22%2C_from_Robert_N._Dennis_collection_of_stereoscopic_views.jpg/960px-%28Sculpture%29_%22Out_in_the_rain.%22%2C_from_Robert_N._Dennis_collection_of_stereoscopic_views.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+    "image_credit": "Unknown artistUnknown artist",
+    "image_license": "Public domain",
+    "image_page": "https://commons.wikimedia.org/wiki/File:(Sculpture)_\"Out_in_the_rain.\",_from_Robert_N._Dennis_collection_of_stereoscopic_views.jpg",
+    "image_query": "open umbrella rain colour",
+    "image_source": "commons"
   },
   "a1-objects-basic-q2": {
     "audio": "https://dict.youdao.com/dictvoice?type=2&audio=pen",
-    "image": "https://picsum.photos/seed/a1-objects-basic-q2/640/360"
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "I write with a pen.",
+    "image": "https://thumb.wikimedia.org/wikipedia/commons/thumb/8/86/Cumberland_Pencil_Van%2C_Derwent_Pencil_Museum.jpg/960px-Cumberland_Pencil_Van%2C_Derwent_Pencil_Museum.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+    "image_credit": "Dominic Nelson",
+    "image_license": "CC BY-SA 4.0",
+    "image_page": "https://commons.wikimedia.org/wiki/File:Cumberland_Pencil_Van,_Derwent_Pencil_Museum.jpg",
+    "image_query": "pen and pencil stationery",
+    "image_source": "commons"
   },
   "a1-objects-basic-q3": {
     "audio": "https://dict.youdao.com/dictvoice?type=2&audio=clock",
-    "image": "https://picsum.photos/seed/a1-objects-basic-q3/640/360"
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "A key and a phone.",
+    "image": "",
+    "image_credit": "Natiqo",
+    "image_license": "generated",
+    "image_page": "",
+    "image_query": "keys and mobile phone on table",
+    "image_source": "card"
+  },
+  "a1-objects-basic-q4": {
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "Please open the window.",
+    "image": "https://thumb.wikimedia.org/wikipedia/commons/thumb/f/f2/Depressed_man_stands_on_stool_drinking_from_glass_in_empty_room_with_open_windows_overlooking_trees_in_daylight.jpg/960px-Depressed_man_stands_on_stool_drinking_from_glass_in_empty_room_with_open_windows_overlooking_trees_in_daylight.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+    "image_credit": "Shixart1985",
+    "image_license": "CC BY 2.0",
+    "image_page": "https://commons.wikimedia.org/wiki/File:Depressed_man_stands_on_stool_drinking_from_glass_in_empty_room_with_open_windows_overlooking_trees_in_daylight.jpg",
+    "image_query": "open window room daylight",
+    "image_source": "commons"
+  },
+  "a1-objects-plurals-q1": {
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "Box, boxes.",
+    "image": "https://thumb.wikimedia.org/wikipedia/commons/thumb/5/58/Stacks_of_Ontario_fruit_boxes_in_Montreal%2C_August_15_2024.jpg/960px-Stacks_of_Ontario_fruit_boxes_in_Montreal%2C_August_15_2024.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+    "image_credit": "Shawn à Montréal",
+    "image_license": "CC0",
+    "image_page": "https://commons.wikimedia.org/wiki/File:Stacks_of_Ontario_fruit_boxes_in_Montreal,_August_15_2024.jpg",
+    "image_query": "cardboard boxes stacked",
+    "image_source": "commons"
+  },
+  "a1-objects-plurals-q2": {
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "There are three books on the table.",
+    "image": "https://thumb.wikimedia.org/wikipedia/commons/thumb/6/6c/Books_in_stack_with_lamps_%28Unsplash%29.jpg/960px-Books_in_stack_with_lamps_%28Unsplash%29.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+    "image_credit": "chuttersnap chuttersnap",
+    "image_license": "CC0",
+    "image_page": "https://commons.wikimedia.org/wiki/File:Books_in_stack_with_lamps_(Unsplash).jpg",
+    "image_query": "stack of books on a table",
+    "image_source": "commons"
+  },
+  "a1-objects-plurals-q3": {
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "These pens are new.",
+    "image": "",
+    "image_credit": "Natiqo",
+    "image_license": "generated",
+    "image_page": "",
+    "image_query": "several pens on desk close up",
+    "image_source": "card"
+  },
+  "a1-objects-plurals-q4": {
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "These are my keys.",
+    "image": "https://thumb.wikimedia.org/wikipedia/commons/thumb/1/13/Set_of_eight_hex_allen_keys_on_ring_on_table.jpg/960px-Set_of_eight_hex_allen_keys_on_ring_on_table.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+    "image_credit": "Leon Brooks",
+    "image_license": "Public domain",
+    "image_page": "https://commons.wikimedia.org/wiki/File:Set_of_eight_hex_allen_keys_on_ring_on_table.jpg",
+    "image_query": "set of keys on a table",
+    "image_source": "commons"
   },
   "a1-routine-basic-q1": {
     "audio": "https://dict.youdao.com/dictvoice?type=2&audio=wake%20up",
-    "image": "https://picsum.photos/seed/a1-routine-basic-q1/640/360"
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "Wake up",
+    "image": "",
+    "image_credit": "Natiqo",
+    "image_license": "generated",
+    "image_page": "",
+    "image_query": "My day Daily routine",
+    "image_source": "card"
   },
   "a1-routine-basic-q2": {
     "audio": "https://dict.youdao.com/dictvoice?type=2&audio=brush",
-    "image": "https://picsum.photos/seed/a1-routine-basic-q2/640/360"
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "brush",
+    "image": "",
+    "image_credit": "Natiqo",
+    "image_license": "generated",
+    "image_page": "",
+    "image_query": "My day Daily routine",
+    "image_source": "card"
   },
   "a1-routine-basic-q3": {
     "audio": "https://dict.youdao.com/dictvoice?type=2&audio=lunch",
-    "image": "https://picsum.photos/seed/a1-routine-basic-q3/640/360"
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "False",
+    "image": "",
+    "image_credit": "Natiqo",
+    "image_license": "generated",
+    "image_page": "",
+    "image_query": "My day Daily routine",
+    "image_source": "card"
   },
   "a1-school-basic-q1": {
     "audio": "https://dict.youdao.com/dictvoice?type=2&audio=classroom",
-    "image": "https://picsum.photos/seed/a1-school-basic-q1/640/360"
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "The teacher writes on the board.",
+    "image": "https://thumb.wikimedia.org/wikipedia/commons/thumb/7/75/Physics_Tutor.jpg/960px-Physics_Tutor.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+    "image_credit": "Preply.com Images",
+    "image_license": "CC BY 2.0",
+    "image_page": "https://commons.wikimedia.org/wiki/File:Physics_Tutor.jpg",
+    "image_query": "whiteboard classroom teacher writing",
+    "image_source": "commons"
   },
   "a1-school-basic-q2": {
     "audio": "https://dict.youdao.com/dictvoice?type=2&audio=notebook",
-    "image": "https://picsum.photos/seed/a1-school-basic-q2/640/360"
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "We do our homework at home.",
+    "image": "",
+    "image_credit": "Natiqo",
+    "image_license": "generated",
+    "image_page": "",
+    "image_query": "child writing homework at a desk",
+    "image_source": "card"
   },
   "a1-school-basic-q3": {
     "audio": "https://dict.youdao.com/dictvoice?type=2&audio=school",
-    "image": "https://picsum.photos/seed/a1-school-basic-q3/640/360"
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "Open your book, please.",
+    "image": "https://thumb.wikimedia.org/wikipedia/commons/thumb/6/68/The_animals_and_man%3B_an_elementary_textbook_of_zoology_and_human_physiology_%281911%29_%2814598203068%29.jpg/960px-The_animals_and_man%3B_an_elementary_textbook_of_zoology_and_human_physiology_%281911%29_%2814598203068%29.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+    "image_credit": "Internet Archive Book Images",
+    "image_license": "No restrictions",
+    "image_page": "https://commons.wikimedia.org/wiki/File:The_animals_and_man;_an_elementary_textbook_of_zoology_and_human_physiology_(1911)_(14598203068).jpg",
+    "image_query": "student opening textbook in class",
+    "image_source": "commons"
+  },
+  "a1-school-basic-q4": {
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "A desk and a ruler.",
+    "image": "https://thumb.wikimedia.org/wikipedia/commons/thumb/6/68/StateLibQld_1_112832_Interior_view_of_a_classroom%2C_1910-1920.jpg/960px-StateLibQld_1_112832_Interior_view_of_a_classroom%2C_1910-1920.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+    "image_credit": "",
+    "image_license": "Public domain",
+    "image_page": "https://commons.wikimedia.org/wiki/File:StateLibQld_1_112832_Interior_view_of_a_classroom,_1910-1920.jpg",
+    "image_query": "school desk and ruler classroom",
+    "image_source": "commons"
+  },
+  "a1-school-basic-q5": {
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "Please sit down.",
+    "image": "https://thumb.wikimedia.org/wikipedia/commons/thumb/3/37/Girls_at_Albany_Senior_School_in_Enfield_during_a_lesson_on_American_History%2C_1943._D13781.jpg/960px-Girls_at_Albany_Senior_School_in_Enfield_during_a_lesson_on_American_History%2C_1943._D13781.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+    "image_credit": "Ministry of Information Photo Division Photographer",
+    "image_license": "Public domain",
+    "image_page": "https://commons.wikimedia.org/wiki/File:Girls_at_Albany_Senior_School_in_Enfield_during_a_lesson_on_American_History,_1943._D13781.jpg",
+    "image_query": "pupils sitting at desks classroom",
+    "image_source": "commons"
   },
   "a1-shopping-basic-q1": {
     "audio": "https://dict.youdao.com/dictvoice?type=2&audio=supermarket",
-    "image": "https://picsum.photos/seed/a1-shopping-basic-q1/640/360"
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "A supermarket",
+    "image": "https://thumb.wikimedia.org/wikipedia/commons/thumb/0/08/Albert_Heijn_paper_shopping_bag_%282019%29_03.jpg/960px-Albert_Heijn_paper_shopping_bag_%282019%29_03.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+    "image_credit": "Donald Trung Quoc Don (Chữ Hán: 徵國單) - Wikimedia Commons.(Want to use this image?)",
+    "image_license": "CC BY-SA 4.0",
+    "image_page": "https://commons.wikimedia.org/wiki/File:Albert_Heijn_paper_shopping_bag_(2019)_03.jpg",
+    "image_query": "Going shopping Shopping",
+    "image_source": "commons"
   },
   "a1-shopping-basic-q2": {
     "audio": "https://dict.youdao.com/dictvoice?type=2&audio=price",
-    "image": "https://picsum.photos/seed/a1-shopping-basic-q2/640/360"
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "price",
+    "image": "https://thumb.wikimedia.org/wikipedia/commons/thumb/0/08/Albert_Heijn_paper_shopping_bag_%282019%29_03.jpg/960px-Albert_Heijn_paper_shopping_bag_%282019%29_03.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+    "image_credit": "Donald Trung Quoc Don (Chữ Hán: 徵國單) - Wikimedia Commons.(Want to use this image?)",
+    "image_license": "CC BY-SA 4.0",
+    "image_page": "https://commons.wikimedia.org/wiki/File:Albert_Heijn_paper_shopping_bag_(2019)_03.jpg",
+    "image_query": "Going shopping Shopping",
+    "image_source": "commons"
   },
   "a1-shopping-basic-q3": {
     "audio": "https://dict.youdao.com/dictvoice?type=2&audio=checkout",
-    "image": "https://picsum.photos/seed/a1-shopping-basic-q3/640/360"
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "True",
+    "image": "https://thumb.wikimedia.org/wikipedia/commons/thumb/0/08/Albert_Heijn_paper_shopping_bag_%282019%29_03.jpg/960px-Albert_Heijn_paper_shopping_bag_%282019%29_03.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+    "image_credit": "Donald Trung Quoc Don (Chữ Hán: 徵國單) - Wikimedia Commons.(Want to use this image?)",
+    "image_license": "CC BY-SA 4.0",
+    "image_page": "https://commons.wikimedia.org/wiki/File:Albert_Heijn_paper_shopping_bag_(2019)_03.jpg",
+    "image_query": "Going shopping Shopping",
+    "image_source": "commons"
   },
   "a1-town-directions-q1": {
     "audio": "https://dict.youdao.com/dictvoice?type=2&audio=bank",
-    "image": "https://picsum.photos/seed/a1-town-directions-q1/640/360"
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "Excuse me, where is the station?",
+    "image": "https://thumb.wikimedia.org/wikipedia/commons/thumb/7/79/Bahay_na_Bato_directions-2.jpg/960px-Bahay_na_Bato_directions-2.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+    "image_credit": "BlueHairPrncss",
+    "image_license": "CC0",
+    "image_page": "https://commons.wikimedia.org/wiki/File:Bahay_na_Bato_directions-2.jpg",
+    "image_query": "asking directions on the street",
+    "image_source": "commons"
   },
   "a1-town-directions-q2": {
     "audio": "https://dict.youdao.com/dictvoice?type=2&audio=straight",
-    "image": "https://picsum.photos/seed/a1-town-directions-q2/640/360"
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "The bank is next to the post office.",
+    "image": "https://upload.wikimedia.org/wikipedia/commons/d/dd/SLNSW_11924_Protestant_Alliance_Building_for_Building_Publishing_Co_Front_view_showing_the_two_historic_opposition_firms_of_Cheetham_and_Milham_Cutlers_tiny_shops_side_by_side_Ted_Hood_1988.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail_unscaled",
+    "image_credit": "Sam Hood",
+    "image_license": "Public domain",
+    "image_page": "https://commons.wikimedia.org/wiki/File:SLNSW_11924_Protestant_Alliance_Building_for_Building_Publishing_Co_Front_view_showing_the_two_historic_opposition_firms_of_Cheetham_and_Milham_Cutlers_tiny_shops_side_by_side_Ted_Hood_1988.jpg",
+    "image_query": "two shops side by side on a street",
+    "image_source": "commons"
   },
   "a1-town-directions-q3": {
     "audio": "https://dict.youdao.com/dictvoice?type=2&audio=right",
-    "image": "https://picsum.photos/seed/a1-town-directions-q3/640/360"
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "Go straight on, then turn left at the school.",
+    "image": "https://thumb.wikimedia.org/wikipedia/commons/thumb/4/4d/Jefferson_High_School_sign_Jefferson_County_WV_2022-08-07_11-25-54.jpg/960px-Jefferson_High_School_sign_Jefferson_County_WV_2022-08-07_11-25-54.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+    "image_credit": "G. Edward Johnson",
+    "image_license": "CC BY 4.0",
+    "image_page": "https://commons.wikimedia.org/wiki/File:Jefferson_High_School_sign_Jefferson_County_WV_2022-08-07_11-25-54.jpg",
+    "image_query": "road junction with a school sign",
+    "image_source": "commons"
+  },
+  "a1-town-directions-q4": {
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "A bus stop is a place where you wait for a bus.",
+    "image": "https://thumb.wikimedia.org/wikipedia/commons/thumb/a/a2/Bus_Stop_%28Gold_and_Sands_Streets%29.jpg/960px-Bus_Stop_%28Gold_and_Sands_Streets%29.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+    "image_credit": "Mohpreme",
+    "image_license": "CC BY-SA 4.0",
+    "image_page": "https://commons.wikimedia.org/wiki/File:Bus_Stop_(Gold_and_Sands_Streets).jpg",
+    "image_query": "bus stop sign city street",
+    "image_source": "commons"
   },
   "a1-town-places-q1": {
     "audio": "https://dict.youdao.com/dictvoice?type=2&audio=bus",
-    "image": "https://picsum.photos/seed/a1-town-places-q1/640/360"
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "The pharmacy.",
+    "image": "https://thumb.wikimedia.org/wikipedia/commons/thumb/0/0e/Pharmacist_at_People%27s_Drug_Store%2C_No._5%2C_8th_and_H_Streets%2C_N.E.%2C_Washington%2C_D.C.%2C_looking_at_prescriptions%28%3F%29_on_the_counter_in_room_lined_with_shelves_of_pharmacy_bottles_LCCN2001701714.jpg/960px-thumbnail.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+    "image_credit": "National Photo Company Collection",
+    "image_license": "Public domain",
+    "image_page": "https://commons.wikimedia.org/wiki/File:Pharmacist_at_People's_Drug_Store,_No._5,_8th_and_H_Streets,_N.E.,_Washington,_D.C.,_looking_at_prescriptions(?)_on_the_counter_in_room_lined_with_shelves_of_pharmacy_bottles_LCCN2001701714.jpg",
+    "image_query": "pharmacy shop medicine shelves",
+    "image_source": "commons"
   },
   "a1-town-places-q2": {
     "audio": "https://dict.youdao.com/dictvoice?type=2&audio=library",
-    "image": "https://picsum.photos/seed/a1-town-places-q2/640/360"
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "I send letters at the post office.",
+    "image": "https://thumb.wikimedia.org/wikipedia/commons/thumb/2/2a/King_Edward%27s_Buildings_Post_Office_%28former%29%2C_Newgate_Street%2C_London_01.jpg/960px-King_Edward%27s_Buildings_Post_Office_%28former%29%2C_Newgate_Street%2C_London_01.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+    "image_credit": "Paul the Archivist",
+    "image_license": "CC BY-SA 4.0",
+    "image_page": "https://commons.wikimedia.org/wiki/File:King_Edward's_Buildings_Post_Office_(former),_Newgate_Street,_London_01.jpg",
+    "image_query": "post office building street",
+    "image_source": "commons"
   },
   "a1-town-places-q3": {
     "audio": "https://dict.youdao.com/dictvoice?type=2&audio=bread",
-    "image": "https://picsum.photos/seed/a1-town-places-q3/640/360"
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "A market and a hospital.",
+    "image": "https://thumb.wikimedia.org/wikipedia/commons/thumb/c/c5/Trams_outside_Johannesburg_City_Hall%2C_Market_Street.jpg/960px-Trams_outside_Johannesburg_City_Hall%2C_Market_Street.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+    "image_credit": "Linton Brothers Photographic Material and Stock Importers, 61 Market Square, Sydney, photographer",
+    "image_license": "Public domain",
+    "image_page": "https://commons.wikimedia.org/wiki/File:Trams_outside_Johannesburg_City_Hall,_Market_Street.jpg",
+    "image_query": "busy street market town",
+    "image_source": "commons"
+  },
+  "a1-town-places-q4": {
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "I am going to the bank.",
+    "image": "https://thumb.wikimedia.org/wikipedia/commons/thumb/7/72/Bank_underground_station%2C_Bank_of_England_building_entrance.JPG/960px-Bank_underground_station%2C_Bank_of_England_building_entrance.JPG?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+    "image_credit": "Edgepedia",
+    "image_license": "CC BY-SA 3.0",
+    "image_page": "https://commons.wikimedia.org/wiki/File:Bank_underground_station,_Bank_of_England_building_entrance.JPG",
+    "image_query": "bank building entrance city",
+    "image_source": "commons"
   },
   "a1-weather-free-time-q1": {
     "audio": "https://dict.youdao.com/dictvoice?type=2&audio=swimming",
-    "image": "https://picsum.photos/seed/a1-weather-free-time-q1/640/360"
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "Swimming",
+    "image": "",
+    "image_credit": "Natiqo",
+    "image_license": "generated",
+    "image_page": "",
+    "image_query": "Free-time activities Weather and free time",
+    "image_source": "card"
   },
   "a1-weather-free-time-q2": {
     "audio": "https://dict.youdao.com/dictvoice?type=2&audio=read",
-    "image": "https://picsum.photos/seed/a1-weather-free-time-q2/640/360"
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "read",
+    "image": "",
+    "image_credit": "Natiqo",
+    "image_license": "generated",
+    "image_page": "",
+    "image_query": "Free-time activities Weather and free time",
+    "image_source": "card"
   },
   "a1-weather-free-time-q3": {
     "audio": "https://dict.youdao.com/dictvoice?type=2&audio=football",
-    "image": "https://picsum.photos/seed/a1-weather-free-time-q3/640/360"
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "True",
+    "image": "",
+    "image_credit": "Natiqo",
+    "image_license": "generated",
+    "image_page": "",
+    "image_query": "Free-time activities Weather and free time",
+    "image_source": "card"
   },
   "a1-weather-words-q1": {
     "audio": "https://dict.youdao.com/dictvoice?type=2&audio=rain",
-    "image": "https://picsum.photos/seed/a1-weather-words-q1/640/360"
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "raining",
+    "image": "",
+    "image_credit": "Natiqo",
+    "image_license": "generated",
+    "image_page": "",
+    "image_query": "Weather words Weather and free time",
+    "image_source": "card"
   },
   "a1-weather-words-q2": {
     "audio": "https://dict.youdao.com/dictvoice?type=2&audio=snow",
-    "image": "https://picsum.photos/seed/a1-weather-words-q2/640/360"
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "ice",
+    "image": "",
+    "image_credit": "Natiqo",
+    "image_license": "generated",
+    "image_page": "",
+    "image_query": "Weather words Weather and free time",
+    "image_source": "card"
   },
   "a1-weather-words-q3": {
     "audio": "https://dict.youdao.com/dictvoice?type=2&audio=umbrella",
-    "image": "https://picsum.photos/seed/a1-weather-words-q3/640/360"
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "True",
+    "image": "",
+    "image_credit": "Natiqo",
+    "image_license": "generated",
+    "image_page": "",
+    "image_query": "Weather words Weather and free time",
+    "image_source": "card"
+  },
+  "a1-yourself-be-q1": {
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "I am a student.",
+    "image": "https://thumb.wikimedia.org/wikipedia/commons/thumb/4/4e/US_Navy_090304-N-1688B-335_Cameroon_Navy_Lt._Cmdr._Hamadou_Lame%2C_left%2C_watches_as_students_from_the_Naval_Base_Basic_School_in_Sekondi%2C_Ghana_receive_school_books_and_supplies_donated_by_Project_Handclasp.jpg/960px-thumbnail.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+    "image_credit": "U.S. Navy photo by Mass Communication Specialist 3rd Class Matthew Bookwalter",
+    "image_license": "Public domain",
+    "image_page": "https://commons.wikimedia.org/wiki/File:US_Navy_090304-N-1688B-335_Cameroon_Navy_Lt._Cmdr._Hamadou_Lame,_left,_watches_as_students_from_the_Naval_Base_Basic_School_in_Sekondi,_Ghana_receive_school_books_and_supplies_donated_by_Project_Handclasp.jpg",
+    "image_query": "student with books school uniform",
+    "image_source": "commons"
+  },
+  "a1-yourself-be-q2": {
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "My brother is a teacher.",
+    "image": "https://thumb.wikimedia.org/wikipedia/commons/thumb/d/dc/Classroom_of_students_with_their_teachers_inside_a_Walapai_Indian_school_at_Hackbury%2C_Arizona%2C_circa_1900_%28CHS-3140%29.jpg/960px-Classroom_of_students_with_their_teachers_inside_a_Walapai_Indian_school_at_Hackbury%2C_Arizona%2C_circa_1900_%28CHS-3140%29.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+    "image_credit": "Pierce, C.C. (Charles C.), 1861-1946",
+    "image_license": "Public domain",
+    "image_page": "https://commons.wikimedia.org/wiki/File:Classroom_of_students_with_their_teachers_inside_a_Walapai_Indian_school_at_Hackbury,_Arizona,_circa_1900_(CHS-3140).jpg",
+    "image_query": "male teacher in classroom",
+    "image_source": "commons"
+  },
+  "a1-yourself-be-q3": {
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "They are from Iraq.",
+    "image": "https://thumb.wikimedia.org/wikipedia/commons/thumb/7/7a/1965_Spruner_Map_of_the_Caucasus_and_Iraq_in_Antiquity_-_Geographicus_-_CaucusesIraq-spruner-1865.jpg/960px-1965_Spruner_Map_of_the_Caucasus_and_Iraq_in_Antiquity_-_Geographicus_-_CaucusesIraq-spruner-1865.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+    "image_credit": "Karl Spruner von Mertz",
+    "image_license": "Public domain",
+    "image_page": "https://commons.wikimedia.org/wiki/File:1965_Spruner_Map_of_the_Caucasus_and_Iraq_in_Antiquity_-_Geographicus_-_CaucusesIraq-spruner-1865.jpg",
+    "image_query": "map of Iraq country outline",
+    "image_source": "commons"
+  },
+  "a1-yourself-be-q4": {
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "Are you from Basra?",
+    "image": "",
+    "image_credit": "Natiqo",
+    "image_license": "generated",
+    "image_page": "",
+    "image_query": "city skyline river Basra Iraq",
+    "image_source": "card"
+  },
+  "a1-yourself-be-q5": {
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "We are in the same class.",
+    "image": "",
+    "image_credit": "Natiqo",
+    "image_license": "generated",
+    "image_page": "",
+    "image_query": "classmates sitting together classroom",
+    "image_source": "card"
+  },
+  "a1-yourself-details-q1": {
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "I am from Iraq.",
+    "image": "https://thumb.wikimedia.org/wikipedia/commons/thumb/c/c5/Flag_of_Iraq_%2816-9%29.png/960px-Flag_of_Iraq_%2816-9%29.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+    "image_credit": "Cloudcounter",
+    "image_license": "CC0",
+    "image_page": "https://commons.wikimedia.org/wiki/File:Flag_of_Iraq_(16-9).png",
+    "image_query": "Iraqi flag national flag",
+    "image_source": "commons"
+  },
+  "a1-yourself-details-q2": {
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "Iraqi. British.",
+    "image": "https://upload.wikimedia.org/wikipedia/commons/8/80/Ukrainian_passport_for_travel_abroad.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail_unscaled",
+    "image_credit": "Ukrainian Government",
+    "image_license": "Public domain",
+    "image_page": "https://commons.wikimedia.org/wiki/File:Ukrainian_passport_for_travel_abroad.jpg",
+    "image_query": "passports travel documents",
+    "image_source": "commons"
+  },
+  "a1-yourself-details-q3": {
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "I am Iraqi.",
+    "image": "https://upload.wikimedia.org/wikipedia/commons/a/a7/President_Obama_filling_out_his_2010_census_form_-_West_Wing_Week_episode_1_-_Future_Planes_of_the_Future.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail_unscaled",
+    "image_credit": "The White House",
+    "image_license": "Public domain",
+    "image_page": "https://commons.wikimedia.org/wiki/File:President_Obama_filling_out_his_2010_census_form_-_West_Wing_Week_episode_1_-_Future_Planes_of_the_Future.png",
+    "image_query": "person filling in a form at a desk",
+    "image_source": "commons"
+  },
+  "a1-yourself-details-q4": {
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "A passport shows your name and your nationality.",
+    "image": "https://thumb.wikimedia.org/wikipedia/commons/thumb/5/51/Alice_Longfellow%27s_Passport%2C_1927_%2850ae1d57-f8b0-4527-9698-3977cb31b896%29.jpg/960px-Alice_Longfellow%27s_Passport%2C_1927_%2850ae1d57-f8b0-4527-9698-3977cb31b896%29.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+    "image_credit": "Unknown authorUnknown author",
+    "image_license": "Public domain",
+    "image_page": "https://commons.wikimedia.org/wiki/File:Alice_Longfellow's_Passport,_1927_(50ae1d57-f8b0-4527-9698-3977cb31b896).jpg",
+    "image_query": "passport document open page",
+    "image_source": "commons"
+  },
+  "a1-yourself-details-q5": {
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "My phone number is 0770 123 4567.",
+    "image": "https://thumb.wikimedia.org/wikipedia/commons/thumb/1/10/Japanese_mobile_phone_keyboard.jpg/960px-Japanese_mobile_phone_keyboard.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+    "image_credit": "Yoshi Canopus",
+    "image_license": "CC BY-SA 3.0",
+    "image_page": "https://commons.wikimedia.org/wiki/File:Japanese_mobile_phone_keyboard.jpg",
+    "image_query": "mobile phone dialling keypad",
+    "image_source": "commons"
   },
   "a2-home-places-q1": {
     "image": "https://picsum.photos/seed/a2-home-places-q1/640/360"
@@ -468,6 +1697,17 @@
   "a2-shopping-money-q4": {
     "image": "https://picsum.photos/seed/a2-shopping-money-q4/640/360"
   },
+  "a2-shopping-money-q5": {
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "Change, a receipt, cash, a kilo.",
+    "image": "https://thumb.wikimedia.org/wikipedia/commons/thumb/6/65/Euro_coins_and_banknotes.jpg/960px-Euro_coins_and_banknotes.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+    "image_credit": "Avij (talk · contribs)",
+    "image_license": "Public domain",
+    "image_page": "https://commons.wikimedia.org/wiki/File:Euro_coins_and_banknotes.jpg",
+    "image_query": "euro coins banknotes",
+    "image_source": "commons"
+  },
   "b1-health-advice-q1": {
     "image": "https://picsum.photos/seed/b1-health-advice-q1/640/360"
   },
@@ -521,6 +1761,17 @@
   },
   "b1-work-jobs-q3": {
     "image": "https://picsum.photos/seed/b1-work-jobs-q3/640/360"
+  },
+  "b1-work-jobs-q4": {
+    "audio_engine": "sapi:Microsoft Zira Desktop",
+    "audio_rate": "-1",
+    "audio_text": "A nurse, a chef, a mechanic, a postman.",
+    "image": "",
+    "image_credit": "Natiqo",
+    "image_license": "generated",
+    "image_page": "",
+    "image_query": "nurse chef mechanic postman uniform",
+    "image_source": "card"
   },
   "b2-environment-problems-q1": {
     "image": "https://picsum.photos/seed/b2-environment-problems-q1/640/360"

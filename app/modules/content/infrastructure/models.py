@@ -162,8 +162,10 @@ class QuestionModel(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     skill: Mapped[str] = mapped_column(String(20), nullable=False)
     prompt: Mapped[str] = mapped_column(Text, nullable=False)
     choices: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
-    #: Answer keys for free-text items, already normalised by the domain. Empty for
-    #: every other kind.
+    #: The answer key, in whatever shape the kind stores it: accepted spellings for
+    #: free-text items (normalised by the domain), the chosen set for a multi-select, and
+    #: ``"left => right"`` pairs for a matching question — which is the one kind stored
+    #: un-folded, because those halves are also the prompts and options a learner reads.
     accepted_answers: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
     #: Index into ``choices``. ``NULL`` for free-text items.
     correct_index: Mapped[int | None] = mapped_column(Integer)

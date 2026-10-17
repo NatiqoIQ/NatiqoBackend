@@ -24,6 +24,7 @@ from app.modules.content.domain.policy import (
     InvalidContentState,
     assert_transition_allowed,
     assert_valid_position,
+    dedupe_strings,
     normalise_accepted_answers,
     question_shape_problems,
 )
@@ -161,6 +162,14 @@ class Question:
     rationale; ``image_url`` and ``audio_url`` are optional pre-attempt aids that
     illustrate or pronounce the word or sentence being taught. The presentation layer
     decides which of them a learner may see and when (see ``presentation/schemas.py``).
+
+    How the two lists are read depends on the kind, and a matching question is the one
+    worth spelling out: its ``accepted_answers`` are ``"left => right"`` pairs rather than
+    a set of accepted spellings, and its ``choices`` are the options those rights are paired
+    against. Everything else follows the same division as it always has — free-text kinds
+    keep their accepted spellings in ``accepted_answers``, choice kinds keep their options
+    in ``choices`` with ``correct_index`` pointing at the right one, and an ordering
+    question simply stores its sequence in ``choices``.
     """
 
     id: ContentId
@@ -185,11 +194,19 @@ class Question:
                 "can never be scored."
             )
         # ``accepted_answers`` is normalised once here so that marking does not have to
-        # re-derive the comparable form on every comparison.
+        # re-derive the comparable form on every comparison. A matching question is the one
+        # exception, and it is a deliberate one: its key is compared half by half — left
+        # against left, right against right — rather than by looking a whole entry up in a
+        # set, so folding it here would buy grading nothing while costing the learner the
+        # authored spelling of the prompts it serves. Marking folds both halves as it
+        # compares; storage keeps the capitals. Duplicates still go, because a second copy of
+        # the same pair is an authoring slip whatever the kind.
         object.__setattr__(
             self,
             "accepted_answers",
-            normalise_accepted_answers(self.accepted_answers),
+            dedupe_strings(self.accepted_answers)
+            if self.kind is QuestionKind.MATCHING
+            else normalise_accepted_answers(self.accepted_answers),
         )
         problems = question_shape_problems(
             self.kind,

@@ -85,6 +85,11 @@ uv run pyright
 uv run pytest
 ```
 
+The suite includes a drift check on the client guides: every payload example in
+[docs/client-contract.md](docs/client-contract.md) and the two mobile guides is compared
+against the component schema it documents, so a field that reaches the schema without
+reaching the guide — or a field renamed in an example — fails the build.
+
 ## Demo data
 
 Two seeders, deliberately separate: one owns **accounts**, the other owns the
@@ -94,9 +99,9 @@ also rewrite published course material.
 ### The curriculum — `scripts/seed_content.py`
 
 A complete six-level course, so the catalogue routes return a course rather than a
-sample. 6 levels (A1–C2), 18 units, 37 lessons and 114 questions, every row published and
-every question graded — multiple choice, true/false and fill-in-the-blank, spread across
-all six tracked skills.
+sample. 6 levels (A1–C2), 40 units, 66 lessons and 233 questions, every row published and
+every question graded — multiple choice, multi-select, true/false, fill-in-the-blank,
+word-bank, ordering and matching, spread across all six tracked skills.
 
 ```bash
 uv run python -m scripts.seed_content --dry-run        # show the plan, write nothing
@@ -114,6 +119,29 @@ free while renaming a slug orphans whatever progress is keyed on the old id. `--
 adds one unpublished unit and one unpublished lesson for exercising the `404` paths; their
 positions are computed from the declaration, because a literal one would collide with a
 published sibling as soon as the course grows.
+
+### The media — `scripts/generate_media.py`
+
+Every question carries an image and an audio aid, and both are produced locally rather
+than hot-linked to a third-party host that may not be reachable from a build machine:
+
+```bash
+uv run python -m scripts.generate_media --dry-run                  # report the plan
+uv run python -m scripts.generate_media --yes                      # generate what is missing
+uv run python -m scripts.generate_media --yes --force --level A1   # regenerate one level
+uv run python -m scripts.generate_media --yes --slug a1-greetings-hello-q2   # regenerate one
+```
+
+Images are searched on Wikimedia Commons with a phrase the question itself declares, and
+re-framed to a 640×360 JPEG; a question whose picture cannot be sourced gets a drawn card
+instead, so no item ships without one. Audio is spoken by the machine's own synthesiser and
+encoded to MP3 with `ffmpeg`, which is why a listening item can pronounce a whole sentence.
+Provenance — the Commons file, its licence and its credit — is recorded in
+`media/sources.json`, the same manifest [scripts/fetch_media.py](scripts/fetch_media.py)
+reads when it is used to pull media from remote hosts instead.
+
+Neither script is needed to run the API: `media/` is committed content, served from
+`/media` by the app itself.
 
 ### The accounts — `scripts/seed.py`
 
@@ -245,6 +273,3 @@ rather than to imply they work.
 
 `app/platform/ai/prompts.py` already holds the prompt templates and CEFR guidance the
 AI context will need, and is not yet imported by any route.
-
-#   N a t i q o  
- 
