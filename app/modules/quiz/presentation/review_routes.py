@@ -61,6 +61,7 @@ def _question_response(view: QuestionView) -> SessionQuestionResponse:
         points=view.points,
         image_url=view.image_url,
         audio_url=view.audio_url,
+        prompts=list(view.prompts),
     )
 
 
@@ -152,7 +153,13 @@ async def answer_review_card(
     view: ReviewedCardView = await service.answer_card(
         user.id,
         card_id,
-        answer=SubmittedAnswer(choice=payload.choice, text=payload.text),
+        answer=SubmittedAnswer(
+            choice=payload.choice,
+            text=payload.text,
+            choices=tuple(payload.choices or ()),
+            order=tuple(payload.order or ()),
+            matching=tuple(payload.matching or ()),
+        ),
     )
     return ReviewedCardResponse.model_validate(view)
 

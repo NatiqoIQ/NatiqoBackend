@@ -45,6 +45,10 @@ dev = [
     "aiosqlite>=0.20",
     "ruff>=0.8",
     "pyright>=1.1.379",
+    # Needed only by ``scripts/generate_media.py``, which re-frames a fetched picture into
+    # the catalogue's 640x360 card and draws the fallback card. Kept out of the runtime
+    # dependencies on purpose: nothing the API serves at request time imports it.
+    "pillow>=11.0",
 ]
 
 [build-system]
@@ -63,6 +67,9 @@ dev = [
     "aiosqlite>=0.20",
     "ruff>=0.8",
     "pyright>=1.1.379",
+    # See the note above, in ``[project.optional-dependencies]``: this duplicate of the
+    # dev group exists so ``uv`` and ``pip install .[dev]`` resolve the same tools.
+    "pillow>=11.0",
 ]
 
 [tool.uv]

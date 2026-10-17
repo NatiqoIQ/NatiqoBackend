@@ -960,6 +960,11 @@ PUBLIC_QUESTION_FIELDS = {
     "points",
     "imageUrl",
     "audioUrl",
+    # The items a matching question asks the learner to pair up. Public like a multiple
+    # choice's options, and for the same reason: it says what is being asked and nothing about
+    # what the answer is. The bank they are paired against is the half a shift in order could
+    # give away, so it is the half the shared catalogue withholds.
+    "prompts",
 }
 
 #: Never crosses the wire before an attempt, in either spelling.
@@ -1301,6 +1306,66 @@ async def test_a_free_text_question_keeps_the_same_field_set(
     assert set(question) == PUBLIC_QUESTION_FIELDS
     assert question["choices"] == []
     assert question["kind"] == QuestionKind.FILL_BLANK.value
+
+
+async def test_an_ordering_question_hides_its_choices_in_the_catalogue(
+    client: AsyncClient, content_db: AsyncSession
+) -> None:
+    """An ordering question stores its choices in the answer order, so the shared,
+    cacheable catalogue must show none of them. The answerable, shuffled list belongs to
+    the quiz session, which has a per-learner seed to reshuffle against."""
+    ids = await seed_catalogue(content_db)
+    lesson = await content_db.get(LessonModel, ids["A2-lesson-1"])
+    assert lesson is not None
+    questions = (
+        await content_db.scalars(select(QuestionModel).where(QuestionModel.lesson_id == lesson.id))
+    ).all()
+    questions[0].kind = QuestionKind.ORDERING.value
+    questions[0].choices = ["First", "Second", "Third", "Fourth"]
+    questions[0].correct_index = None
+    questions[0].accepted_answers = []
+    await content_db.commit()
+
+    response = await client.get(f"/api/v1/content/lessons/{lesson.id}")
+    question = response.json()["questions"][0]
+
+    assert set(question) == PUBLIC_QUESTION_FIELDS
+    assert question["kind"] == QuestionKind.ORDERING.value
+    assert question["choices"] == []
+
+
+async def test_a_matching_question_shows_its_prompts_and_hides_its_bank(
+    client: AsyncClient, content_db: AsyncSession
+) -> None:
+    """Half of a matching question is public and half of it is not.
+
+    The prompts are, for the same reason a multiple choice shows its options: knowing that
+    ``Dog`` is to be paired with something says nothing about what. The bank is the half a
+    shift in order could give away — the order it is stored in is the order of the pairs — and
+    this is a shared, cacheable read with no per-learner seed to shuffle against, so it waits
+    for the session. Both halves are asserted here so neither drifts into the other's slot.
+    """
+    ids = await seed_catalogue(content_db)
+    lesson = await content_db.get(LessonModel, ids["A2-lesson-1"])
+    assert lesson is not None
+    questions = (
+        await content_db.scalars(select(QuestionModel).where(QuestionModel.lesson_id == lesson.id))
+    ).all()
+    questions[0].kind = QuestionKind.MATCHING.value
+    questions[0].choices = ["kelb", "qitt", "far"]
+    questions[0].correct_index = None
+    questions[0].accepted_answers = ["Dog => kelb", "Cat => qitt"]
+    await content_db.commit()
+
+    response = await client.get(f"/api/v1/content/lessons/{lesson.id}")
+    question = response.json()["questions"][0]
+
+    assert set(question) == PUBLIC_QUESTION_FIELDS
+    assert question["kind"] == QuestionKind.MATCHING.value
+    assert question["prompts"] == ["Dog", "Cat"]
+    assert question["choices"] == []
+    for leaked in ANSWER_KEY_FIELDS:
+        assert leaked not in question, f"{leaked} would hand out the pairing"
 
 
 async def test_a_lesson_with_no_questions_is_still_a_readable_page(
@@ -1921,6 +1986,289 @@ async def test_an_unknown_session_is_not_found(
 
     assert response.status_code == 404
     assert error_code(response) == "QUIZ_SESSION_NOT_FOUND"
+
+
+async def test_a_multi_select_answer_is_graded_over_the_wire(
+    client: AsyncClient, content_db: AsyncSession
+) -> None:
+    """The multi-select contract end to end: choices in, a verdict and the key out.
+
+    Pins the one new request field (``answer.choices``) at the wire layer, where an
+    ``extra="forbid"`` schema would otherwise reject it as a 422 rather than grade it.
+    """
+    headers, lesson_id = await _quiz_context(client, content_db)
+    question = QuestionModel(
+        id=uuid.uuid4(),
+        lesson_id=lesson_id,
+        position=2,
+        kind=QuestionKind.MULTI_SELECT.value,
+        skill=SkillKind.VOCABULARY.value,
+        prompt="Which of these can greet someone?",
+        choices=["Hello", "Good morning", "Goodbye"],
+        accepted_answers=["Hello", "Good morning"],
+        correct_index=None,
+        explanation="Both are greetings.",
+        points=2,
+    )
+    content_db.add(question)
+    await content_db.commit()
+
+    started = await _start_quiz(client, headers, lesson_id)
+    session_id = started["session"]["id"]
+    served = next(q for q in started["questions"] if q["id"] == str(question.id))
+    assert served["kind"] == "multi_select"
+    for leaked in ANSWER_KEY_FIELDS:
+        assert leaked not in served
+
+    response = await client.post(
+        f"/api/v1/quiz/sessions/{session_id}",
+        json={
+            "op": "answer",
+            "questionId": str(question.id),
+            "answer": {"choices": ["Hello", "Good morning"]},
+        },
+        headers=headers,
+    )
+
+    assert response.status_code == 200, response.text
+    result = response.json()["result"]
+    assert result["isCorrect"] is True
+    assert result["pointsAwarded"] == 2
+    assert set(result["correctAnswer"]["choices"].split(", ")) == {"Hello", "Good morning"}
+
+
+async def test_an_ordering_answer_is_graded_over_the_wire(
+    client: AsyncClient, content_db: AsyncSession
+) -> None:
+    """The ordering contract end to end: a sequence in, a verdict and the key out.
+
+    Pins the one new request field (``answer.order``) at the wire layer, and the invariant
+    that the served sequence is a de-arrangement of the answer — never the answer itself.
+    """
+    headers, lesson_id = await _quiz_context(client, content_db)
+    authored = ["Hello!", "How are you?", "I am fine.", "Goodbye!"]
+    question = QuestionModel(
+        id=uuid.uuid4(),
+        lesson_id=lesson_id,
+        position=3,
+        kind=QuestionKind.ORDERING.value,
+        skill=SkillKind.READING.value,
+        prompt="Put the lines of the greeting in order.",
+        choices=list(authored),
+        accepted_answers=[],
+        correct_index=None,
+        explanation="A greeting opens, asks, answers, then closes.",
+        points=2,
+    )
+    content_db.add(question)
+    await content_db.commit()
+
+    started = await _start_quiz(client, headers, lesson_id)
+    session_id = started["session"]["id"]
+    served = next(q for q in started["questions"] if q["id"] == str(question.id))
+    assert served["kind"] == "ordering"
+    assert sorted(served["choices"]) == sorted(authored)
+    assert served["choices"] != authored
+    for leaked in ANSWER_KEY_FIELDS:
+        assert leaked not in served
+
+    response = await client.post(
+        f"/api/v1/quiz/sessions/{session_id}",
+        json={
+            "op": "answer",
+            "questionId": str(question.id),
+            "answer": {"order": authored},
+        },
+        headers=headers,
+    )
+
+    assert response.status_code == 200, response.text
+    result = response.json()["result"]
+    assert result["isCorrect"] is True
+    assert result["pointsAwarded"] == 2
+    assert result["correctAnswer"]["order"] == "Hello! → How are you? → I am fine. → Goodbye!"
+
+
+#: A matching question's pairs, as a wrong answer and as the key. Declared once so the tests
+#: below cannot disagree about what the question is while agreeing about its shape.
+_MATCHING_PAIRS = (("Monday", "1"), ("Tuesday", "2"), ("Wednesday", "3"))
+
+
+def _matching_question(lesson_id: uuid.UUID, *, position: int) -> QuestionModel:
+    """A matching row as the seed would write it: pairs stored, ``choices`` as the bank."""
+    return QuestionModel(
+        id=uuid.uuid4(),
+        lesson_id=lesson_id,
+        position=position,
+        kind=QuestionKind.MATCHING.value,
+        skill=SkillKind.VOCABULARY.value,
+        prompt="Match each day to its place in the week.",
+        choices=["1", "2", "3", "4"],
+        accepted_answers=[f"{left} => {right}" for left, right in _MATCHING_PAIRS],
+        correct_index=None,
+        explanation="The week starts on Monday.",
+        points=2,
+    )
+
+
+async def test_a_matching_answer_is_graded_over_the_wire(
+    client: AsyncClient, content_db: AsyncSession
+) -> None:
+    """The matching contract end to end: a set of pairs in, a verdict and the key out.
+
+    Pins the two new surface fields — ``prompts`` on the served question and
+    ``answer.matching`` on the request — and the invariant that keeps the pairing server-side:
+    the bank is reordered so that no option stands opposite the prompt it answers, which is
+    the arrangement the authored order would produce.
+    """
+    headers, lesson_id = await _quiz_context(client, content_db)
+    question = _matching_question(lesson_id, position=4)
+    content_db.add(question)
+    await content_db.commit()
+
+    started = await _start_quiz(client, headers, lesson_id)
+    session_id = started["session"]["id"]
+    served = next(q for q in started["questions"] if q["id"] == str(question.id))
+    assert served["kind"] == "matching"
+    assert served["prompts"] == [left for left, _ in _MATCHING_PAIRS]
+    assert sorted(served["choices"]) == ["1", "2", "3", "4"]
+    assert all(
+        served["choices"][position] != dict(_MATCHING_PAIRS)[prompt]
+        for position, prompt in enumerate(served["prompts"])
+    )
+    for leaked in ANSWER_KEY_FIELDS:
+        assert leaked not in served
+
+    response = await client.post(
+        f"/api/v1/quiz/sessions/{session_id}",
+        json={
+            "op": "answer",
+            "questionId": str(question.id),
+            "answer": {"matching": [f"{left} => {right}" for left, right in _MATCHING_PAIRS]},
+        },
+        headers=headers,
+    )
+
+    assert response.status_code == 200, response.text
+    result = response.json()["result"]
+    assert result["isCorrect"] is True
+    assert result["pointsAwarded"] == 2
+    assert result["correctAnswer"]["pairs"] == "Monday ⇒ 1; Tuesday ⇒ 2; Wednesday ⇒ 3"
+
+
+async def test_a_wrong_matching_pairing_is_wrong_and_a_retry_is_worth_half(
+    client: AsyncClient, content_db: AsyncSession
+) -> None:
+    """Every prompt is answered with a real option; the pairings are simply wrong.
+
+    That is an answer, not a malformed request — the distinction the grading rule exists to
+    make — and the retry that follows it is the one place the halved-points rule can be seen
+    over the wire for this kind.
+    """
+    headers, lesson_id = await _quiz_context(client, content_db)
+    question = _matching_question(lesson_id, position=4)
+    content_db.add(question)
+    await content_db.commit()
+
+    started = await _start_quiz(client, headers, lesson_id)
+    session_id = started["session"]["id"]
+    url = f"/api/v1/quiz/sessions/{session_id}"
+
+    wrong = await client.post(
+        url,
+        json={
+            "op": "answer",
+            "questionId": str(question.id),
+            "answer": {"matching": ["Monday => 2", "Tuesday => 1", "Wednesday => 3"]},
+        },
+        headers=headers,
+    )
+
+    assert wrong.status_code == 200, wrong.text
+    assert wrong.json()["result"]["isCorrect"] is False
+    assert wrong.json()["result"]["pointsAwarded"] == 0
+
+    retry = await client.post(
+        url,
+        json={
+            "op": "answer",
+            "questionId": str(question.id),
+            "answer": {"matching": [f"{left} => {right}" for left, right in _MATCHING_PAIRS]},
+        },
+        headers=headers,
+    )
+
+    assert retry.status_code == 200, retry.text
+    assert retry.json()["result"]["isCorrect"] is True
+    assert retry.json()["result"]["pointsAwarded"] == 1  # half of the question's 2
+
+
+async def test_a_matching_submission_the_payload_could_not_produce_is_rejected(
+    client: AsyncClient, content_db: AsyncSession
+) -> None:
+    """An entry with no arrow, and a prompt this question does not have: both are 422s."""
+    headers, lesson_id = await _quiz_context(client, content_db)
+    question = _matching_question(lesson_id, position=4)
+    content_db.add(question)
+    await content_db.commit()
+
+    started = await _start_quiz(client, headers, lesson_id)
+    session_id = started["session"]["id"]
+    url = f"/api/v1/quiz/sessions/{session_id}"
+
+    for label, pairs in (
+        ("no arrow", ["Monday 1", "Tuesday => 2", "Wednesday => 3"]),
+        ("unknown prompt", ["Monday => 1", "Tuesday => 2", "Friday => 3"]),
+        ("incomplete", ["Monday => 1", "Tuesday => 2"]),
+    ):
+        response = await client.post(
+            url,
+            json={
+                "op": "answer",
+                "questionId": str(question.id),
+                "answer": {"matching": pairs},
+            },
+            headers=headers,
+        )
+
+        assert response.status_code == 422, f"{label}: {response.text}"
+
+
+async def test_a_mis_ordered_ordering_answer_is_rejected_over_the_wire(
+    client: AsyncClient, content_db: AsyncSession
+) -> None:
+    """A sequence with a text that is not part of the question is a 422, not a wrong."""
+    headers, lesson_id = await _quiz_context(client, content_db)
+    question = QuestionModel(
+        id=uuid.uuid4(),
+        lesson_id=lesson_id,
+        position=3,
+        kind=QuestionKind.ORDERING.value,
+        skill=SkillKind.READING.value,
+        prompt="Put the lines of the greeting in order.",
+        choices=["Hello!", "How are you?", "I am fine.", "Goodbye!"],
+        accepted_answers=[],
+        correct_index=None,
+        explanation="A greeting opens, asks, answers, then closes.",
+        points=2,
+    )
+    content_db.add(question)
+    await content_db.commit()
+
+    started = await _start_quiz(client, headers, lesson_id)
+    session_id = started["session"]["id"]
+
+    response = await client.post(
+        f"/api/v1/quiz/sessions/{session_id}",
+        json={
+            "op": "answer",
+            "questionId": str(question.id),
+            "answer": {"order": ["Hello!", "How are you?", "I am fine.", "Nonsense!"]},
+        },
+        headers=headers,
+    )
+
+    assert response.status_code == 422, response.text
 
 
 # =========================================== the answer key never crosses the wire before

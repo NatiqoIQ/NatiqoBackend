@@ -27,7 +27,14 @@ __all__ = [
 
 @dataclass(frozen=True, slots=True)
 class QuestionView:
-    """A practice item as a learner sees it inside a live session."""
+    """A practice item as a learner sees it inside a live session.
+
+    ``prompts`` is the one field only a matching question fills: the items to be paired up,
+    which arrive here in the order they were authored while ``choices`` carries the bank they
+    are paired against, reshuffled away from that order. Both halves of a match are therefore
+    visible and only their *pairing* is withheld — which is the same bargain a multiple choice
+    strikes when it shows its options, and the reason neither field is key material.
+    """
 
     id: uuid.UUID
     position: int
@@ -38,6 +45,7 @@ class QuestionView:
     points: int
     image_url: str | None
     audio_url: str | None
+    prompts: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

@@ -85,6 +85,7 @@ def _detail_response(view: SessionDetailView) -> SessionDetailResponse:
                 points=question.points,
                 image_url=question.image_url,
                 audio_url=question.audio_url,
+                prompts=list(question.prompts),
             )
             for question in view.questions
         ],
@@ -151,7 +152,13 @@ async def command_session(
             user.id,
             session_id,
             question_id=payload.question_id,
-            answer=SubmittedAnswer(choice=payload.answer.choice, text=payload.answer.text),
+            answer=SubmittedAnswer(
+                choice=payload.answer.choice,
+                text=payload.answer.text,
+                choices=tuple(payload.answer.choices or ()),
+                order=tuple(payload.answer.order or ()),
+                matching=tuple(payload.answer.matching or ()),
+            ),
         )
         return AnswerCommandResult(
             result=GradedAnswerResponse(

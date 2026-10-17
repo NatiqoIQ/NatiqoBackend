@@ -67,6 +67,12 @@ class QuestionResponse(_CatalogueWire):
     deliberate exception rather than an oversight: they are aids that illustrate or
     pronounce the taught word or sentence, so they teach the item rather than revealing
     the answer.
+
+    ``prompts`` carries the items a matching question asks the learner to pair up. It is the
+    same kind of exception: it says what is being asked and nothing about what the answer is.
+    The bank of options they are paired against stays behind — this is a shared, cacheable
+    read with no per-learner seed to shuffle that bank out of the order its pairs were
+    authored in, so ``choices`` is empty for a matching question here.
     """
 
     id: uuid.UUID
@@ -77,6 +83,7 @@ class QuestionResponse(_CatalogueWire):
     points: int = Field(ge=1)
     image_url: str | None = None
     audio_url: str | None = None
+    prompts: list[str] = Field(default_factory=list)
 
 
 class LessonSummaryResponse(_CatalogueWire):

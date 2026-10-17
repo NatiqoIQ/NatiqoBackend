@@ -49,14 +49,30 @@ class StartSessionRequest(WireModel):
 
 
 class AnswerPayload(WireModel):
-    """What a learner chose or typed. The service checks that it matches the question."""
+    """What a learner chose, typed, selected or arranged. The service checks that it matches
+    the question.
+
+    ``choice`` answers a single-option question, ``text`` a free-text one, ``choices`` a
+    multi-select one, ``order`` an ordering one, and ``matching`` a matching one — as the
+    ``"left => right"`` pairs the learner built, in any order. They are separate fields so a
+    submission shaped for the wrong kind is a named validation error rather than a silent
+    wrong answer.
+    """
 
     choice: str | None = None
     text: str | None = None
+    choices: list[str] | None = None
+    order: list[str] | None = None
+    matching: list[str] | None = None
 
 
 class SessionQuestionResponse(WireModel):
-    """A question as it appears inside a live session — with no answer key."""
+    """A question as it appears inside a live session — with no answer key.
+
+    ``prompts`` is filled by a matching question alone: the items to pair up, against the
+    ``choices`` bank. Both are public — the pairing is what the key holds — and both are
+    reordered per attempt so their positions never spell out which goes with which.
+    """
 
     id: uuid.UUID
     position: int
@@ -67,6 +83,7 @@ class SessionQuestionResponse(WireModel):
     points: int = Field(ge=1)
     image_url: str | None = None
     audio_url: str | None = None
+    prompts: list[str] = Field(default_factory=list)
 
 
 class SessionResponse(WireModel):

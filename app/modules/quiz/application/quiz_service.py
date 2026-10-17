@@ -21,11 +21,20 @@ from datetime import timedelta
 
 from app.core.config import Settings
 from app.core.errors import ConflictError, ErrorCode, NotFoundError, ValidationFailed
+<<<<<<< HEAD
+from app.core.time import utc_now
+from app.core.types import ContentId, QuestionKind, UserId, new_id
+=======
 from app.core.events import EventBus, LessonCompleted
 from app.core.time import ensure_aware, utc_now
 from app.core.types import ContentId, UserId, new_id
+>>>>>>> b7d6562841acf4f88336d08719c6611b23efd314
 from app.core.uow import UnitOfWorkProtocol
 from app.modules.content.domain.entities import Question
+from app.modules.content.domain.policy import (
+    matching_answer_positions,
+    pre_attempt_prompts,
+)
 from app.modules.quiz.application.dto import (
     CompletedSessionView,
     GradedAnswerView,
@@ -49,8 +58,10 @@ from app.modules.quiz.domain.policy import (
 )
 from app.modules.quiz.domain.presentation import (
     choice_order,
+    deranged_order,
     order_choices,
     order_correct_index,
+    ordering_order,
     question_seed,
 )
 from app.modules.quiz.domain.review import new_card
@@ -494,6 +505,20 @@ def _duration_seconds(session: QuizSession) -> int:
 
 
 def _given_answer(answer: SubmittedAnswer) -> dict[str, str]:
+    """The learner's own submission, stored for the audit trail.
+
+    A multi-select, ordering or matching answer is joined with a separator — the column is a
+    single string and this value is never re-parsed to grade, so a lossless-enough record is
+    the right trade. Ordering keeps its arrow so a reader can see the sequence the learner
+    chose, and matching keeps the pairs verbatim, under the same ``pairs`` key the verdict
+    uses, so a stored answer and the key it was marked against read the same way.
+    """
+    if answer.matching:
+        return {"pairs": "; ".join(answer.matching)}
+    if answer.order:
+        return {"order": " → ".join(answer.order)}
+    if answer.choices:
+        return {"choices": ", ".join(answer.choices)}
     if answer.choice is not None:
         return {"choice": answer.choice}
     return {"text": answer.text or ""}
@@ -519,15 +544,43 @@ def _display_attempt(prior: QuizAnswer | None) -> int:
     return prior.attempt + 1
 
 
+#: The kinds whose served order changes how an answer resolves, because a client may send
+#: back the *position* of what it saw. Written as the positive list on purpose: a kind added
+#: later is unshuffled here until someone decides, rather than silently permuted.
+_ORDERED_KINDS: tuple[QuestionKind, ...] = (
+    QuestionKind.MULTIPLE_CHOICE,
+    QuestionKind.TRUE_FALSE,
+    QuestionKind.MULTI_SELECT,
+)
+
+
 def _choice_order(session_id: uuid.UUID, question: Question, attempt: int) -> tuple[int, ...]:
     """The display order for a question's choices on a given attempt.
 
     Free-text questions carry no choices, so there is no order to compute; the empty tuple
-    flows through :func:`order_choices` unchanged.
+    flows through :func:`order_choices` unchanged. Two kinds cannot be served by a plain
+    shuffle:
+
+    * an **ordering** question, because its authored order *is* the answer key and a shuffle
+      that came out as the identity would show the learner the answer;
+    * a **matching** question, because its prompts and the bank they are paired against are
+      two columns read side by side, so the one arrangement to avoid is the alignment where
+      each option faces the prompt it answers — the authored order, which a shuffle is
+      perfectly free to reproduce.
     """
     if not question.choices:
         return ()
     seed = question_seed(session_id=session_id, question_id=question.id, attempt=attempt)
+    if question.kind is QuestionKind.ORDERING:
+        return ordering_order(len(question.choices), seed=seed)
+    if question.kind is QuestionKind.MATCHING:
+        return deranged_order(
+            len(question.choices),
+            forbidden=matching_answer_positions(
+                question.kind, question.choices, question.accepted_answers
+            ),
+            seed=seed,
+        )
     return choice_order(len(question.choices), seed=seed)
 
 
@@ -536,9 +589,15 @@ def _gradeable(question: Question, *, order: tuple[int, ...]) -> GradeableQuesti
 
     Choice questions are translated into display space — the choices permuted and the
     correct index remapped — so a letter or index the client derived from what it saw
-    resolves correctly. Free-text items have no order and pass through untouched.
+    resolves correctly. Free-text items have no order and pass through untouched. An
+    ordering question also passes through untouched, and deliberately so: its ``choices``
+    *are* the answer key, and grading compares the learner's text sequence against them, so
+    permuting them here would compare against the shuffle instead of the answer. A matching
+    question is left alone for the same reason: its pairs are compared as a set, so the orders
+    mean nothing to grading, and its ``choices`` is the bank the answers are checked against —
+    permuting that would only reorder its stored key.
     """
-    if order and question.choices:
+    if order and question.choices and question.kind in _ORDERED_KINDS:
         choices = order_choices(question.choices, order)
         correct_index = order_correct_index(order, question.correct_index)
     else:
@@ -560,7 +619,10 @@ def _question_view(question: Question, *, order: tuple[int, ...]) -> QuestionVie
     Built by omission: no ``correct_index``, no ``accepted_answers``, no ``explanation``.
     The media aids stay, because they teach the item rather than reveal the answer. Choices
     are served in ``order``, a per-attempt permutation, so the correct option's position is
-    not the stable thing a learner could carry from one try to the next.
+    not the stable thing a learner could carry from one try to the next. A matching question
+    additionally carries its ``prompts``, which are read straight from the key's left-hand
+    halves by the domain rule that owns that shape — public, because a prompt on its own says
+    what is being asked and not what the answer is.
     """
     return QuestionView(
         id=question.id,
@@ -572,6 +634,7 @@ def _question_view(question: Question, *, order: tuple[int, ...]) -> QuestionVie
         points=question.points,
         image_url=question.image_url,
         audio_url=question.audio_url,
+        prompts=pre_attempt_prompts(question.kind, question.accepted_answers),
     )
 
 

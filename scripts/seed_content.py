@@ -48,15 +48,16 @@ from app.core.config import Settings, get_settings
 from app.core.database import dispose_engine, get_session_factory
 from app.core.errors import AppError
 from app.core.logging import get_logger
-from app.core.types import ContentId, ContentState
+from app.core.types import ContentId, ContentState, QuestionKind
 from app.modules.content.domain.entities import Lesson, Level, Question, Unit
+from app.modules.content.domain.policy import MATCH_ARROW
 from app.modules.content.infrastructure.models import (
     LessonModel,
     LevelModel,
     QuestionModel,
     UnitModel,
 )
-from scripts.seed_curriculum import CURRICULUM, SeedLesson, SeedLevel, SeedUnit
+from scripts.seed_curriculum import CURRICULUM, SeedLesson, SeedLevel, SeedQuestion, SeedUnit
 
 logger = get_logger("scripts.seed_content")
 
@@ -246,6 +247,30 @@ def _build_lessons(level: SeedLevel, unit: SeedUnit, unit_id: ContentId) -> tupl
     )
 
 
+def _key_of(question: SeedQuestion) -> tuple[str, ...]:
+    """The answer key to build a declared question with.
+
+    Only a matching question is anything other than a copy of ``accepted_answers``: its pairs
+    are declared as pairs and written out here in the stored ``"left => right"`` form, so the
+    declaration never spells the separator itself and the two halves of a match cannot be
+    separated by an edit to one list. Declaring *both* a pair list and a key is refused rather
+    than resolved, because either reading would be a guess about which one the author meant.
+    """
+    if question.matches and question.kind is not QuestionKind.MATCHING:
+        raise SeedRefused(
+            f"Question '{question.slug}' declares matches but is a {question.kind.value} "
+            "question; pairs belong to a matching question."
+        )
+    if question.matches and question.accepted_answers:
+        raise SeedRefused(
+            f"Question '{question.slug}' declares both matches and accepted_answers; a "
+            "matching question's key is its pairs."
+        )
+    if question.matches:
+        return tuple(f"{left} {MATCH_ARROW} {right}" for left, right in question.matches)
+    return question.accepted_answers
+
+
 def _build_questions(
     level: SeedLevel, unit: SeedUnit, lesson: SeedLesson, lesson_id: ContentId
 ) -> tuple[Question, ...]:
@@ -258,7 +283,7 @@ def _build_questions(
             skill=question.skill,
             prompt=question.prompt,
             choices=question.choices,
-            accepted_answers=question.accepted_answers,
+            accepted_answers=_key_of(question),
             correct_index=question.correct_index,
             explanation=question.explanation or "",
             image_url=question.image_url,

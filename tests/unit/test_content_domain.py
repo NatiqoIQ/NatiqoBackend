@@ -31,6 +31,7 @@ from app.modules.content.domain import (
     Question,
     Unit,
 )
+from app.modules.content.domain.policy import pre_attempt_choices, pre_attempt_prompts
 
 
 def _kwargs(**overrides: Any) -> dict[str, Any]:
@@ -100,6 +101,32 @@ def _multiple_choice(**overrides: Any) -> dict[str, Any]:
         "correct_index": 0,
         "explanation": "A greeting.",
     }
+    payload.update(overrides)
+    return payload
+
+
+def _matching(**overrides: Any) -> dict[str, Any]:
+    """A complete, valid matching payload a test may spoil one field at a time.
+
+    Written as pairs rather than as stored strings, the way the seed declares them, so a test
+    can re-key the question without also keeping two lists in step by hand.
+    """
+    payload: dict[str, Any] = {
+        "id": ContentId(new_id()),
+        "lesson_id": ContentId(new_id()),
+        "position": 1,
+        "kind": QuestionKind.MATCHING,
+        "skill": SkillKind.VOCABULARY,
+        "prompt": "Match each animal to its Arabic word.",
+        "choices": ("kelb", "qitt", "far", "hisan"),
+        "accepted_answers": ("Dog => kelb", "Cat => qitt"),
+        "correct_index": None,
+        "explanation": "'Kelb' is a dog and 'qitt' is a cat.",
+    }
+    if "matches" in overrides:
+        pairs: tuple[tuple[str, str], ...] = overrides.pop("matches")
+        payload["choices"] = tuple(right for _, right in pairs) or payload["choices"]
+        payload["accepted_answers"] = tuple(f"{left} => {right}" for left, right in pairs)
     payload.update(overrides)
     return payload
 
@@ -434,6 +461,265 @@ class TestQuestionShape:
 
         assert question.accepted_answers == ("goes", "is going")
 
+    def test_a_multi_select_question_is_accepted(self) -> None:
+        question = Question(
+            **_multiple_choice(
+                kind=QuestionKind.MULTI_SELECT,
+                choices=("Hello", "Good morning", "Goodbye"),
+                accepted_answers=("Hello", "Good morning"),
+                correct_index=None,
+            )
+        )
+
+        assert question.kind is QuestionKind.MULTI_SELECT
+        assert question.accepted_answers == ("hello", "good morning")
+
+    def test_multi_select_needs_at_least_two_correct_answers(self) -> None:
+        """One correct option is a multiple-choice question wearing the wrong kind."""
+        payload = _multiple_choice(
+            kind=QuestionKind.MULTI_SELECT,
+            choices=("Hello", "Goodbye"),
+            accepted_answers=("Hello",),
+            correct_index=None,
+        )
+
+        with pytest.raises(ValueError, match="at least 2 correct"):
+            Question(**payload)
+
+    def test_multi_select_needs_at_least_two_choices(self) -> None:
+        payload = _multiple_choice(
+            kind=QuestionKind.MULTI_SELECT,
+            choices=("Hello",),
+            accepted_answers=("Hello", "Good morning"),
+            correct_index=None,
+        )
+
+        with pytest.raises(ValueError, match="at least 2"):
+            Question(**payload)
+
+    def test_a_multi_select_answer_must_be_one_of_the_choices(self) -> None:
+        """A keyed-correct option the learner cannot select is unanswerable."""
+        payload = _multiple_choice(
+            kind=QuestionKind.MULTI_SELECT,
+            choices=("Hello", "Goodbye"),
+            accepted_answers=("Hello", "Good morning"),
+            correct_index=None,
+        )
+
+        with pytest.raises(ValueError, match="not one of the choices"):
+            Question(**payload)
+
+    def test_multi_select_must_not_carry_a_choice_index(self) -> None:
+        payload = _multiple_choice(
+            kind=QuestionKind.MULTI_SELECT,
+            choices=("Hello", "Good morning", "Goodbye"),
+            accepted_answers=("Hello", "Good morning"),
+            correct_index=0,
+        )
+
+        with pytest.raises(ValueError, match="correct_index"):
+            Question(**payload)
+
+    def test_a_word_bank_question_is_accepted(self) -> None:
+        """A word-bank item offers the words to type as tiles and is answered in free text."""
+        question = Question(
+            **_multiple_choice(
+                kind=QuestionKind.WORD_BANK,
+                choices=("morning", "night", "afternoon", "teacher"),
+                accepted_answers=("Morning",),
+                correct_index=None,
+            )
+        )
+
+        assert question.kind is QuestionKind.WORD_BANK
+        assert question.accepted_answers == ("morning",)
+
+    def test_word_bank_needs_tiles_offered(self) -> None:
+        payload = _multiple_choice(
+            kind=QuestionKind.WORD_BANK,
+            choices=(),
+            accepted_answers=("morning",),
+            correct_index=None,
+        )
+
+        with pytest.raises(ValueError, match="at least 2 and at most 6 tiles"):
+            Question(**payload)
+
+    def test_word_bank_needs_at_least_one_accepted_answer(self) -> None:
+        payload = _multiple_choice(
+            kind=QuestionKind.WORD_BANK,
+            choices=("morning", "night", "afternoon"),
+            accepted_answers=(),
+            correct_index=None,
+        )
+
+        with pytest.raises(ValueError, match="at least one accepted answer"):
+            Question(**payload)
+
+    def test_an_accepted_answer_must_be_present_in_the_word_bank(self) -> None:
+        """A key the bank never offers is a blank the learner cannot fill from the tiles."""
+        payload = _multiple_choice(
+            kind=QuestionKind.WORD_BANK,
+            choices=("morning", "night", "afternoon"),
+            accepted_answers=("evening",),
+            correct_index=None,
+        )
+
+        with pytest.raises(ValueError, match="missing from the word bank"):
+            Question(**payload)
+
+    def test_word_bank_must_not_carry_a_choice_index(self) -> None:
+        payload = _multiple_choice(
+            kind=QuestionKind.WORD_BANK,
+            choices=("morning", "night", "afternoon"),
+            accepted_answers=("morning",),
+            correct_index=0,
+        )
+
+        with pytest.raises(ValueError, match="correct_index"):
+            Question(**payload)
+
+    def test_an_ordering_question_is_accepted(self) -> None:
+        """An ordering item stores its items in the correct order; the order is the key."""
+        question = Question(
+            **_multiple_choice(
+                kind=QuestionKind.ORDERING,
+                choices=("First", "Second", "Third"),
+                accepted_answers=(),
+                correct_index=None,
+            )
+        )
+
+        assert question.kind is QuestionKind.ORDERING
+        assert question.choices == ("First", "Second", "Third")
+
+    def test_ordering_needs_at_least_two_items(self) -> None:
+        payload = _multiple_choice(
+            kind=QuestionKind.ORDERING,
+            choices=("First",),
+            accepted_answers=(),
+            correct_index=None,
+        )
+
+        with pytest.raises(ValueError, match="at least 2 and at most 6 items"):
+            Question(**payload)
+
+    def test_ordering_must_not_carry_a_choice_index(self) -> None:
+        payload = _multiple_choice(
+            kind=QuestionKind.ORDERING,
+            choices=("First", "Second", "Third"),
+            accepted_answers=(),
+            correct_index=0,
+        )
+
+        with pytest.raises(ValueError, match="correct_index"):
+            Question(**payload)
+
+    def test_ordering_must_not_set_accepted_answers(self) -> None:
+        payload = _multiple_choice(
+            kind=QuestionKind.ORDERING,
+            choices=("First", "Second", "Third"),
+            accepted_answers=("First",),
+            correct_index=None,
+        )
+
+        with pytest.raises(ValueError, match="accepted_answers"):
+            Question(**payload)
+
+    def test_a_matching_question_is_accepted(self) -> None:
+        """A matching item stores its key as pairs and its ``choices`` as the bank to pair against."""
+        question = Question(**_matching())
+
+        assert question.kind is QuestionKind.MATCHING
+        assert question.accepted_answers == ("Dog => kelb", "Cat => qitt")
+        assert question.choices == ("kelb", "qitt", "far", "hisan")
+
+    def test_a_matching_key_keeps_the_spelling_it_was_authored_in(self) -> None:
+        """The one kind whose key is not folded at rest.
+
+        A matching key is compared half by half rather than looked up whole, and those same
+        halves are the prompts a learner reads — so folding them here would buy grading nothing
+        and cost the screen its capitals. Tagging the rest of the question is unchanged, which
+        the assertion about the prompt and the bank is here to keep honest.
+        """
+        question = Question(**_matching())
+
+        assert question.accepted_answers[0].startswith("Dog")
+        assert question.choices[0] == "kelb"
+
+    def test_a_matching_question_needs_two_pairs(self) -> None:
+        payload = _matching(matches=(("Dog", "kelb"),))
+
+        with pytest.raises(ValueError, match="at least 2 and at most 4 pairs"):
+            Question(**payload)
+
+    def test_a_matching_question_stops_at_four_pairs(self) -> None:
+        payload = _matching(
+            matches=(
+                ("Dog", "kelb"),
+                ("Cat", "qitt"),
+                ("Horse", "hisan"),
+                ("Bird", "tayr"),
+                ("Fish", "samak"),
+            )
+        )
+
+        with pytest.raises(ValueError, match="at least 2 and at most 4 pairs"):
+            Question(**payload)
+
+    def test_a_matching_entry_must_be_written_as_a_pair(self) -> None:
+        payload = _matching(matches=())
+        payload["accepted_answers"] = ("Dog -> kelb", "Cat => qitt")
+
+        with pytest.raises(ValueError, match="left => right"):
+            Question(**payload)
+
+    def test_a_matching_question_must_not_repeat_a_prompt(self) -> None:
+        """Two keys competing for one prompt would make the pairing ambiguous."""
+        payload = _matching(
+            matches=(("Dog", "kelb"), ("Dog", "qitt")),
+        )
+        payload["choices"] = ("kelb", "qitt")
+
+        with pytest.raises(ValueError, match="left-hand value"):
+            Question(**payload)
+
+    def test_a_matching_question_must_not_repeat_an_option(self) -> None:
+        """Two prompts competing for one option is the mirror of the same ambiguity."""
+        payload = _matching(
+            matches=(("Dog", "kelb"), ("Cat", "kelb")),
+        )
+        payload["choices"] = ("kelb", "far")
+
+        with pytest.raises(ValueError, match="right-hand value"):
+            Question(**payload)
+
+    def test_a_matching_answer_must_be_in_the_bank(self) -> None:
+        """An answer the learner is never offered is a pair they cannot make."""
+        payload = _matching(choices=("kelb", "far"))
+
+        with pytest.raises(ValueError, match="not among the question's choices"):
+            Question(**payload)
+
+    def test_a_matching_bank_must_not_repeat_an_option(self) -> None:
+        payload = _matching(choices=("kelb", "kelb", "qitt"))
+
+        with pytest.raises(ValueError, match="repeat an option"):
+            Question(**payload)
+
+    def test_a_matching_question_needs_an_option_for_every_pair(self) -> None:
+        payload = _matching(choices=("kelb", "qitt"))
+        payload["accepted_answers"] = ("Dog => kelb", "Cat => qitt", "Horse => hisan")
+
+        with pytest.raises(ValueError, match="one option for every pair"):
+            Question(**payload)
+
+    def test_matching_must_not_carry_a_choice_index(self) -> None:
+        payload = _matching(correct_index=0)
+
+        with pytest.raises(ValueError, match="correct_index"):
+            Question(**payload)
+
     def test_position_must_be_one_or_greater(self) -> None:
         with pytest.raises(ValueError, match="position"):
             Question(**_multiple_choice(position=0))
@@ -458,3 +744,72 @@ class TestQuestionShape:
         )
 
         assert question.accepted_answers == ("goes", "going")
+
+
+class TestPreAttemptChoices:
+    """Which choices a pre-attempt surface (the shared catalogue) may show.
+
+    For most kinds the choices are options or tiles and reveal nothing; an ordering
+    question is the exception, because its choices are stored in the answer order.
+    """
+
+    def test_ordinary_kinds_show_their_choices(self) -> None:
+        for kind in (
+            QuestionKind.MULTIPLE_CHOICE,
+            QuestionKind.MULTI_SELECT,
+            QuestionKind.TRUE_FALSE,
+            QuestionKind.WORD_BANK,
+        ):
+            assert pre_attempt_choices(kind, ("a", "b", "c")) == ("a", "b", "c")
+
+    def test_a_free_text_item_has_no_choices_to_show(self) -> None:
+        assert pre_attempt_choices(QuestionKind.FILL_BLANK, ()) == ()
+
+    def test_ordering_hides_its_choices_because_they_are_the_key(self) -> None:
+        sequence = ("First", "Second", "Third", "Fourth")
+
+        assert pre_attempt_choices(QuestionKind.ORDERING, sequence) == ()
+
+    def test_matching_hides_its_bank_because_one_order_would_be_the_pairing(self) -> None:
+        """The bank is not the key, but the order it is authored in usually is.
+
+        A matching question is read as two columns side by side, so the arrangement to keep
+        off a shared, cacheable read is the one where each option faces the prompt it answers —
+        and that is the order the pairs were written in. Only a per-attempt shuffle can avoid
+        it, which is what the quiz session has and the catalogue does not.
+        """
+        bank = ("kelb", "qitt", "far")
+
+        assert pre_attempt_choices(QuestionKind.MATCHING, bank) == ()
+
+
+class TestPreAttemptPrompts:
+    """Which left-hand values a pre-attempt surface may show — and only matching has any.
+
+    A prompt is half of an answer key and is still public, which looks like a contradiction
+    until the question is asked properly: knowing that ``dog`` is to be paired with *something*
+    says nothing about what, so the prompt teaches what is being asked while the pairing stays
+    behind with the attempt engine.
+    """
+
+    def test_a_matching_question_shows_the_left_hand_halves_in_order(self) -> None:
+        answers = ("Monday => 1", "Tuesday => 2", "Wednesday => 3")
+
+        assert pre_attempt_prompts(QuestionKind.MATCHING, answers) == (
+            "Monday",
+            "Tuesday",
+            "Wednesday",
+        )
+
+    def test_another_kind_has_no_prompts_to_show(self) -> None:
+        """A fill-blank's accepted spellings are the key itself and must not be served."""
+        for kind in QuestionKind:
+            if kind is QuestionKind.MATCHING:
+                continue
+
+            assert pre_attempt_prompts(kind, ("goes", "going")) == ()
+
+    def test_an_unparseable_entry_never_becomes_a_blank_prompt(self) -> None:
+        assert pre_attempt_prompts(QuestionKind.MATCHING, ("Monday", "Tuesday => 2")) == (
+            "Tuesday",
+        )

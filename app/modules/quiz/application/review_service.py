@@ -22,9 +22,13 @@ import uuid
 
 from app.core.errors import ErrorCode, NotFoundError
 from app.core.time import ensure_aware, utc_now
-from app.core.types import ContentId, UserId
+from app.core.types import ContentId, QuestionKind, UserId
 from app.core.uow import UnitOfWorkProtocol
 from app.modules.content.domain.entities import Question
+from app.modules.content.domain.policy import (
+    matching_answer_positions,
+    pre_attempt_prompts,
+)
 from app.modules.quiz.application.dto import QuestionView
 from app.modules.quiz.application.review_dto import (
     DueCardsView,
@@ -38,6 +42,12 @@ from app.modules.quiz.domain.policy import (
     GradeableQuestion,
     SubmittedAnswer,
     grade_answer,
+)
+from app.modules.quiz.domain.presentation import (
+    deranged_order,
+    order_choices,
+    ordering_order,
+    question_seed,
 )
 from app.modules.quiz.domain.review import ReviewCard, ReviewLog, quality_for
 
@@ -180,18 +190,55 @@ def _gradeable(question: Question) -> GradeableQuestion:
     )
 
 
-def _question_view(question: Question) -> QuestionView:
+def _question_view(question: Question, *, seed: str) -> QuestionView:
+    """A published question as the review queue serves it — with no answer key.
+
+    A matching question is the one kind that needs to know *where* it is being shown from: its
+    prompts and the bank they are paired against are two columns read side by side, so the bank
+    has to be shuffled away from the pairing. A review has no session to seed that with, and
+    the card is what the learner is answering, so the card stands in for one — the order is
+    then stable for a given learner without being shared between two of them.
+    """
     return QuestionView(
         id=question.id,
         position=question.position,
         kind=question.kind,
         skill=question.skill,
         prompt=question.prompt,
-        choices=question.choices,
+        choices=order_choices(question.choices, _bank_order(question, seed=seed)),
         points=question.points,
         image_url=question.image_url,
         audio_url=question.audio_url,
+        prompts=pre_attempt_prompts(question.kind, question.accepted_answers),
     )
+
+
+def _bank_order(question: Question, *, seed: str) -> tuple[int, ...]:
+    """How to lay out a question's ``choices`` when serving it before an answer.
+
+    Two kinds have an arrangement to avoid, and both of them are arrangements the stored order
+    already is:
+
+    * an **ordering** question, whose ``choices`` *are* the key in order, so serving them as
+      stored hands the sequence over;
+    * a **matching** question, whose two columns are read side by side, so the bank must not sit
+      opposite the prompts it answers — the order its pairs were authored in.
+
+    Every other kind is safe in any order, and is served as stored: the review queue is a read
+    of the catalogue, and shuffling a multiple choice here for no reason would only make two
+    screens of the same question disagree.
+    """
+    if question.kind is QuestionKind.ORDERING:
+        return ordering_order(len(question.choices), seed=seed)
+    if question.kind is QuestionKind.MATCHING:
+        return deranged_order(
+            len(question.choices),
+            forbidden=matching_answer_positions(
+                question.kind, question.choices, question.accepted_answers
+            ),
+            seed=seed,
+        )
+    return tuple(range(len(question.choices)))
 
 
 def _due_card(card: ReviewCard, question: Question) -> DueCardView:
@@ -201,5 +248,8 @@ def _due_card(card: ReviewCard, question: Question) -> DueCardView:
         state=card.state.value,
         interval_days=card.interval_days,
         repetitions=card.repetitions,
-        question=_question_view(question),
+        question=_question_view(
+            question,
+            seed=question_seed(session_id=card.id, question_id=question.id, attempt=FIRST_ATTEMPT),
+        ),
     )
