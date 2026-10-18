@@ -17,8 +17,14 @@ is the only way to keep that defence while letting the new kinds in.
 
 Existing rows are unaffected: every value the old constraint allowed is still allowed.
 
+This revision sits on ``b13ae24dcdfd``, not on the ``b1f7c2e9a4d6`` it was written against:
+gamification, audit logs and media assets landed while it was being authored, and branching
+from the older base left the history with two heads. ``alembic upgrade head`` refuses that
+outright, so the container exited on startup instead of serving — the reason this had to be
+re-parented rather than merged with an empty revision.
+
 Revision ID: d4c9a17b6e02
-Revises: b1f7c2e9a4d6
+Revises: b13ae24dcdfd
 Create Date: 2026-10-16 22:40:00.000000+00:00
 """
 
@@ -30,7 +36,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "d4c9a17b6e02"
-down_revision: str | None = "b1f7c2e9a4d6"
+down_revision: str | None = "b13ae24dcdfd"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

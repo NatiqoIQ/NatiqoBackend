@@ -133,11 +133,18 @@ class TestMigrations:
         command.check(alembic_config)
 
     def test_migration_history_is_linear(self, alembic_config: Config) -> None:
-        """A single head. Two heads mean two branches nobody has merged."""
-        command.upgrade(alembic_config, "head")
+        """A single head. Two heads mean two branches nobody has merged.
 
+        The heads are read *before* upgrading, because ``upgrade head`` is the first
+        thing to fail when there are two — with a message about the argument rather
+        than about the revisions. Deployment hit exactly that: the container exited on
+        startup instead of serving, and the cause was two heads nobody had joined.
+        """
         script = ScriptDirectory.from_config(alembic_config)
-        assert len(script.get_heads()) == 1, f"multiple heads: {script.get_heads()}"
+        heads = script.get_heads()
+        assert len(heads) == 1, f"multiple heads: {sorted(heads)}"
+
+        command.upgrade(alembic_config, "head")
 
     def test_downgrade_removes_everything_it_created(self, alembic_config: Config) -> None:
         command.upgrade(alembic_config, "head")

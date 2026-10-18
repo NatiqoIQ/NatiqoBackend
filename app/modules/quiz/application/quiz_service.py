@@ -21,14 +21,9 @@ from datetime import timedelta
 
 from app.core.config import Settings
 from app.core.errors import ConflictError, ErrorCode, NotFoundError, ValidationFailed
-<<<<<<< HEAD
-from app.core.time import utc_now
-from app.core.types import ContentId, QuestionKind, UserId, new_id
-=======
 from app.core.events import EventBus, LessonCompleted
 from app.core.time import ensure_aware, utc_now
-from app.core.types import ContentId, UserId, new_id
->>>>>>> b7d6562841acf4f88336d08719c6611b23efd314
+from app.core.types import ContentId, QuestionKind, UserId, new_id
 from app.core.uow import UnitOfWorkProtocol
 from app.modules.content.domain.entities import Question
 from app.modules.content.domain.policy import (
