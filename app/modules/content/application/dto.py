@@ -8,12 +8,12 @@ and requiring a token to browse it would mean an app shell with no way to show a
 before sign-in. The consequence is that **anything omitted from a view is not leaked,
 and anything included in one is public.** So the question view is assembled by omission
 rather than by copying the aggregate: it carries the prompt, the options, the point value
-and the optional ``image_url`` and ``audio_url`` aids, and deliberately not
+and the optional ``image_url``, ``audio_url`` and ``video_url`` aids, and deliberately not
 ``correct_index``, ``accepted_answers`` or ``explanation``. Those are consumed by the
 attempt engine after a learner has answered, and serving them here would hand every
 caller the answer key to a public practice test. The media aids are different: they
-illustrate or pronounce the word or sentence being taught *before* the attempt, so they
-teach rather than reveal and belong on the public view.
+illustrate, pronounce or show the word or sentence being taught *before* the attempt, so
+they teach rather than reveal and belong on the public view.
 
 ``test_the_detail_does_not_carry_the_answer_key`` guards this, and it deliberately
 asserts on ``hasattr`` rather than on values: adding a field to the aggregate must never
@@ -78,6 +78,7 @@ class QuestionView:
     points: int
     image_url: str | None
     audio_url: str | None
+    video_url: str | None
     prompts: tuple[str, ...] = ()
 
 

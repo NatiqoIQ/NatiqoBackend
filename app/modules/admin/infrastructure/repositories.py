@@ -280,6 +280,7 @@ class SqlAlchemyEditorialRepository:
                 explanation=question.explanation,
                 image_url=question.image_url,
                 audio_url=question.audio_url,
+                video_url=question.video_url,
                 points=question.points,
             )
         )
@@ -299,6 +300,7 @@ class SqlAlchemyEditorialRepository:
                 explanation=question.explanation,
                 image_url=question.image_url,
                 audio_url=question.audio_url,
+                video_url=question.video_url,
                 points=question.points,
             )
         )

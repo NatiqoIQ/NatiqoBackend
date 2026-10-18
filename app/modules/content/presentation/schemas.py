@@ -63,10 +63,10 @@ class QuestionResponse(_CatalogueWire):
     No ``correct_index``, no ``accepted_answers``, no ``explanation``. Post-attempt
     feedback belongs to the attempt engine, which returns it from the answer endpoint.
 
-    ``image_url`` and ``audio_url`` *are* part of this pre-attempt shape, and that is a
-    deliberate exception rather than an oversight: they are aids that illustrate or
-    pronounce the taught word or sentence, so they teach the item rather than revealing
-    the answer.
+    ``image_url``, ``audio_url`` and ``video_url`` *are* part of this pre-attempt shape, and
+    that is a deliberate exception rather than an oversight: they are aids that illustrate,
+    pronounce or show the taught word or sentence, so they teach the item rather than
+    revealing the answer.
 
     ``prompts`` carries the items a matching question asks the learner to pair up. It is the
     same kind of exception: it says what is being asked and nothing about what the answer is.
@@ -83,6 +83,7 @@ class QuestionResponse(_CatalogueWire):
     points: int = Field(ge=1)
     image_url: str | None = None
     audio_url: str | None = None
+    video_url: str | None = None
     prompts: list[str] = Field(default_factory=list)
 
 

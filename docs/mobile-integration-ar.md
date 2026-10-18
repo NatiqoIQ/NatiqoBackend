@@ -571,14 +571,15 @@ Bearer. `204` (بلا جسم).
       "prompt": "Choose the correct word.", "points": 1,
       "choices": ["greeting", "greater", "grounded"], "prompts": [],
       "imageUrl": "/media/images/<question-id>.jpg",
-      "audioUrl": "/media/audio/<question-id>.mp3" },
+      "audioUrl": "/media/audio/<question-id>.mp3",
+      "videoUrl": null },
     { "id": "...", "kind": "fill_blank", "skill": "grammar",
       "prompt": "She ___ from Baghdad.", "points": 2, "choices": [], "prompts": [],
-      "imageUrl": null, "audioUrl": null },
+      "imageUrl": null, "audioUrl": null, "videoUrl": null },
     { "id": "...", "kind": "matching", "skill": "vocabulary",
       "prompt": "Match each number to the word for it.", "points": 1,
       "choices": [], "prompts": ["1", "2", "3", "4"],
-      "imageUrl": null, "audioUrl": null }
+      "imageUrl": null, "audioUrl": null, "videoUrl": null }
   ]
 }
 ```
@@ -587,7 +588,7 @@ Bearer. `204` (بلا جسم).
 `prompts`: العناصر المجرّدة المطلوب توصيلها — تُملأ لسؤال `matching` وحده، و`[]` لكل نوع آخر.
 `skill`: `vocabulary` · `grammar` · `listening` · `reading` · `writing` · `pronunciation`
 
-> `imageUrl` و`audioUrl` وسيطتان اختياريتان تُعرضان مع السؤال قبل الإجابة (توضيح/لفظ).
+> `imageUrl` و`audioUrl` و`videoUrl` وسائط اختيارية تُعرض مع السؤال قبل الإجابة (توضيح/لفظ/مشهد قصير).
 > القيمة إما `null` أو **مسار نسبي على نفس أصل الـAPI** بصيغة `/media/...`. يتغيّر الاسم
 > `<question-id>` مع كل سؤال. الوسائط ملفات ثابتة (immutable) تُقدَّم من `/media` لا من
 > `/api/v1`، فخزّنها محلياً لعمر التطبيق. لا تُبنَ على الوسيلة أي دلالة للإجابة.

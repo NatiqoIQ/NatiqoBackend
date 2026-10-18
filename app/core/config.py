@@ -12,6 +12,7 @@ Rules:
 from __future__ import annotations
 
 import json
+import re
 from functools import lru_cache
 from typing import Annotated, Literal
 
@@ -25,6 +26,17 @@ _PLACEHOLDER_SECRETS = {
     "dev-only-access-secret-change-me-0000000000000000000000",
     "dev-only-refresh-secret-change-me-00000000000000",
 }
+
+#: Any loopback origin, on any port. Only in force outside production and only while the
+#: development sign-in is mounted (see :attr:`Settings.cors_origin_regex`).
+#:
+#: The port cannot be part of a static allowlist: the dashboard dev server takes whatever
+#: port is free (Vite moves 5173 -> 5174 the moment a second one is running), and a
+#: ``CORS_ORIGINS`` miss is not a polite error — the browser blocks the *response*, so
+#: ``POST /auth/dev-login`` appears to fail with no status code and no server-side trace.
+#: Matching loopback instead of enumerating ports is what makes the backdoor reachable
+#: from a browser at all.
+DEV_CORS_ORIGIN_REGEX = r"https?://(?:localhost|127\.0\.0\.1|\[::1\])(?::\d{1,5})?"
 
 
 class Settings(BaseSettings):
@@ -100,6 +112,12 @@ class Settings(BaseSettings):
     #: :meth:`_split_list` never executes. With it the raw string arrives intact.
     cors_origins: Annotated[list[str], NoDecode] = Field(default_factory=list)
     cors_allow_credentials: bool = True
+    #: Optional regex matched against the whole ``Origin`` header, for clients whose
+    #: origin is not known ahead of time (a dev server that picks the next free port, a
+    #: preview deployment per branch). Kept separate from ``cors_origins`` because the
+    #: two are matched differently by Starlette: the list is exact, the regex is not, so
+    #: the exact list should stay the default and this is the deliberate exception.
+    cors_allow_origin_regex: str | None = None
 
     #: Only enable behind a reverse proxy you control. When false, X-Forwarded-For
     #: is ignored for rate limiting so a client cannot spoof it to dodge its budget.
@@ -257,6 +275,24 @@ class Settings(BaseSettings):
 
         return [item.strip() for item in text.split(",") if item.strip()]
 
+    @field_validator("cors_allow_origin_regex")
+    @classmethod
+    def _valid_origin_regex(cls, value: str | None) -> str | None:
+        """Reject a malformed pattern at settings time, not at first preflight.
+
+        ``CORSMiddleware`` compiles the pattern while the app is being assembled, so a
+        typo there surfaces as a bare ``re.error`` traceback before the lifespan even runs
+        — the one place where this project's "refuse to start with a readable reason"
+        rule had no readable reason. An empty value means "no pattern", the same as unset.
+        """
+        if value is None or not value.strip():
+            return None
+        try:
+            re.compile(value)
+        except re.error as exc:
+            raise ValueError(f"is not a valid regular expression: {exc}") from exc
+        return value
+
     @field_validator("log_level")
     @classmethod
     def _upper_level(cls, value: str) -> str:
@@ -272,6 +308,28 @@ class Settings(BaseSettings):
     @property
     def is_testing(self) -> bool:
         return self.app_env == "testing"
+
+    @property
+    def cors_origin_regex(self) -> str | None:
+        """The regex to hand ``CORSMiddleware``, or ``None`` when no pattern applies.
+
+        Combines the configured pattern with the loopback allowance granted by the
+        development sign-in. The allowance is scoped to the backdoor on purpose: it
+        exists so a browser on ``localhost:<any>`` can reach ``/auth/dev-login``, and it
+        disappears in production and whenever ``DEV_LOGIN_ENABLED=false``, where the
+        exact ``CORS_ORIGINS`` list is the only grant.
+
+        A plain property rather than a computed field: this is wiring for the middleware,
+        not a value a client or a log line should see.
+        """
+        patterns: list[str] = []
+        if self.cors_allow_origin_regex:
+            patterns.append(f"(?:{self.cors_allow_origin_regex})")
+        if self.dev_login_enabled and not self.is_production:
+            patterns.append(f"(?:{DEV_CORS_ORIGIN_REGEX})")
+        if not patterns:
+            return None
+        return "|".join(patterns)
 
     @computed_field  # type: ignore[prop-decorator]
     @property

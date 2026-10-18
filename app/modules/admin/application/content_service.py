@@ -508,6 +508,7 @@ class AdminContentService:
             explanation=source.explanation,
             image_url=source.image_url,
             audio_url=source.audio_url,
+            video_url=source.video_url,
             points=source.points,
         )
         await self._uow.editorial.add_question(copy)
@@ -632,6 +633,7 @@ class AdminContentService:
             ),
             image_url=command.image_url if is_given(command.image_url) else current.image_url,
             audio_url=command.audio_url if is_given(command.audio_url) else current.audio_url,
+            video_url=command.video_url if is_given(command.video_url) else current.video_url,
             points=command.points if is_given(command.points) else current.points,
             position=position,
         )
@@ -647,6 +649,7 @@ class AdminContentService:
             "explanation",
             "image_url",
             "audio_url",
+            "video_url",
             "points",
         ):
             if is_given(getattr(command, name)):
@@ -902,6 +905,7 @@ class AdminContentService:
                         explanation=command.explanation,
                         image_url=command.image_url,
                         audio_url=command.audio_url,
+                        video_url=command.video_url,
                         points=command.points,
                     )
                 )
@@ -938,6 +942,7 @@ class AdminContentService:
                 explanation=command.explanation,
                 image_url=command.image_url,
                 audio_url=command.audio_url,
+                video_url=command.video_url,
                 points=command.points,
             )
         except ValueError as exc:  # pragma: no cover - shape is pre-checked above
@@ -997,6 +1002,7 @@ def _question_problems(command: QuestionCreateCommand) -> tuple[str, ...]:
             explanation=command.explanation,
             image_url=command.image_url,
             audio_url=command.audio_url,
+            video_url=command.video_url,
         )
     )
     if not command.prompt.strip():
@@ -1066,6 +1072,7 @@ def _export_item(question: Question) -> QuestionExportItemView:
         explanation=question.explanation,
         image_url=question.image_url,
         audio_url=question.audio_url,
+        video_url=question.video_url,
         points=question.points,
     )
 
@@ -1084,6 +1091,7 @@ def _question_view(question: Question) -> QuestionAdminView:
         explanation=question.explanation,
         image_url=question.image_url,
         audio_url=question.audio_url,
+        video_url=question.video_url,
         points=question.points,
     )
 

@@ -439,6 +439,7 @@ async def create_question(
             explanation=payload.explanation,
             image_url=payload.image_url,
             audio_url=payload.audio_url,
+            video_url=payload.video_url,
             points=payload.points,
             position=payload.position,
         ),
@@ -758,6 +759,7 @@ def _question_command(
         explanation=item.explanation,
         image_url=item.image_url,
         audio_url=item.audio_url,
+        video_url=item.video_url,
         points=item.points,
         position=getattr(item, "position", None),
     )
@@ -819,6 +821,7 @@ def _question_update(payload: QuestionUpdateRequest) -> QuestionUpdateCommand:
         explanation=_not_none(payload, "explanation", fields),
         image_url=_or_missing(payload, "image_url", fields),
         audio_url=_or_missing(payload, "audio_url", fields),
+        video_url=_or_missing(payload, "video_url", fields),
         points=_not_none(payload, "points", fields),
         position=_not_none(payload, "position", fields),
     )

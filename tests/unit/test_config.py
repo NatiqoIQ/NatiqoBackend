@@ -12,6 +12,8 @@ A parser that accepts only a format nobody writes down is not a tested feature.
 
 from __future__ import annotations
 
+import re
+
 import pytest
 from pydantic import ValidationError
 
@@ -104,3 +106,71 @@ class TestDevLogin:
     def test_can_still_be_switched_off(self) -> None:
         settings = build(app_env="production", dev_login_enabled=False)
         assert settings.dev_login_enabled is False
+
+
+class TestDevLoginCors:
+    """The loopback grant that makes the backdoor usable from a browser.
+
+    A dev server's port is chosen at run time, so it cannot be enumerated in
+    ``CORS_ORIGINS`` — and a missing grant is invisible in the API's logs, because the
+    browser blocks the response rather than the server refusing the request.
+    """
+
+    def test_any_loopback_port_matches(self) -> None:
+        regex = build(dev_login_enabled=True).cors_origin_regex
+        assert regex is not None
+        for origin in (
+            "http://localhost:5173",
+            "http://127.0.0.1:8100",
+            "http://[::1]:3000",
+            "https://localhost",
+        ):
+            assert re.fullmatch(regex, origin), origin
+
+    def test_lookalike_hosts_do_not_match(self) -> None:
+        """``localhost.evil.test`` starts with the word and must still be refused."""
+        regex = build(dev_login_enabled=True).cors_origin_regex
+        assert regex is not None
+        for origin in (
+            "https://app.natiqo.app",
+            "http://localhost.evil.test:5173",
+            "https://127.0.0.1.evil.test",
+            "http://notlocalhost:5173",
+        ):
+            assert re.fullmatch(regex, origin) is None, origin
+
+    def test_production_gets_no_pattern(self) -> None:
+        assert build(app_env="production").cors_origin_regex is None
+
+    def test_no_pattern_without_the_backdoor(self) -> None:
+        assert build(dev_login_enabled=False).cors_origin_regex is None
+
+    def test_a_configured_pattern_is_combined_with_loopback(self) -> None:
+        settings = build(
+            dev_login_enabled=True,
+            cors_allow_origin_regex=r"https://[a-z0-9-]+\.preview\.natiqo\.app",
+        )
+        regex = settings.cors_origin_regex
+        assert regex is not None
+        assert re.fullmatch(regex, "https://pr-42.preview.natiqo.app")
+        assert re.fullmatch(regex, "http://localhost:5173")
+        assert re.fullmatch(regex, "https://elsewhere.example") is None
+
+    def test_a_malformed_pattern_fails_at_settings_time(self) -> None:
+        """Otherwise the typo surfaces as a bare ``re.error`` while the app is assembled."""
+        with pytest.raises(ValidationError, match="regular expression"):
+            build(cors_allow_origin_regex="[unclosed")
+
+    def test_an_empty_pattern_means_no_pattern(self) -> None:
+        """``CORS_ALLOW_ORIGIN_REGEX=`` in an env file must not become a match-everything."""
+        assert build(cors_allow_origin_regex="  ").cors_allow_origin_regex is None
+
+    def test_a_configured_pattern_survives_production_alone(self) -> None:
+        settings = build(
+            app_env="production",
+            cors_allow_origin_regex=r"https://[a-z0-9-]+\.preview\.natiqo\.app",
+        )
+        regex = settings.cors_origin_regex
+        assert regex is not None
+        assert re.fullmatch(regex, "https://pr-42.preview.natiqo.app")
+        assert re.fullmatch(regex, "http://localhost:5173") is None

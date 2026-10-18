@@ -31,28 +31,3 @@ class CachePort(Protocol):
     def build_key(self, *parts: str) -> str:
         """Namespaced key builder so modules cannot collide."""
         ...
-
-
-class NullCache:
-    """No-op cache. Keeps endpoints correct (just uncached) when caching is off."""
-
-    async def get(self, key: str) -> str | None:
-        return None
-
-    async def set(self, key: str, value: str, *, ttl_seconds: int | None = None) -> None:
-        return None
-
-    async def delete(self, *keys: str) -> int:
-        return 0
-
-    async def exists(self, key: str) -> bool:
-        return False
-
-    async def increment(self, key: str, *, amount: int = 1, ttl_seconds: int | None = None) -> int:
-        return amount
-
-    async def ping(self) -> bool:
-        return True
-
-    def build_key(self, *parts: str) -> str:
-        return ":".join(p for p in parts if p)

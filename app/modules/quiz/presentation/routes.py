@@ -85,6 +85,7 @@ def _detail_response(view: SessionDetailView) -> SessionDetailResponse:
                 points=question.points,
                 image_url=question.image_url,
                 audio_url=question.audio_url,
+                video_url=question.video_url,
                 prompts=list(question.prompts),
             )
             for question in view.questions

@@ -14,7 +14,7 @@ from typing import Annotated, NewType
 
 from pydantic import AfterValidator, BeforeValidator
 
-from app.core.time import ensure_aware, utc_now
+from app.core.time import ensure_aware
 
 UserId = NewType("UserId", uuid.UUID)
 ContentId = NewType("ContentId", uuid.UUID)
@@ -73,16 +73,6 @@ _CEFR_RANK: dict[CEFRLevel, int] = {
     CEFRLevel.C1: 5,
     CEFRLevel.C2: 6,
 }
-
-#: Ordered progression used by the onboarding placement test.
-CEFR_LADDER: tuple[CEFRLevel, ...] = (
-    CEFRLevel.A1,
-    CEFRLevel.A2,
-    CEFRLevel.B1,
-    CEFRLevel.B2,
-    CEFRLevel.C1,
-    CEFRLevel.C2,
-)
 
 
 class EnglishVariant(StrEnum):
@@ -191,7 +181,3 @@ _CONTENT_TRANSITIONS: dict[ContentState, frozenset[ContentState]] = {
     ContentState.PUBLISHED: frozenset({ContentState.ARCHIVED}),
     ContentState.ARCHIVED: frozenset({ContentState.DRAFT}),
 }
-
-
-def utc_timestamp_default() -> datetime:
-    return utc_now()

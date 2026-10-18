@@ -5,7 +5,9 @@ The request models here are the other half of the PATCH-sentinel decision docume
 ``None``, and the *route* decides which fields the client actually sent by reading
 ``model_fields_set``. That is what lets ``null`` mean "clear this field" for a nullable one
 (``description``, ``image_url``) while an absent key means "leave it alone" — without the
-request model having to carry a sentinel of its own.
+request model having to carry a sentinel of its own. Video aids are also nullable and
+follow the same rule: clearing an ``image_url``, ``audio_url`` or ``video_url`` is a real
+edit, so PATCH must distinguish absence from ``null``.
 
 ``QuestionAdminResponse`` is the one response on this API that *does* carry an answer key.
 That is not a leak: this router is role-gated at ``content_editor`` or above, and the person
@@ -143,6 +145,7 @@ class QuestionCreateRequest(_AdminWire):
     explanation: str = Field(default="", max_length=2000)
     image_url: str | None = None
     audio_url: str | None = None
+    video_url: str | None = None
     points: int = Field(default=1, ge=1, le=100)
     position: int | None = Field(default=None, ge=1)
 
@@ -157,6 +160,7 @@ class QuestionUpdateRequest(_AdminWire):
     explanation: str | None = Field(default=None, max_length=2000)
     image_url: str | None = None
     audio_url: str | None = None
+    video_url: str | None = None
     points: int | None = Field(default=None, ge=1, le=100)
     position: int | None = Field(default=None, ge=1)
 
@@ -174,6 +178,7 @@ class QuestionAdminResponse(_AdminWire):
     explanation: str
     image_url: str | None = None
     audio_url: str | None = None
+    video_url: str | None = None
     points: int
 
 
@@ -229,6 +234,7 @@ class QuestionExportItem(_AdminWire):
     explanation: str
     image_url: str | None = None
     audio_url: str | None = None
+    video_url: str | None = None
     points: int
 
 
@@ -263,6 +269,7 @@ class QuestionImportItem(_AdminWire):
     explanation: str = Field(default="", max_length=2000)
     image_url: str | None = None
     audio_url: str | None = None
+    video_url: str | None = None
     points: int = Field(default=1, ge=1, le=100)
 
 

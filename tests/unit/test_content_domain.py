@@ -47,7 +47,7 @@ def _kwargs(**overrides: Any) -> dict[str, Any]:
 
 
 def _approved(entity: Any) -> Any:
-    """Walk a fresh aggregate to APPROVED — the last state before it may go live."""
+    """Walk a fresh aggregate to APPROVED â€” the last state before it may go live."""
     entity.transition_to(ContentState.REVIEW)
     entity.transition_to(ContentState.APPROVED)
     return entity
@@ -191,7 +191,7 @@ class TestUnit:
 
     def test_publish_does_not_skip_the_review_steps(self) -> None:
         """``publish`` is the last hop, not a shortcut. If it could take a draft
-        straight live then the review state would be decoration — a single call would
+        straight live then the review state would be decoration â€” a single call would
         bypass the two-person process the lifecycle is built around."""
         unit = Unit(**_unit_kwargs())
 
@@ -258,7 +258,7 @@ class TestQuestionShape:
 
     def test_a_question_carries_its_explanation(self) -> None:
         """The explanation is part of the aggregate, not a field the seed layer happens
-        to fill in — the feedback surface is built from it."""
+        to fill in â€” the feedback surface is built from it."""
         question = Question(**_multiple_choice(explanation="Bye is the farewell."))
 
         assert question.explanation == "Bye is the farewell."
@@ -333,6 +333,34 @@ class TestQuestionShape:
 
         assert question.audio_url == "/media/audio/hello.mp3"
 
+    def test_a_question_can_carry_a_video_aid(self) -> None:
+        question = Question(**_multiple_choice(video_url="https://cdn.test/hello.mp4"))
+
+        assert question.video_url == "https://cdn.test/hello.mp4"
+
+    def test_the_video_aid_is_optional(self) -> None:
+        assert Question(**_multiple_choice()).video_url is None
+
+    def test_a_blank_video_url_is_refused(self) -> None:
+        with pytest.raises(ValueError, match="video_url"):
+            Question(**_multiple_choice(video_url="   "))
+
+    def test_a_video_url_must_be_an_http_resource(self) -> None:
+        with pytest.raises(ValueError, match="video_url"):
+            Question(**_multiple_choice(video_url="cdn.test/hello.mp4"))
+
+    def test_a_script_video_url_is_refused(self) -> None:
+        with pytest.raises(ValueError, match="video_url"):
+            Question(**_multiple_choice(video_url="javascript:alert(1)"))
+
+    def test_a_same_origin_video_path_is_accepted(self) -> None:
+        question = Question(**_multiple_choice(video_url="/media/video/hello.mp4"))
+
+        assert question.video_url == "/media/video/hello.mp4"
+
+    def test_a_protocol_relative_video_url_is_refused(self) -> None:
+        with pytest.raises(ValueError, match="video_url"):
+            Question(**_multiple_choice(video_url="//evil.test/hello.mp4"))
     def test_a_protocol_relative_media_url_is_refused(self) -> None:
         """``//host`` keeps the page's scheme but is a different origin, so it is not a
         same-origin path and must be refused like any other off-origin reference."""
@@ -638,7 +666,7 @@ class TestQuestionShape:
         """The one kind whose key is not folded at rest.
 
         A matching key is compared half by half rather than looked up whole, and those same
-        halves are the prompts a learner reads — so folding them here would buy grading nothing
+        halves are the prompts a learner reads â€” so folding them here would buy grading nothing
         and cost the screen its capitals. Tagging the rest of the question is unchanged, which
         the assertion about the prompt and the bank is here to keep honest.
         """
@@ -774,7 +802,7 @@ class TestPreAttemptChoices:
         """The bank is not the key, but the order it is authored in usually is.
 
         A matching question is read as two columns side by side, so the arrangement to keep
-        off a shared, cacheable read is the one where each option faces the prompt it answers —
+        off a shared, cacheable read is the one where each option faces the prompt it answers â€”
         and that is the order the pairs were written in. Only a per-attempt shuffle can avoid
         it, which is what the quiz session has and the catalogue does not.
         """
@@ -784,7 +812,7 @@ class TestPreAttemptChoices:
 
 
 class TestPreAttemptPrompts:
-    """Which left-hand values a pre-attempt surface may show — and only matching has any.
+    """Which left-hand values a pre-attempt surface may show â€” and only matching has any.
 
     A prompt is half of an answer key and is still public, which looks like a contradiction
     until the question is asked properly: knowing that ``dog`` is to be paired with *something*

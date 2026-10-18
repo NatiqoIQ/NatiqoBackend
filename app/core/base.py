@@ -10,12 +10,9 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import Any
 
 from sqlalchemy import DateTime, MetaData, Uuid, func
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
-
-from app.core.time import utc_now
 
 # Explicit names keep Alembic autogenerate output stable and make it possible to
 # reference a constraint by name in tests and in `DROP CONSTRAINT` migrations.
@@ -69,27 +66,3 @@ class TimestampMixin:
         onupdate=func.now(),
         nullable=False,
     )
-
-
-class SoftDeleteMixin:
-    """Tombstone columns. Rows are never physically deleted from learner history."""
-
-    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-
-    def soft_delete(self, at: datetime | None = None) -> None:
-        self.deleted_at = at or utc_now()
-
-    @property
-    def is_deleted(self) -> bool:
-        return self.deleted_at is not None
-
-
-class VersionMixin:
-    """Optimistic concurrency token for aggregates edited concurrently."""
-
-    version: Mapped[int] = mapped_column(default=1, nullable=False)
-
-
-def column_kwargs(**extra: Any) -> dict[str, Any]:
-    """Small helper so modules stay declarative without repeating ``nullable``."""
-    return {"nullable": False, **extra}

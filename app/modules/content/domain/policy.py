@@ -124,8 +124,8 @@ def normalise_accepted_answers(answers: Sequence[str]) -> tuple[str, ...]:
 def _media_url_problems(field: str, value: str | None) -> list[str]:
     """Why an optional media aid is unusable, or an empty list when it is fine.
 
-    The image and audio aids are both optional, so ``None`` passes. When one is set it
-    has to point at a resource a client can actually fetch: either an absolute
+    The image, audio and video aids are all optional, so ``None`` passes. When one is set
+    it has to point at a resource a client can actually fetch: either an absolute
     ``http(s)`` URL, or a same-origin path (``/media/...``) for content this service
     ships itself. Anything else — a blank string, a bare path with no leading slash, a
     protocol-relative ``//host`` (which silently changes origin), a ``javascript:`` URL
@@ -154,6 +154,7 @@ def question_shape_problems(
     explanation: str | None,
     image_url: str | None,
     audio_url: str | None,
+    video_url: str | None,
 ) -> tuple[str, ...]:
     """Every reason this question could not be answered, in report order.
 
@@ -163,17 +164,18 @@ def question_shape_problems(
     problems: list[str] = []
 
     # The product rule is "a question carries an explanation, and may also carry media
-    # aids". The image and audio aids are optional pre-attempt supports that illustrate
-    # or pronounce the taught word or sentence; neither is a substitute for the
-    # explanation. The explanation stays mandatory because it is the post-attempt
+    # aids". The image, audio and video aids are optional pre-attempt supports that
+    # illustrate, pronounce or show the taught word or sentence; none is a substitute for
+    # the explanation. The explanation stays mandatory because it is the post-attempt
     # rationale — without it a learner answers and gets no feedback.
     if not explanation or not explanation.strip():
         problems.append("A question must carry an explanation.")
 
-    # Both aids are optional, so ``None`` passes; see ``_media_url_problems`` for why a
-    # blank or non-http(s) value is rejected rather than stored.
+    # All three aids are optional, so ``None`` passes; see ``_media_url_problems`` for why
+    # a blank or non-http(s) value is rejected rather than stored.
     problems.extend(_media_url_problems("image_url", image_url))
     problems.extend(_media_url_problems("audio_url", audio_url))
+    problems.extend(_media_url_problems("video_url", video_url))
 
     if kind is QuestionKind.MULTIPLE_CHOICE:
         if not MIN_CHOICES <= len(choices) <= MAX_CHOICES:

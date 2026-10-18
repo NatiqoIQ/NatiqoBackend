@@ -9,7 +9,7 @@ have asserted away, are all in here:
 - ``ORDER BY`` stability across pages.
 
 Visibility is the other theme. Every listing has to hide drafts, and every "not found"
-has to be indistinguishable between "does not exist" and "not published yet" — otherwise
+has to be indistinguishable between "does not exist" and "not published yet" ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â otherwise
 the public catalogue becomes a map of the editorial pipeline.
 """
 
@@ -125,6 +125,7 @@ def _question_row(
     explanation: str | None = "A greeting.",
     image_url: str | None = None,
     audio_url: str | None = None,
+    video_url: str | None = None,
     points: int = 1,
 ) -> QuestionModel:
     row = QuestionModel(
@@ -140,6 +141,7 @@ def _question_row(
         explanation=explanation,
         image_url=image_url,
         audio_url=audio_url,
+        video_url=video_url,
         points=points,
     )
     session.add(row)
@@ -545,6 +547,32 @@ class TestGetLesson:
 
         assert detail.questions[0].audio_url is None
 
+
+    async def test_the_detail_carries_the_video_aid(
+        self, service: CatalogueService, session: AsyncSession
+    ) -> None:
+        level = _level_row(session, code="A1")
+        unit = _unit_row(session, level.id)
+        lesson = _lesson_row(session, unit.id, position=1)
+        _question_row(session, lesson.id, position=1, video_url="https://cdn.test/hello.mp4")
+        await session.flush()
+
+        detail = await service.get_lesson(lesson.id)
+
+        assert detail.questions[0].video_url == "https://cdn.test/hello.mp4"
+
+    async def test_a_question_without_video_reports_none(
+        self, service: CatalogueService, session: AsyncSession
+    ) -> None:
+        level = _level_row(session, code="A1")
+        unit = _unit_row(session, level.id)
+        lesson = _lesson_row(session, unit.id, position=1)
+        _question_row(session, lesson.id, position=1)
+        await session.flush()
+
+        detail = await service.get_lesson(lesson.id)
+
+        assert detail.questions[0].video_url is None
     async def test_a_free_text_question_still_exposes_its_choices_shape(
         self, service: CatalogueService, session: AsyncSession
     ) -> None:

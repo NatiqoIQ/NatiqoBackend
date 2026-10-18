@@ -69,5 +69,6 @@ def to_question(model: QuestionModel) -> Question:
         explanation=model.explanation or "",
         image_url=model.image_url,
         audio_url=model.audio_url,
+        video_url=model.video_url,
         points=model.points,
     )

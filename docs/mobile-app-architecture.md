@@ -506,8 +506,8 @@ Wire shapes (camelCase; field names are exact):
                "answeredQuestionIds":[] },
   "questions": [ { "id":"uuid", "position":0, "kind":"multiple_choice",
                    "skill":"vocabulary", "prompt":"…", "choices":["a","b","c"],
-                   "points":1, "imageUrl":"/media/images/….jpg",
-                   "audioUrl":"/media/audio/….mp3", "prompts":[] } ]
+                    "points":1, "imageUrl":"/media/images/….jpg",
+                    "audioUrl":"/media/audio/….mp3", "videoUrl":null, "prompts":[] } ]
 }   // ← no correctIndex / explanation; a matching question fills "prompts" instead of
     // leaving it empty, and its "choices" are the bank, shuffled so no option faces its
     // own prompt. Every other kind serves "prompts": [].

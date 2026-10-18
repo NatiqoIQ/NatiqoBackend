@@ -9,9 +9,9 @@ the other shares.
 
 Update commands carry a :data:`MISSING` sentinel rather than ``None`` for every optional
 field. PATCH semantics are "leave what I did not mention alone", and ``None`` is a value on
-some of these fields — clearing a ``description`` or an ``image_url`` is a real edit. Without
-the sentinel, "clear this field" and "I did not mention this field" would be the same input,
-and one of the two behaviours would be wrong.
+some of these fields — clearing a ``description``, ``image_url`` or ``video_url`` is a
+real edit. Without the sentinel, "clear this field" and "I did not mention this field" would
+be the same input, and one of the two behaviours would be wrong.
 """
 
 from __future__ import annotations
@@ -128,6 +128,7 @@ class QuestionAdminView:
     explanation: str
     image_url: str | None
     audio_url: str | None
+    video_url: str | None
     points: int
 
 
@@ -155,6 +156,7 @@ class QuestionExportItemView:
     explanation: str
     image_url: str | None
     audio_url: str | None
+    video_url: str | None
     points: int
 
 
@@ -271,6 +273,7 @@ class QuestionCreateCommand:
     explanation: str = ""
     image_url: str | None = None
     audio_url: str | None = None
+    video_url: str | None = None
     points: int = 1
     position: int | None = None
 
@@ -294,6 +297,7 @@ class QuestionUpdateCommand:
     explanation: str | _Missing = MISSING
     image_url: str | _Missing | None = MISSING
     audio_url: str | _Missing | None = MISSING
+    video_url: str | _Missing | None = MISSING
     points: int | _Missing = MISSING
     position: int | _Missing = MISSING
 

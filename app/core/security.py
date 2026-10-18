@@ -16,7 +16,6 @@ attacker mint refresh tokens.
 from __future__ import annotations
 
 import hashlib
-import secrets
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -33,10 +32,6 @@ TokenType = Literal["access", "refresh"]
 
 
 # ------------------------------------------------------------------------ secrets
-def generate_opaque_token(nbytes: int = 32) -> str:
-    return secrets.token_urlsafe(nbytes)
-
-
 def hash_token(value: str) -> str:
     """SHA-256 hex digest used to store refresh ``jti`` values.
 

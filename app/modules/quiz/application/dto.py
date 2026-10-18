@@ -45,6 +45,7 @@ class QuestionView:
     points: int
     image_url: str | None
     audio_url: str | None
+    video_url: str | None
     prompts: tuple[str, ...] = ()
 
 

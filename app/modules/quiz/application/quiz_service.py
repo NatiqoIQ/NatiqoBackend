@@ -629,6 +629,7 @@ def _question_view(question: Question, *, order: tuple[int, ...]) -> QuestionVie
         points=question.points,
         image_url=question.image_url,
         audio_url=question.audio_url,
+        video_url=question.video_url,
         prompts=pre_attempt_prompts(question.kind, question.accepted_answers),
     )
 

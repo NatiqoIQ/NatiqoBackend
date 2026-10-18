@@ -272,10 +272,11 @@ def _question_view(question: Question) -> QuestionView:
     """Project a question aggregate onto what a learner may see *before* answering.
 
     See the docstring in ``dto.py``: this projection is a security boundary, and the
-    fields left off it are the answer key. ``image_url`` and ``audio_url`` are left *on*
-    it on purpose — they are pre-attempt aids that teach the item, not a reveal of the
-    answer. ``choices`` is filtered through :func:`pre_attempt_choices`, because an
-    ordering question's choices are stored in the correct sequence and would be the key.
+    fields left off it are the answer key. ``image_url``, ``audio_url`` and ``video_url``
+    are left *on* it on purpose — they are pre-attempt aids that teach the item, not a
+    reveal of the answer. ``choices`` is filtered through :func:`pre_attempt_choices`,
+    because an ordering question's choices are stored in the correct sequence and would be
+    the key.
     """
     return QuestionView(
         id=question.id,
@@ -286,6 +287,7 @@ def _question_view(question: Question) -> QuestionView:
         points=question.points,
         image_url=question.image_url,
         audio_url=question.audio_url,
+        video_url=question.video_url,
         prompts=pre_attempt_prompts(question.kind, question.accepted_answers),
     )
 

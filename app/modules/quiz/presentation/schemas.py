@@ -83,6 +83,7 @@ class SessionQuestionResponse(WireModel):
     points: int = Field(ge=1)
     image_url: str | None = None
     audio_url: str | None = None
+    video_url: str | None = None
     prompts: list[str] = Field(default_factory=list)
 
 

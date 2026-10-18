@@ -10,6 +10,7 @@ developer or QA enter the app without a provider client id.
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 
 import pytest
 import pytest_asyncio
@@ -27,6 +28,46 @@ DEVICE = {"platform": "android", "app_version": "0.1.0"}
 #: What ``DEV_LOGIN_TOKEN_TTL_SECONDS`` documents; a session that expires sooner
 #: than this is the bug the setting exists to prevent.
 DEV_SESSION_TTL = 315_360_000
+
+#: A dashboard dev server. Deliberately not a port in ``CORS_ORIGINS``: Vite picks the
+#: next free one, so the grant has to come from the loopback pattern instead.
+DASHBOARD_ORIGIN = "http://localhost:5173"
+
+
+def _headers(value: str | None) -> set[str]:
+    return {item.strip().lower() for item in (value or "").split(",") if item.strip()}
+
+
+@asynccontextmanager
+async def _client_built_with(
+    monkeypatch: pytest.MonkeyPatch, **env: str
+) -> AsyncIterator[AsyncClient]:
+    """An app assembled from a specific environment, without the suite's defaults hiding it.
+
+    ``CORS_ORIGINS`` is cleared rather than left unset so a developer's own ``.env`` — which
+    may well list ``http://localhost:5173`` — cannot make the production case pass for the
+    wrong reason. The middleware stack is fixed when the app object is built, so every case
+    here needs its own app.
+    """
+    from app.core.config import reset_settings_cache
+    from app.main import create_app
+
+    monkeypatch.setenv("DEV_LOGIN_ENABLED", "true")
+    monkeypatch.setenv("CORS_ORIGINS", "")
+    for key, value in env.items():
+        monkeypatch.setenv(key, value)
+    reset_settings_cache()
+    import_all_models()
+    await create_all()
+    built_app = create_app()
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=built_app), base_url="http://api.test"
+        ) as http_client:
+            yield http_client
+    finally:
+        reset_settings_cache()
+        await dispose_engine()
 
 
 @pytest_asyncio.fixture
@@ -134,3 +175,132 @@ async def test_the_route_is_not_mounted_without_the_flag() -> None:
 
     assert response.status_code == 404, response.text
     assert response.json()["error"]["code"] == "NOT_FOUND"
+
+
+# ============================================================== cross-origin access
+#
+# The backdoor is used from a browser: a dashboard dev server calls it from another
+# origin. ``JSON`` bodies make that a preflighted request, and when the origin is not
+# granted the browser reports a bare network error — no status code, nothing in the
+# API's access log — which reads exactly like a broken server. These tests pin the
+# grant so that failure mode cannot come back silently.
+
+
+@pytest.mark.asyncio
+async def test_a_preflight_from_the_dashboard_dev_server_is_granted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async with _client_built_with(monkeypatch) as client:
+        preflight = await client.options(
+            "/api/v1/auth/dev-login",
+            headers={
+                "Origin": DASHBOARD_ORIGIN,
+                "Access-Control-Request-Method": "POST",
+                "Access-Control-Request-Headers": "content-type,authorization",
+            },
+        )
+
+    assert preflight.status_code == 200, preflight.text
+    assert preflight.headers["access-control-allow-origin"] == DASHBOARD_ORIGIN
+    assert preflight.headers["access-control-allow-credentials"] == "true"
+    assert "post" in _headers(preflight.headers.get("access-control-allow-methods"))
+    granted = _headers(preflight.headers.get("access-control-allow-headers"))
+    assert {"content-type", "authorization"} <= granted, granted
+
+
+@pytest.mark.asyncio
+async def test_the_dev_sign_in_response_is_readable_from_that_origin(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The preflight is only half of it: the actual response must carry the grant too."""
+    async with _client_built_with(monkeypatch) as client:
+        response = await client.post(
+            "/api/v1/auth/dev-login",
+            json={**DEV_CREDENTIALS, "device": DEVICE},
+            headers={"Origin": DASHBOARD_ORIGIN},
+        )
+
+    assert response.status_code == 200, response.text
+    assert response.headers["access-control-allow-origin"] == DASHBOARD_ORIGIN
+    assert response.json()["tokens"]["accessToken"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "origin",
+    ["http://127.0.0.1:8100", "http://localhost:3000", "http://[::1]:5173"],
+)
+async def test_any_loopback_port_is_granted(monkeypatch: pytest.MonkeyPatch, origin: str) -> None:
+    """A dev server's port is not knowable in advance, so the pattern covers the host."""
+    async with _client_built_with(monkeypatch) as client:
+        preflight = await client.options(
+            "/api/v1/auth/dev-login",
+            headers={"Origin": origin, "Access-Control-Request-Method": "POST"},
+        )
+
+    assert preflight.headers["access-control-allow-origin"] == origin
+
+
+@pytest.mark.asyncio
+async def test_the_loopback_grant_disappears_in_production(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The allowance exists *for the development backdoor*, so it must not outlive it.
+
+    Production keeps an exact allowlist. A pattern matching every loopback port there
+    would let anything running on the host — a malicious local page, a compromised
+    browser extension's content script origin — read authenticated responses.
+    """
+    async with _client_built_with(monkeypatch, APP_ENV="production") as client:
+        preflight = await client.options(
+            "/api/v1/auth/dev-login",
+            headers={"Origin": DASHBOARD_ORIGIN, "Access-Control-Request-Method": "POST"},
+        )
+
+    # No CORS middleware at all here — there is no pattern and no allowlist — so the
+    # preflight reaches routing and is refused as a method the route does not serve.
+    assert preflight.status_code == 405, preflight.text
+    assert "access-control-allow-origin" not in preflight.headers
+
+
+@pytest.mark.asyncio
+async def test_a_configured_pattern_is_honoured_over_the_wire(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The setting reaches ``CORSMiddleware``, including where the loopback grant does not.
+
+    A preview deployment per branch is the case ``CORS_ORIGINS`` cannot express: the
+    hostname is minted with the branch. Production is used here precisely because it
+    gets no loopback pattern, so the grant can only have come from the setting.
+    """
+    async with _client_built_with(
+        monkeypatch,
+        APP_ENV="production",
+        CORS_ALLOW_ORIGIN_REGEX=r"https://[a-z0-9-]+\.preview\.natiqo\.app",
+    ) as client:
+        preflight = await client.options(
+            "/api/v1/auth/dev-login",
+            headers={
+                "Origin": "https://pr-7.preview.natiqo.app",
+                "Access-Control-Request-Method": "POST",
+            },
+        )
+
+    assert preflight.status_code == 200, preflight.text
+    assert preflight.headers["access-control-allow-origin"] == "https://pr-7.preview.natiqo.app"
+
+
+@pytest.mark.asyncio
+async def test_no_loopback_grant_when_the_backdoor_is_switched_off(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With no dev sign-in there is nothing to reach, so the widened grant goes too."""
+    async with _client_built_with(monkeypatch, DEV_LOGIN_ENABLED="false") as client:
+        preflight = await client.options(
+            "/api/v1/auth/dev-login",
+            headers={"Origin": DASHBOARD_ORIGIN, "Access-Control-Request-Method": "POST"},
+        )
+
+    # 404, not 405: the router itself is absent, so there is no route to preflight for.
+    assert preflight.status_code == 404, preflight.text
+    assert "access-control-allow-origin" not in preflight.headers

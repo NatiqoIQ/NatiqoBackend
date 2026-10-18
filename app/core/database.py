@@ -94,23 +94,6 @@ def get_session_factory() -> async_sessionmaker[AsyncSession]:
     return _session_factory
 
 
-async def get_session() -> AsyncIterator[AsyncSession]:
-    """FastAPI dependency yielding a session inside a request-scoped transaction.
-
-    Routes never call ``commit``; the unit of work does. A session handed out here
-    is always closed, even when the handler raises.
-    """
-    factory = get_session_factory()
-    async with factory() as session:
-        try:
-            yield session
-        except Exception:
-            await session.rollback()
-            raise
-        finally:
-            await session.close()
-
-
 async def dispose_engine() -> None:
     """Close pooled connections. Called on application shutdown."""
     global _engine, _session_factory

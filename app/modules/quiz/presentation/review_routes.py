@@ -61,6 +61,7 @@ def _question_response(view: QuestionView) -> SessionQuestionResponse:
         points=view.points,
         image_url=view.image_url,
         audio_url=view.audio_url,
+        video_url=view.video_url,
         prompts=list(view.prompts),
     )
 

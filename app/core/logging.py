@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import logging
 import sys
-import uuid
 from contextvars import ContextVar
 from typing import Any
 
@@ -75,10 +74,6 @@ def redact(event_dict: dict[str, Any]) -> dict[str, Any]:
         if key.lower() in REDACTED_KEYS:
             event_dict[key] = REDACTED
     return event_dict
-
-
-def new_request_id() -> str:
-    return uuid.uuid4().hex
 
 
 def configure_logging(level_name: str | None = None, log_format: str | None = None) -> None:

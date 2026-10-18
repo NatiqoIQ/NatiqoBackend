@@ -158,10 +158,11 @@ class Question:
     means replacing the row, which keeps the answer key that learners have already been
     marked against consistent with the one in the catalogue.
 
-    Three support aids live on the aggregate. ``explanation`` is the post-attempt
-    rationale; ``image_url`` and ``audio_url`` are optional pre-attempt aids that
-    illustrate or pronounce the word or sentence being taught. The presentation layer
-    decides which of them a learner may see and when (see ``presentation/schemas.py``).
+    Four support aids live on the aggregate. ``explanation`` is the post-attempt
+    rationale; ``image_url``, ``audio_url`` and ``video_url`` are optional pre-attempt
+    aids that illustrate, pronounce or show the word or sentence being taught. The
+    presentation layer decides which of them a learner may see and when (see
+    ``presentation/schemas.py``).
 
     How the two lists are read depends on the kind, and a matching question is the one
     worth spelling out: its ``accepted_answers`` are ``"left => right"`` pairs rather than
@@ -184,6 +185,7 @@ class Question:
     explanation: str = ""
     image_url: str | None = None
     audio_url: str | None = None
+    video_url: str | None = None
     points: int = 1
 
     def __post_init__(self) -> None:
@@ -216,6 +218,7 @@ class Question:
             explanation=self.explanation,
             image_url=self.image_url,
             audio_url=self.audio_url,
+            video_url=self.video_url,
         )
         if problems:
             raise ValueError(" ".join(problems))

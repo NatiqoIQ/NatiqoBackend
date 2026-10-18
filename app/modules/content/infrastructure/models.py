@@ -179,6 +179,9 @@ class QuestionModel(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     #: Optional pre-attempt audio aid that pronounces the taught word or sentence.
     #: Public for the same reason as ``image_url``.
     audio_url: Mapped[str | None] = mapped_column(Text)
+    #: Optional pre-attempt video aid that shows the taught word or sentence in use.
+    #: Public for the same reason as ``image_url``.
+    video_url: Mapped[str | None] = mapped_column(Text)
     points: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
 
     __table_args__ = (

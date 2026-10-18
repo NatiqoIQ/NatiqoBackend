@@ -17,7 +17,6 @@ from collections.abc import Callable, Sequence
 from typing import Any
 
 from app.core.config import get_settings
-from app.core.errors import AppError, ErrorCode
 from app.core.logging import get_logger
 from app.core.types import CEFRLevel, ContentLanguage
 from app.modules.ai.domain.budget import BudgetPort
@@ -323,12 +322,4 @@ def _fallback_tutor(context: TutorContext, message: str) -> str:
     return (
         "I cannot reach the AI tutor right now, but the lesson content and exercises "
         f"are fully available. {level_hint}"
-    )
-
-
-def ai_unavailable_error() -> AppError:
-    return AppError(
-        "AI features are currently unavailable. The rest of the app works normally.",
-        code=ErrorCode.AI_DISABLED,
-        http_status=503,
     )

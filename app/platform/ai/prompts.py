@@ -110,15 +110,6 @@ CONTENT_HELPER = PromptTemplate(
     user="{request}",
 )
 
-ALL_TEMPLATES: tuple[PromptTemplate, ...] = (
-    EXPLAIN_ANSWER,
-    WRITING_CORRECTION,
-    TUTOR_SYSTEM,
-    CONTENT_HELPER,
-)
-
-TEMPLATES_BY_KEY: dict[str, PromptTemplate] = {t.key: t for t in ALL_TEMPLATES}
-
 
 def cefr_guidance(level: CEFRLevel) -> str:
     return CEFR_GUIDANCE.get(level, CEFR_GUIDANCE[CEFRLevel.B1])

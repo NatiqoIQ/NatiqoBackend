@@ -44,6 +44,14 @@ would try to JSON-parse the raw string before any validator ran and the comma-se
 form would fail at startup. Never use `*` while `CORS_ALLOW_CREDENTIALS=true`; startup
 validation rejects that combination.
 
+Outside production, while `DEV_LOGIN_ENABLED` is on, every loopback origin
+(`http://localhost:<any port>`, `http://127.0.0.1:<any port>`, `http://[::1]:<any port>`)
+is granted as well, so a dashboard dev server can call `POST /api/v1/auth/dev-login` without
+its port being listed. That widening is scoped to the backdoor: it disappears in production
+and when the flag is off. A LAN origin (`http://192.168.1.20:3000`) is not loopback and must
+be listed exactly. `CORS_ALLOW_ORIGIN_REGEX` accepts a pattern for origins that cannot be
+enumerated, such as one preview deployment per branch.
+
 Ports 8000 and 8099 are commonly already taken by local tooling — pass an explicit
 `--port` if the bind fails.
 

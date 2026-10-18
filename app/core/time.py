@@ -63,10 +63,6 @@ def local_date(moment: datetime, timezone: str | None) -> date:
     return to_utc(moment).astimezone(get_timezone(timezone)).date()
 
 
-def local_datetime(moment: datetime, timezone: str | None) -> datetime:
-    return to_utc(moment).astimezone(get_timezone(timezone))
-
-
 def start_of_local_day(day: date, timezone: str | None) -> datetime:
     """UTC instant at which ``day`` begins in the learner's timezone."""
     tz = get_timezone(timezone)
@@ -92,11 +88,6 @@ def local_day_bounds(
         start_of_local_day(moment.astimezone(get_timezone(timezone)).date(), timezone),
         end_of_local_day(moment.astimezone(get_timezone(timezone)).date(), timezone),
     )
-
-
-def days_between(earlier: date, later: date) -> int:
-    """Whole calendar days from ``earlier`` to ``later`` (may be negative)."""
-    return (later - earlier).days
 
 
 def streak_runs(days: list[date], *, today: date) -> tuple[int, int]:
@@ -130,22 +121,3 @@ def streak_runs(days: list[date], *, today: date) -> tuple[int, int]:
             else:
                 break
     return current, longest
-
-
-def add_days(moment: datetime, days: float) -> datetime:
-    return moment + timedelta(days=days)
-
-
-def humanize_seconds(seconds: float) -> str:
-    """Compact duration used in notification and API copy."""
-    total = int(max(0, seconds))
-    days, remainder = divmod(total, 86_400)
-    hours, remainder = divmod(remainder, 3_600)
-    minutes, secs = divmod(remainder, 60)
-    if days:
-        return f"{days}d {hours}h"
-    if hours:
-        return f"{hours}h {minutes}m"
-    if minutes:
-        return f"{minutes}m {secs}s"
-    return f"{secs}s"

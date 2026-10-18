@@ -102,10 +102,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         lifespan=lifespan,
     )
 
-    if app_settings.cors_origins:
+    # The middleware is mounted when *either* an exact allowlist or a pattern exists. The
+    # pattern is what makes ``POST /auth/dev-login`` reachable from a browser outside
+    # production: the dashboard dev server's port is not knowable in advance, and a
+    # missing CORS grant is invisible in the API's own logs (see ``Settings.cors_origin_regex``).
+    cors_origin_regex = app_settings.cors_origin_regex
+    if app_settings.cors_origins or cors_origin_regex:
         app.add_middleware(
             CORSMiddleware,
             allow_origins=app_settings.cors_origins,
+            allow_origin_regex=cors_origin_regex,
             allow_credentials=app_settings.cors_allow_credentials,
             allow_methods=["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
             allow_headers=["Authorization", "Content-Type", "X-Request-ID", "Idempotency-Key"],

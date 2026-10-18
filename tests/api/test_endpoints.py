@@ -166,8 +166,8 @@ class FakeVerifier:
     """A provider that trusts exactly the tokens a test hands it.
 
     The real adapters verify a signature against Google's or Apple's published keys and
-    are covered by their own tests. What this file is about is the HTTP surface — status
-    codes, serialization, auth wiring — and none of that is improved by a network call.
+    are covered by their own tests. What this file is about is the HTTP surface Ã¢â‚¬â€ status
+    codes, serialization, auth wiring Ã¢â‚¬â€ and none of that is improved by a network call.
     """
 
     def __init__(self, provider: IdentityProvider) -> None:
@@ -246,7 +246,7 @@ async def sign_in(
     """Sign in and return the ``user`` and ``tokens`` blocks.
 
     The first sign-in for an identity creates the account, so this is also how a test
-    gets a learner — there is no separate registration step to fake.
+    gets a learner Ã¢â‚¬â€ there is no separate registration step to fake.
     """
     chosen = verifier or GOOGLE
     # Comfortably over the schema's minimum length, so a test that means to exercise
@@ -738,8 +738,8 @@ async def test_an_unverified_provider_address_still_works(client: AsyncClient) -
 async def test_deleting_the_account_closes_it_and_kills_the_session(client: AsyncClient) -> None:
     """The endpoint's whole job.
 
-    Same honest limit as the password change above — the access token in flight expires on
-    its own — but the renewable credential dies here, and every later authenticated request
+    Same honest limit as the password change above Ã¢â‚¬â€ the access token in flight expires on
+    its own Ã¢â‚¬â€ but the renewable credential dies here, and every later authenticated request
     is refused because the account behind it is closed.
     """
     created = await sign_in(client)
@@ -802,7 +802,7 @@ async def test_a_pending_verification_status_is_not_a_gate(
 
     Refusing them would lock out every account created before the status existed, which is
     the opposite of what "the address flag is a nudge, not a gate" means. The status stays
-    truthful — it is what ``/me`` reports — and the account keeps working.
+    truthful Ã¢â‚¬â€ it is what ``/me`` reports Ã¢â‚¬â€ and the account keeps working.
     """
     created = await sign_in(client)
     # Written through the ORM rather than raw SQL: SQLite stores this UUID as 32 hex
@@ -902,7 +902,7 @@ async def test_non_document_responses_keep_the_strict_policy(
 async def test_an_explicit_csp_set_further_in_still_wins() -> None:
     """``setdefault`` semantics: a handler that sets its own policy keeps it.
 
-    This is the invariant that lets the docs branch exist at all — if this broke, the
+    This is the invariant that lets the docs branch exist at all Ã¢â‚¬â€ if this broke, the
     middleware would overwrite a deliberately narrower policy instead of deferring to
     it, so a handler could never tighten the policy below the default.
 
@@ -948,7 +948,7 @@ async def test_an_explicit_csp_set_further_in_still_wins() -> None:
 
 
 async def test_security_headers_are_present_on_docs_as_well(client: AsyncClient) -> None:
-    """The docs page is still hardened — only the CSP source list is widened."""
+    """The docs page is still hardened Ã¢â‚¬â€ only the CSP source list is widened."""
     headers = (await client.get("/docs")).headers
 
     assert headers["x-content-type-options"] == "nosniff"
@@ -984,7 +984,7 @@ PUBLIC_QUESTION_FIELDS = {
 #: Both cases matter, and the snake_case half is the one this file got wrong at first: the
 #: ORM and the read models name these fields ``correct_index`` and ``accepted_answers``,
 #: while everything a client receives is camelCase. Checking only the snake_case names
-#: therefore asserts the absence of a key that could never appear — so a real leak through a
+#: therefore asserts the absence of a key that could never appear Ã¢â‚¬â€ so a real leak through a
 #: response schema, which is where a leaked field would be declared, would have passed.
 #: ``explanation`` is spelled the same on both sides of the boundary, so it appears once.
 ANSWER_KEY_FIELDS = (
@@ -1025,8 +1025,8 @@ SEEDED_ACCEPTED_ANSWER = "pleased to meet you"
 def _answer_key_keys(payload: Any) -> list[str]:
     """Every answer-key key in a decoded payload, at any depth.
 
-    Recursive on purpose. The leak worth fearing is a nested one — a question inside a page's
-    ``items``, a question inside a session's ``questions`` — and a check that reads only the
+    Recursive on purpose. The leak worth fearing is a nested one Ã¢â‚¬â€ a question inside a page's
+    ``items``, a question inside a session's ``questions`` Ã¢â‚¬â€ and a check that reads only the
     top level is exactly the check a future envelope defeats.
     """
     found: list[str] = []
@@ -1055,7 +1055,7 @@ async def content_db(client: AsyncClient) -> AsyncIterator[AsyncSession]:
 
     The commits here are load-bearing. The engine backs ``:memory:`` SQLite with a single
     shared connection, so rows this session has flushed but not committed are visible to
-    the next request — and then destroyed by that request's rollback, because the unit of
+    the next request Ã¢â‚¬â€ and then destroyed by that request's rollback, because the unit of
     work and this session are competing for the same transaction. Without the commit, the
     first assertion sees the row and the second one does not, which reads as a flaky
     pagination bug rather than as a fixture bug.
@@ -1176,7 +1176,7 @@ async def test_a_draft_level_is_absent_from_the_tree(
 async def test_the_tree_nests_units_and_lessons_with_their_counts(
     client: AsyncClient, content_db: AsyncSession
 ) -> None:
-    """One response carries the whole hierarchy: level → units → lessons, each counted."""
+    """One response carries the whole hierarchy: level Ã¢â€ â€™ units Ã¢â€ â€™ lessons, each counted."""
     await seed_catalogue(content_db)
 
     body = (await client.get("/api/v1/content/tree")).json()
@@ -1237,7 +1237,7 @@ async def test_the_lesson_detail_carries_the_question_image_aid(
 async def test_a_question_without_an_image_serialises_a_null(
     client: AsyncClient, content_db: AsyncSession
 ) -> None:
-    """The field is always present — ``null`` when there is no aid — so a client relies
+    """The field is always present Ã¢â‚¬â€ ``null`` when there is no aid Ã¢â‚¬â€ so a client relies
     on one response shape rather than probing for a missing key."""
     ids = await seed_catalogue(content_db)
 
@@ -1259,6 +1259,26 @@ async def test_the_lesson_detail_carries_the_question_audio_aid(
     assert body["questions"][0]["audioUrl"] == audio
 
 
+
+async def test_the_lesson_detail_carries_the_question_video_aid(
+    client: AsyncClient, content_db: AsyncSession
+) -> None:
+    video = "https://cdn.test/hello.mp4"
+    ids = await seed_catalogue(content_db, video_url=video)
+
+    body = (await client.get(f"/api/v1/content/lessons/{ids['A1-lesson-1']}")).json()
+
+    assert body["questions"][0]["videoUrl"] == video
+
+
+async def test_a_question_without_a_video_serialises_a_null(
+    client: AsyncClient, content_db: AsyncSession
+) -> None:
+    ids = await seed_catalogue(content_db)
+
+    body = (await client.get(f"/api/v1/content/lessons/{ids['A1-lesson-1']}")).json()
+
+    assert body["questions"][0]["videoUrl"] is None
 async def test_a_question_without_audio_serialises_a_null(
     client: AsyncClient, content_db: AsyncSession
 ) -> None:
@@ -1358,7 +1378,7 @@ async def test_a_matching_question_shows_its_prompts_and_hides_its_bank(
 
     The prompts are, for the same reason a multiple choice shows its options: knowing that
     ``Dog`` is to be paired with something says nothing about what. The bank is the half a
-    shift in order could give away — the order it is stored in is the order of the pairs — and
+    shift in order could give away Ã¢â‚¬â€ the order it is stored in is the order of the pairs Ã¢â‚¬â€ and
     this is a shared, cacheable read with no per-learner seed to shuffle against, so it waits
     for the session. Both halves are asserted here so neither drifts into the other's slot.
     """
@@ -1496,7 +1516,7 @@ async def test_a_request_body_is_accepted_in_either_spelling(client: AsyncClient
     This is what makes the rename deployable: the server and the mobile app ship
     independently, so for at least one release window a client on the old build and a server
     on the new one must both function. Once that window closes the snake_case half of this
-    test can be deleted — but deleting it is a decision, and not doing so is not.
+    test can be deleted Ã¢â‚¬â€ but deleting it is a decision, and not doing so is not.
     """
     body = {
         "display_name": PROBE_NAME,
@@ -1592,7 +1612,7 @@ async def test_a_miss_is_not_cacheable(client: AsyncClient) -> None:
     """A 404 here means "not published", not "never will be".
 
     Caching it for the freshness window would let an editor publish a lesson and have
-    learners keep the miss — the content exists, the phone simply refuses to ask again.
+    learners keep the miss Ã¢â‚¬â€ the content exists, the phone simply refuses to ask again.
     """
     response = await client.get(f"/api/v1/content/lessons/{uuid.uuid4()}")
     assert response.status_code == 404
@@ -1681,7 +1701,7 @@ async def test_a_cross_origin_client_can_read_the_headers_the_api_relies_on(
     """A browser is denied headers it has not been granted, so the grant is part of the API.
 
     Without ``ETag`` on this list a web build cannot store a validator, cannot send
-    ``If-None-Match``, and therefore never revalidates — revalidation would work in
+    ``If-None-Match``, and therefore never revalidates Ã¢â‚¬â€ revalidation would work in
     production for native clients and silently not for the web and webview builds, which is
     the kind of gap that only surfaces as a support ticket.
     """
@@ -1740,7 +1760,7 @@ async def test_a_malformed_id_and_an_absent_one_are_distinguishable(client: Asyn
 
     The asymmetry is deliberate. A malformed code is passed through to the catalogue and
     answered exactly like an unknown one, so a client cannot tell a typo from an unpublished
-    lesson by probing — but a *malformed UUID* never reaches the catalogue, because it cannot
+    lesson by probing Ã¢â‚¬â€ but a *malformed UUID* never reaches the catalogue, because it cannot
     be a row id at all, and saying so saves the client a pointless retry.
     """
     malformed = await client.get("/api/v1/content/lessons/not-a-uuid")
@@ -1757,7 +1777,7 @@ def test_the_schema_describes_the_error_envelope_we_actually_send() -> None:
 
     FastAPI injects a ``HTTPValidationError`` body for any route with a body or path
     parameters *unless* the operation already declares ``"422"``, ``"4XX"`` or
-    ``"default"`` — and it tests for those as **strings**. An int key in our response map
+    ``"default"`` Ã¢â‚¬â€ and it tests for those as **strings**. An int key in our response map
     leaves the test unsatisfied, the stock shape gets published, and a client generated
     from ``/openapi.json`` deserialises ``detail``/``loc`` fields that no response has ever
     contained. This pins the published schema to the bytes on the wire.
@@ -1800,7 +1820,7 @@ async def test_the_schema_and_the_wire_agree_on_a_validation_error(client: Async
 
 # ==================================================================== quiz engine
 # The attempt engine's HTTP surface: the status codes, the auth gate, and the one
-# contract that matters most — an answer key never reaches a client that has not
+# contract that matters most Ã¢â‚¬â€ an answer key never reaches a client that has not
 # answered. The use cases themselves are exercised in ``tests/integration``.
 
 
@@ -1883,7 +1903,7 @@ async def test_a_correct_retry_earns_half_and_replaces_the_answer(
 ) -> None:
     """A missed question may be answered again, and only the score changes.
 
-    The seeded question is worth one point, so half rounds down to nothing — the documented
+    The seeded question is worth one point, so half rounds down to nothing Ã¢â‚¬â€ the documented
     consequence of the halving rule, and the sharpest form of "the first try is the one that
     pays". Just as important is that the retry lands on the *same* answer: ``answeredCount``
     stays at one, so a session cannot be inflated by trying again.
@@ -2060,7 +2080,7 @@ async def test_an_ordering_answer_is_graded_over_the_wire(
     """The ordering contract end to end: a sequence in, a verdict and the key out.
 
     Pins the one new request field (``answer.order``) at the wire layer, and the invariant
-    that the served sequence is a de-arrangement of the answer — never the answer itself.
+    that the served sequence is a de-arrangement of the answer Ã¢â‚¬â€ never the answer itself.
     """
     headers, lesson_id = await _quiz_context(client, content_db)
     authored = ["Hello!", "How are you?", "I am fine.", "Goodbye!"]
@@ -2103,7 +2123,7 @@ async def test_an_ordering_answer_is_graded_over_the_wire(
     result = response.json()["result"]
     assert result["isCorrect"] is True
     assert result["pointsAwarded"] == 2
-    assert result["correctAnswer"]["order"] == "Hello! → How are you? → I am fine. → Goodbye!"
+    assert result["correctAnswer"]["order"] == "Hello! Ã¢â€ â€™ How are you? Ã¢â€ â€™ I am fine. Ã¢â€ â€™ Goodbye!"
 
 
 #: A matching question's pairs, as a wrong answer and as the key. Declared once so the tests
@@ -2133,8 +2153,8 @@ async def test_a_matching_answer_is_graded_over_the_wire(
 ) -> None:
     """The matching contract end to end: a set of pairs in, a verdict and the key out.
 
-    Pins the two new surface fields — ``prompts`` on the served question and
-    ``answer.matching`` on the request — and the invariant that keeps the pairing server-side:
+    Pins the two new surface fields Ã¢â‚¬â€ ``prompts`` on the served question and
+    ``answer.matching`` on the request Ã¢â‚¬â€ and the invariant that keeps the pairing server-side:
     the bank is reordered so that no option stands opposite the prompt it answers, which is
     the arrangement the authored order would produce.
     """
@@ -2170,7 +2190,7 @@ async def test_a_matching_answer_is_graded_over_the_wire(
     result = response.json()["result"]
     assert result["isCorrect"] is True
     assert result["pointsAwarded"] == 2
-    assert result["correctAnswer"]["pairs"] == "Monday ⇒ 1; Tuesday ⇒ 2; Wednesday ⇒ 3"
+    assert result["correctAnswer"]["pairs"] == "Monday Ã¢â€¡â€™ 1; Tuesday Ã¢â€¡â€™ 2; Wednesday Ã¢â€¡â€™ 3"
 
 
 async def test_a_wrong_matching_pairing_is_wrong_and_a_retry_is_worth_half(
@@ -2178,8 +2198,8 @@ async def test_a_wrong_matching_pairing_is_wrong_and_a_retry_is_worth_half(
 ) -> None:
     """Every prompt is answered with a real option; the pairings are simply wrong.
 
-    That is an answer, not a malformed request — the distinction the grading rule exists to
-    make — and the retry that follows it is the one place the halved-points rule can be seen
+    That is an answer, not a malformed request Ã¢â‚¬â€ the distinction the grading rule exists to
+    make Ã¢â‚¬â€ and the retry that follows it is the one place the halved-points rule can be seen
     over the wire for this kind.
     """
     headers, lesson_id = await _quiz_context(client, content_db)
@@ -2290,7 +2310,7 @@ async def test_a_mis_ordered_ordering_answer_is_rejected_over_the_wire(
 
 # =========================================== the answer key never crosses the wire before
 # The invariant this section exists for: until a learner has committed to an answer, no
-# endpoint may hand out ``correctIndex``, ``acceptedAnswers`` or ``explanation`` — for any
+# endpoint may hand out ``correctIndex``, ``acceptedAnswers`` or ``explanation`` Ã¢â‚¬â€ for any
 # question, through any route, at any nesting depth. It is stated once here and checked
 # against the whole surface a client can read, rather than one route at a time, because the
 # question being asked is "is there *any* way to read the answer key early?" and only the
@@ -2298,8 +2318,8 @@ async def test_a_mis_ordered_ordering_answer_is_rejected_over_the_wire(
 #
 # Three things make the check evidence rather than aspiration:
 #
-# * the sweeps walk every read available before an answer — the public catalogue, the session
-#   a client opens, and the session it re-opens — scanning each decoded payload recursively;
+# * the sweeps walk every read available before an answer Ã¢â‚¬â€ the public catalogue, the session
+#   a client opens, and the session it re-opens Ã¢â‚¬â€ scanning each decoded payload recursively;
 # * the fixture is asserted to carry a real answer key, so "found nothing" cannot mean
 #   "there was nothing to find";
 # * the *values* are searched for as well as the keys, because the rationale is a sentence,
@@ -2335,7 +2355,7 @@ async def test_the_seed_really_carries_an_answer_key(content_db: AsyncSession) -
 
     "Nothing leaked" is only evidence if there was a key to leak. A renamed column or an
     emptied seeder would leave every assertion in this section green and worthless, so the
-    fixture's own answer key — an index, a rationale and an accepted phrase — is asserted
+    fixture's own answer key Ã¢â‚¬â€ an index, a rationale and an accepted phrase Ã¢â‚¬â€ is asserted
     first.
     """
     ids = await _seed_catalogue_with_a_key(content_db)
@@ -2379,7 +2399,7 @@ async def test_no_session_read_before_an_answer_carries_the_answer_key(
     """The two authenticated reads a client makes before answering: open, then re-open.
 
     A session serves the same questions the catalogue does through a different projection,
-    so it is checked separately — they are two places that can each leak on their own, and
+    so it is checked separately Ã¢â‚¬â€ they are two places that can each leak on their own, and
     the session payload is the one a client holds while the answer is still open.
     """
     headers, lesson_id = await _quiz_context(client, content_db)
@@ -2430,7 +2450,7 @@ def test_the_published_schema_declares_no_pre_attempt_answer_key_field() -> None
 
 # ==================================================================== progress
 # The read-only progress surface: the auth gate, the wire shape, and the property that
-# ties it to the attempt engine — every figure is restated from a session the learner
+# ties it to the attempt engine Ã¢â‚¬â€ every figure is restated from a session the learner
 # actually finished. The use cases are exercised in ``tests/integration``; what is pinned
 # here is the HTTP contract a mobile client is generated from.
 
@@ -2751,7 +2771,7 @@ async def test_progress_is_scoped_to_the_caller(
 
 # ====================================================================== review
 # The spaced-repetition HTTP surface: the auth gate, the wire shape, and the two contracts
-# worth pinning at the boundary — the queue serves the answer-free question a live session
+# worth pinning at the boundary Ã¢â‚¬â€ the queue serves the answer-free question a live session
 # does, and answering returns the verdict plus the SM-2 schedule it derived. The use cases
 # are exercised in ``tests/integration``; this is the HTTP contract a client is generated
 # from.
@@ -3000,7 +3020,7 @@ async def test_completing_a_lesson_seeds_a_review_card(
 ) -> None:
     """The property that ties review to the engine: a correct answer schedules the question.
 
-    The card lands due tomorrow, so it is counted ahead rather than as due today — which
+    The card lands due tomorrow, so it is counted ahead rather than as due today Ã¢â‚¬â€ which
     only holds if the due date came off the scheduler.
     """
     headers, ids = await _learner_with_catalogue(client, content_db)
@@ -3078,7 +3098,7 @@ async def test_the_ai_surface_needs_a_token(client: AsyncClient, method: str, pa
 async def test_explaining_an_answer_grades_on_the_server(
     client: AsyncClient, content_db: AsyncSession
 ) -> None:
-    """``/ai/explain`` returns the verdict, the key and the rationale — after the answer.
+    """``/ai/explain`` returns the verdict, the key and the rationale Ã¢â‚¬â€ after the answer.
 
     With AI off the rationale is the authored CMS text, and ``source`` says ``authored``
     rather than passing a fallback off as model output. That provenance flag is the part a
@@ -3271,7 +3291,7 @@ async def test_the_quota_reports_the_daily_allowance(client: AsyncClient) -> Non
 # rows, ``/admin`` shows the whole editorial pipeline and is the only place it can be
 # changed. Two properties are pinned here that a service-level test cannot see: the role
 # gate is on the HTTP boundary (a wrong role is a 403 envelope), and every mutation leaves
-# an audit row in the same transaction — the "who changed this" half of the double
+# an audit row in the same transaction Ã¢â‚¬â€ the "who changed this" half of the double
 # protection the module docstrings describe.
 #
 # A token's role claim is never trusted: ``require_role`` reads the live account. That is
@@ -3301,7 +3321,7 @@ async def _grant_roles(
     """Sign in, write the roles column directly, and return auth headers.
 
     The database write is the point: ``require_role`` reads the live account, so promoting
-    a learner here is enough for the token already in hand to carry the new authority —
+    a learner here is enough for the token already in hand to carry the new authority Ã¢â‚¬â€
     no re-login, and no reliance on a stale claim.
     """
     account = await sign_in(client, token=token, **identity)
@@ -3338,7 +3358,7 @@ async def _approve_and_publish(client: AsyncClient, headers: dict[str, str], pat
     """Walk an aggregate through ``review`` and ``approved`` to ``published``.
 
     The lifecycle forbids skipping a step, so a test that wants a published parent has to
-    take each one — which doubles as cover for the state machine over HTTP.
+    take each one Ã¢â‚¬â€ which doubles as cover for the state machine over HTTP.
     """
     for state in ("review", "approved", "published"):
         response = await client.patch(path, json={"state": state}, headers=headers)
@@ -4009,7 +4029,7 @@ async def _record_learning(
     """One finished sitting: a completed session, a right and a wrong answer, a lesson.
 
     Written directly rather than driven through ``/quiz`` because the overview is about
-    *counting what exists*, not about the engine that produced it — and the engine already
+    *counting what exists*, not about the engine that produced it Ã¢â‚¬â€ and the engine already
     has its own suite.
     """
     now = datetime.now(UTC)
