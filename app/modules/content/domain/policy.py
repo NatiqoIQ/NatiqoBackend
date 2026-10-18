@@ -201,9 +201,14 @@ def question_shape_problems(
                 f"A multi_select question needs at least {MIN_MULTI_SELECT_ANSWERS} correct "
                 f"answers, got {len(accepted_answers)}."
             )
+        # Both sides are folded before comparing. The aggregate normalises the key to
+        # lowercase before it validates, so an author who writes the option's spelling with
+        # its capital letters is storing a findable answer — comparing raw here would reject
+        # exactly the input the entity accepts, and only on the one path that runs this check
+        # before normalising.
         offered = {choice.strip().lower() for choice in choices}
         for answer in accepted_answers:
-            if answer not in offered:
+            if answer.strip().lower() not in offered:
                 problems.append(f"The correct answer {answer!r} is not one of the choices.")
         if correct_index is not None:
             problems.append(
@@ -237,9 +242,11 @@ def question_shape_problems(
             )
         if not accepted_answers:
             problems.append("A word_bank question needs at least one accepted answer.")
+        # Folded for the same reason as multi-select: the stored key is normalised, so the
+        # authored spelling's case must not decide whether the item is accepted.
         offered = {choice.strip().lower() for choice in choices}
         for answer in accepted_answers:
-            if answer not in offered:
+            if answer.strip().lower() not in offered:
                 problems.append(f"The accepted answer {answer!r} is missing from the word bank.")
 
     elif kind is QuestionKind.ORDERING:

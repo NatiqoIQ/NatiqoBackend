@@ -14,11 +14,13 @@ ports would only move the coupling into the service's constructor.
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 from typing import Protocol, runtime_checkable
 
 from app.core.pagination import PositionCursor
 from app.core.types import CEFRLevel, ContentId
 from app.modules.admin.domain.audit import AuditEntry
+from app.modules.admin.domain.stats import AdminOverview
 from app.modules.content.domain.entities import Lesson, Level, Question, Unit
 
 
@@ -27,6 +29,21 @@ class AuditLogRepositoryPort(Protocol):
     """Append-only access to the audit trail. There is no update or delete, by design."""
 
     async def add(self, entry: AuditEntry) -> None: ...
+
+
+@runtime_checkable
+class AdminStatsRepositoryPort(Protocol):
+    """Aggregate reads for the dashboard overview.
+
+    One method rather than a property per figure on purpose: the screen wants all of them
+    at once, and a port that exposed ten independent counts would invite a caller to make
+    ten round trips for a single page.
+
+    ``since`` is passed in rather than computed here so the window is the caller's decision
+    and the adapter has no clock of its own to disagree with the rest of the request.
+    """
+
+    async def overview(self, *, since: datetime) -> AdminOverview: ...
 
 
 @runtime_checkable
@@ -96,6 +113,7 @@ class EditorialRepositoryPort(Protocol):
 
 
 __all__ = [
+    "AdminStatsRepositoryPort",
     "AuditLogRepositoryPort",
     "EditorialRepositoryPort",
 ]

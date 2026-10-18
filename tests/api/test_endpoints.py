@@ -50,7 +50,13 @@ from app.modules.content.infrastructure.models import (
     QuestionModel,
     UnitModel,
 )
+from app.modules.quiz.domain.entities import ProgressState, SessionStatus
 from app.modules.quiz.domain.review import ReviewState
+from app.modules.quiz.infrastructure.models import (
+    LessonProgressModel,
+    QuizAnswerModel,
+    QuizSessionModel,
+)
 from app.modules.quiz.infrastructure.review_models import ReviewCardModel
 from app.modules.users.application.auth_service import AuthService
 from app.modules.users.domain.identity import (
@@ -130,8 +136,14 @@ PUBLISHED_OPERATIONS: set[tuple[str, str]] = {
     ("POST", "/api/v1/admin/content/lessons/{lesson_id}/publish"),
     ("POST", "/api/v1/admin/content/lessons/{lesson_id}/questions"),
     ("POST", "/api/v1/admin/content/lessons/{lesson_id}/questions/reorder"),
+    ("POST", "/api/v1/admin/content/lessons/{lesson_id}/questions/bulk"),
+    ("GET", "/api/v1/admin/content/lessons/{lesson_id}/questions/export"),
+    ("POST", "/api/v1/admin/content/lessons/{lesson_id}/questions/import"),
+    ("GET", "/api/v1/admin/content/questions/{question_id}"),
+    ("POST", "/api/v1/admin/content/questions/{question_id}/duplicate"),
     ("PATCH", "/api/v1/admin/content/questions/{question_id}"),
     ("DELETE", "/api/v1/admin/content/questions/{question_id}"),
+    ("GET", "/api/v1/admin/stats/overview"),
     ("GET", "/api/v1/admin/users"),
     ("POST", "/api/v1/admin/users"),
     ("POST", "/api/v1/media/presign"),
@@ -992,6 +1004,11 @@ ADMIN_ANSWER_KEY_SCHEMAS = frozenset(
         "QuestionAdminResponse",
         "QuestionCreateRequest",
         "QuestionUpdateRequest",
+        # The export/import pair carries the key by design: the package has to be able to
+        # rebuild the lesson it came from, and it is only ever served behind the same role
+        # gate as the editor's read model.
+        "QuestionExportItem",
+        "QuestionImportItem",
     }
 )
 
@@ -3756,6 +3773,387 @@ async def test_admin_reads_an_unknown_content_id_as_not_found(
     response = await client.get(f"/api/v1/admin/content/levels/{uuid.uuid4()}", headers=headers)
     assert response.status_code == 404, response.text
     assert error_code(response) == "LEVEL_NOT_FOUND"
+
+
+MULTI_SELECT_BODY: dict[str, Any] = {
+    "kind": "multi_select",
+    "skill": "vocabulary",
+    "prompt": "Select the greetings.",
+    "choices": ["Hello", "Goodbye", "Hi"],
+    "accepted_answers": ["Hello", "Hi"],
+    "explanation": "Two of these greet someone.",
+    "points": 2,
+}
+
+
+async def _add_question(
+    client: AsyncClient,
+    headers: dict[str, str],
+    lesson_id: str,
+    body: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    response = await client.post(
+        f"/api/v1/admin/content/lessons/{lesson_id}/questions",
+        json=body or QUESTION_BODY,
+        headers=headers,
+    )
+    assert response.status_code == 201, response.text
+    return response.json()
+
+
+async def _add_lesson(
+    client: AsyncClient, headers: dict[str, str], unit_id: str, title: str = "Another lesson"
+) -> dict[str, Any]:
+    response = await client.post(
+        f"/api/v1/admin/content/units/{unit_id}/lessons",
+        json={"title": title, "summary": "A second lesson.", "estimated_minutes": 5},
+        headers=headers,
+    )
+    assert response.status_code == 201, response.text
+    return response.json()
+
+
+@pytest.mark.asyncio
+async def test_admin_reads_one_question_by_id(
+    client: AsyncClient, content_db: AsyncSession
+) -> None:
+    """The editor's projection, reachable without pulling its whole lesson."""
+    headers = await _grant_roles(client, content_db, (UserRole.CONTENT_EDITOR,))
+    ids = await _published_lesson(client, headers)
+    created = await _add_question(client, headers, ids["lesson"])
+
+    response = await client.get(f"/api/v1/admin/content/questions/{created['id']}", headers=headers)
+    assert response.status_code == 200, response.text
+    assert response.json()["id"] == created["id"]
+    assert response.json()["correctIndex"] == 0, "the editorial view must carry the key"
+
+    missing = await client.get(f"/api/v1/admin/content/questions/{uuid.uuid4()}", headers=headers)
+    assert missing.status_code == 404, missing.text
+    assert error_code(missing) == "QUESTION_NOT_FOUND"
+
+
+@pytest.mark.asyncio
+async def test_admin_duplicates_a_question_beside_it_and_into_another_lesson(
+    client: AsyncClient, content_db: AsyncSession
+) -> None:
+    """A copy is an independent row: new id, its own slot, the original untouched."""
+    headers = await _grant_roles(client, content_db, (UserRole.CONTENT_EDITOR,))
+    ids = await _published_lesson(client, headers)
+    source = await _add_question(client, headers, ids["lesson"])
+
+    response = await client.post(
+        f"/api/v1/admin/content/questions/{source['id']}/duplicate", json={}, headers=headers
+    )
+    assert response.status_code == 201, response.text
+    copy = response.json()
+    assert copy["id"] != source["id"]
+    assert copy["position"] == source["position"] + 1, "a copy lands beside the original"
+    assert copy["prompt"] == source["prompt"]
+    assert copy["correctIndex"] == source["correctIndex"], "the key travels with the copy"
+
+    other = await _add_lesson(client, headers, ids["unit"])
+    moved = await client.post(
+        f"/api/v1/admin/content/questions/{source['id']}/duplicate",
+        json={"lessonId": other["id"]},
+        headers=headers,
+    )
+    assert moved.status_code == 201, moved.text
+    assert moved.json()["lessonId"] == other["id"]
+    assert moved.json()["position"] == 1
+
+    # The original lesson still holds exactly the two questions it had.
+    detail = await client.get(f"/api/v1/admin/content/lessons/{ids['lesson']}", headers=headers)
+    assert [question["id"] for question in detail.json()["questions"]] == [
+        source["id"],
+        copy["id"],
+    ]
+
+    taken = await client.post(
+        f"/api/v1/admin/content/questions/{source['id']}/duplicate",
+        json={"position": 1},
+        headers=headers,
+    )
+    assert taken.status_code == 409, taken.text
+    assert error_code(taken) == "CONFLICT"
+    assert "content.question.duplicate" in await _audit_actions(content_db)
+
+
+@pytest.mark.asyncio
+async def test_admin_bulk_creates_questions_or_writes_nothing(
+    client: AsyncClient, content_db: AsyncSession
+) -> None:
+    """All-or-nothing, and the failure names every item that was wrong."""
+    headers = await _grant_roles(client, content_db, (UserRole.CONTENT_EDITOR,))
+    ids = await _published_lesson(client, headers)
+
+    accepted = await client.post(
+        f"/api/v1/admin/content/lessons/{ids['lesson']}/questions/bulk",
+        json={
+            "questions": [
+                QUESTION_BODY,
+                {**QUESTION_BODY, "prompt": "Which one means 'goodbye'?", "correct_index": 1},
+                {**QUESTION_BODY, "prompt": "Which one means 'thanks'?"},
+            ]
+        },
+        headers=headers,
+    )
+    assert accepted.status_code == 201, accepted.text
+    body = accepted.json()
+    assert body["total"] == 3 and body["accepted"] == 3 and body["dryRun"] is False
+    assert [item["position"] for item in body["items"]] == [1, 2, 3]
+
+    rejected = await client.post(
+        f"/api/v1/admin/content/lessons/{ids['lesson']}/questions/bulk",
+        json={
+            "questions": [
+                {**QUESTION_BODY, "prompt": "A fourth item."},
+                {**QUESTION_BODY, "prompt": "Not answerable.", "correct_index": None},
+            ]
+        },
+        headers=headers,
+    )
+    assert rejected.status_code == 422, rejected.text
+    failures = rejected.json()["error"]["details"]["failures"]
+    assert [failure["index"] for failure in failures] == [1]
+    assert failures[0]["problems"], "a rejection must say what is wrong"
+
+    detail = await client.get(f"/api/v1/admin/content/lessons/{ids['lesson']}", headers=headers)
+    assert len(detail.json()["questions"]) == 3, "the rejected batch must not half-write"
+    assert "content.question.bulk_create" in await _audit_actions(content_db)
+
+
+@pytest.mark.asyncio
+async def test_a_bulk_dry_run_validates_without_writing(
+    client: AsyncClient, content_db: AsyncSession
+) -> None:
+    """An import preview must not leave a lesson behind when it only meant to check."""
+    headers = await _grant_roles(client, content_db, (UserRole.CONTENT_EDITOR,))
+    ids = await _published_lesson(client, headers)
+
+    preview = await client.post(
+        f"/api/v1/admin/content/lessons/{ids['lesson']}/questions/bulk",
+        json={"questions": [QUESTION_BODY, MULTI_SELECT_BODY], "dryRun": True},
+        headers=headers,
+    )
+    assert preview.status_code == 200, preview.text
+    assert preview.json()["accepted"] == 2
+    assert preview.json()["items"] == []
+
+    detail = await client.get(f"/api/v1/admin/content/lessons/{ids['lesson']}", headers=headers)
+    assert detail.json()["questions"] == []
+
+
+@pytest.mark.asyncio
+async def test_admin_exports_a_lesson_and_imports_it_elsewhere(
+    client: AsyncClient, content_db: AsyncSession
+) -> None:
+    """The round trip: a package rebuilds the same questions, keys included."""
+    headers = await _grant_roles(client, content_db, (UserRole.CONTENT_EDITOR,))
+    ids = await _published_lesson(client, headers)
+    await _add_question(client, headers, ids["lesson"])
+    await _add_question(client, headers, ids["lesson"], MULTI_SELECT_BODY)
+
+    exported = await client.get(
+        f"/api/v1/admin/content/lessons/{ids['lesson']}/questions/export", headers=headers
+    )
+    assert exported.status_code == 200, exported.text
+    package = exported.json()
+    assert package["version"] == 1
+    assert package["lessonId"] == ids["lesson"]
+    assert [item["kind"] for item in package["questions"]] == [
+        "multiple_choice",
+        "multi_select",
+    ]
+    for item in package["questions"]:
+        # A package is a template, not a set of rows: identity and slot stay behind.
+        assert "id" not in item and "position" not in item
+    # Authored with capitals, stored folded: the entity normalises the key, so the package
+    # carries the comparable form rather than the spelling the author happened to type.
+    assert package["questions"][1]["acceptedAnswers"] == ["hello", "hi"]
+
+    other = await _add_lesson(client, headers, ids["unit"], title="Imported into")
+    # The package is posted back verbatim: its metadata keys are ignored, which is what lets
+    # a caller feed an export file straight into import without editing it first.
+    imported = await client.post(
+        f"/api/v1/admin/content/lessons/{other['id']}/questions/import",
+        json=package,
+        headers=headers,
+    )
+    assert imported.status_code == 201, imported.text
+    assert imported.json()["total"] == 2
+    assert [item["position"] for item in imported.json()["items"]] == [1, 2]
+
+    # The lesson the package came from is unchanged.
+    original = await client.get(f"/api/v1/admin/content/lessons/{ids['lesson']}", headers=headers)
+    assert len(original.json()["questions"]) == 2
+
+    unsupported = await client.post(
+        f"/api/v1/admin/content/lessons/{other['id']}/questions/import",
+        json={"version": 99, "questions": package["questions"]},
+        headers=headers,
+    )
+    assert unsupported.status_code == 422, unsupported.text
+    assert unsupported.json()["error"]["details"]["field"] == "version"
+
+    actions = await _audit_actions(content_db)
+    assert "content.question.import" in actions
+
+
+async def _record_learning(
+    db: AsyncSession,
+    *,
+    user_id: uuid.UUID,
+    lesson_id: uuid.UUID,
+    question_ids: tuple[uuid.UUID, uuid.UUID],
+) -> None:
+    """One finished sitting: a completed session, a right and a wrong answer, a lesson.
+
+    Written directly rather than driven through ``/quiz`` because the overview is about
+    *counting what exists*, not about the engine that produced it — and the engine already
+    has its own suite.
+    """
+    now = datetime.now(UTC)
+    session = QuizSessionModel(
+        id=uuid.uuid4(),
+        user_id=user_id,
+        mode="lesson",
+        lesson_id=lesson_id,
+        status=SessionStatus.COMPLETED.value,
+        question_ids=[str(question_id) for question_id in question_ids],
+        started_at=now,
+        expires_at=now,
+        completed_at=now,
+        correct_count=1,
+        xp_awarded=15,
+    )
+    db.add_all(
+        [
+            session,
+            QuizAnswerModel(
+                id=uuid.uuid4(),
+                session_id=session.id,
+                question_id=question_ids[0],
+                position=1,
+                given_answer={"choice": "Hello"},
+                is_correct=True,
+                points_awarded=1,
+                attempt=1,
+                explanation="A greeting.",
+                answered_at=now,
+            ),
+            QuizAnswerModel(
+                id=uuid.uuid4(),
+                session_id=session.id,
+                question_id=question_ids[1],
+                position=2,
+                given_answer={"choice": "Goodbye"},
+                is_correct=False,
+                points_awarded=0,
+                attempt=1,
+                explanation="A farewell.",
+                answered_at=now,
+            ),
+            LessonProgressModel(
+                id=uuid.uuid4(),
+                user_id=user_id,
+                lesson_id=lesson_id,
+                state=ProgressState.COMPLETED.value,
+                best_score=50,
+                attempts=1,
+                xp_earned=15,
+                completed_at=now,
+            ),
+        ]
+    )
+    await db.commit()
+
+
+@pytest.mark.asyncio
+async def test_admin_overview_aggregates_accounts_learning_and_content(
+    client: AsyncClient, content_db: AsyncSession
+) -> None:
+    """One read answers the whole screen, and every figure is a counted one."""
+    headers = await _grant_roles(client, content_db, (UserRole.ADMIN,))
+    learner = await sign_in(
+        client,
+        token="stats-learner-token",
+        email="stats@natiqo.app",
+        subject="stats-learner",
+    )
+    learner_id = uuid.UUID(learner["user"]["id"])
+
+    ids = await _published_lesson(client, headers)
+    first = await _add_question(client, headers, ids["lesson"])
+    second = await _add_question(
+        client, headers, ids["lesson"], {**QUESTION_BODY, "prompt": "Which one is a farewell?"}
+    )
+    await _record_learning(
+        content_db,
+        user_id=learner_id,
+        lesson_id=uuid.UUID(ids["lesson"]),
+        question_ids=(uuid.UUID(first["id"]), uuid.UUID(second["id"])),
+    )
+
+    # One draft level holding one draft unit, so the pipeline queue is non-empty.
+    draft_level = await _create_level(client, headers, code="A2")
+    await client.post(
+        f"/api/v1/admin/content/levels/{draft_level['id']}/units",
+        json={"title": "Still being written"},
+        headers=headers,
+    )
+
+    response = await client.get("/api/v1/admin/stats/overview", headers=headers)
+    assert response.status_code == 200, response.text
+    body = response.json()
+
+    assert body["windowDays"] == 7
+    assert body["users"] == {"total": 2, "new": 2, "active": 2, "deleted": 0}
+    assert body["learning"] == {
+        "lessonsCompleted": 1,
+        "sessionsCompleted": 1,
+        "answersGraded": 2,
+        "correctAnswers": 1,
+        "accuracyPercent": 50,
+        "xpAwarded": 15,
+    }
+    # The lesson was approved but not published, so it is neither live nor a draft.
+    assert body["content"] == {
+        "levels": 2,
+        "units": 2,
+        "lessons": 1,
+        "publishedLessons": 0,
+        "drafts": 2,
+        "inReview": 0,
+    }
+
+    wider = await client.get("/api/v1/admin/stats/overview?window=30", headers=headers)
+    assert wider.status_code == 200, wider.text
+    assert wider.json()["windowDays"] == 30
+    # Only the activity figure follows the window; the rest are lifetime totals.
+    assert wider.json()["content"] == body["content"]
+
+
+@pytest.mark.asyncio
+async def test_the_overview_is_admin_only_and_bounded(
+    client: AsyncClient, content_db: AsyncSession
+) -> None:
+    """Account data is not a content editor's to read, and the window has sane limits."""
+    editor = await _grant_roles(client, content_db, (UserRole.CONTENT_EDITOR,))
+    refused = await client.get("/api/v1/admin/stats/overview", headers=editor)
+    assert refused.status_code == 403, refused.text
+    assert error_code(refused) == "AUTH_INSUFFICIENT_ROLE"
+
+    admin = await _grant_roles(
+        client,
+        content_db,
+        (UserRole.ADMIN,),
+        token="stats-admin-two-token",
+        email="stats-admin-two@natiqo.app",
+        subject="stats-admin-two",
+    )
+    for window in (0, 91):
+        response = await client.get(f"/api/v1/admin/stats/overview?window={window}", headers=admin)
+        assert response.status_code == 422, response.text
 
 
 # ------------------------------------------------------------------------- media

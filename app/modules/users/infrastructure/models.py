@@ -63,6 +63,11 @@ class UserModel(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     )
 
     __table_args__ = (
+        # Sign-up growth is charted by day, and the overview counts new accounts in a
+        # window; both are a range scan on this column. ``deleted_at`` is indexed for the
+        # same reason and for the retention job, but it cannot answer "how many signed up
+        # last week".
+        Index("ix_users_created_at", "created_at"),
         CheckConstraint(
             "status IN ('active', 'pending_verification', 'suspended', 'deleted')",
             name="valid_status",
@@ -99,6 +104,9 @@ class UserIdentityModel(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     __table_args__ = (
         UniqueConstraint("provider", "subject", name="uq_identity_provider_subject"),
         Index("ix_identity_user", "user_id"),
+        # "Active in the last N days" is counted from the newest sign-in per identity, so
+        # the window predicate reads this column on every overview request.
+        Index("ix_identity_last_login", "last_login_at"),
         CheckConstraint("provider IN ('google', 'apple')", name="valid_provider"),
     )
 

@@ -43,4 +43,7 @@ class AuditLogModel(Base, UUIDPrimaryKeyMixin):
         Index("ix_audit_logs_entity", "entity_type", "entity_id"),
         # "What did this admin do, most recently?" — the actor lookup.
         Index("ix_audit_logs_actor", "actor_id", "created_at"),
+        # The audit screen's default view is "newest first, unfiltered", which neither
+        # composite index leads with: both start with a filter column.
+        Index("ix_audit_logs_created_at", "created_at"),
     )

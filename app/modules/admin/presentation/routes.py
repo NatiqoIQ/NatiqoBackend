@@ -29,6 +29,7 @@ from fastapi import APIRouter, Depends, Path, Query, Response, status
 from app.api.deps import (
     AdminContentServiceDep,
     AdminRateLimitDep,
+    AdminStatsServiceDep,
     AdminUserServiceDep,
 )
 from app.core.responses import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, Page, build_page
@@ -40,12 +41,19 @@ from app.modules.admin.application.dto import (
     LevelCreateCommand,
     LevelUpdateCommand,
     QuestionCreateCommand,
+    QuestionDuplicateCommand,
     QuestionUpdateCommand,
     UnitCreateCommand,
     UnitUpdateCommand,
     UserRolesCommand,
 )
+from app.modules.admin.application.stats_service import (
+    DEFAULT_WINDOW_DAYS,
+    MAX_WINDOW_DAYS,
+    AdminOverviewView,
+)
 from app.modules.admin.presentation.schemas import (
+    AdminStatsResponse,
     AdminUserListResponse,
     AdminUserResponse,
     LessonCreateRequest,
@@ -56,10 +64,20 @@ from app.modules.admin.presentation.schemas import (
     LevelResponse,
     LevelUpdateRequest,
     QuestionAdminResponse,
+    QuestionBulkRequest,
+    QuestionBulkResponse,
     QuestionCreateRequest,
+    QuestionDuplicateRequest,
+    QuestionExportItem,
+    QuestionExportResponse,
+    QuestionImportItem,
+    QuestionImportRequest,
     QuestionListResponse,
     QuestionReorderRequest,
     QuestionUpdateRequest,
+    StatsContentResponse,
+    StatsLearningResponse,
+    StatsUsersResponse,
     UnitCreateRequest,
     UnitResponse,
     UnitUpdateRequest,
@@ -481,6 +499,140 @@ async def delete_question(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
+@router.get(
+    "/content/questions/{question_id}",
+    response_model=QuestionAdminResponse,
+    summary="Read a question",
+)
+async def get_question(
+    question_id: uuid.UUID,
+    _editor: ContentEditorDep,
+    service: AdminContentServiceDep,
+    _limit_guard: AdminRateLimitDep,
+) -> QuestionAdminResponse:
+    """One question by id, answer key included.
+
+    The editorial projection, not a learner's: this route exists so a question can be opened
+    for editing without pulling its whole lesson across the wire.
+    """
+    return QuestionAdminResponse.model_validate(await service.get_question(question_id))
+
+
+@router.post(
+    "/content/questions/{question_id}/duplicate",
+    response_model=QuestionAdminResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Duplicate a question",
+)
+async def duplicate_question(
+    question_id: uuid.UUID,
+    payload: QuestionDuplicateRequest,
+    editor: ContentEditorDep,
+    service: AdminContentServiceDep,
+    _limit_guard: AdminRateLimitDep,
+) -> QuestionAdminResponse:
+    """Copy an item, beside the original unless ``lessonId`` or ``position`` says otherwise.
+
+    A copy into another lesson is allowed: reusing a well-written item across a unit is the
+    usual reason to duplicate one.
+    """
+    view = await service.duplicate_question(
+        editor.id,
+        question_id,
+        QuestionDuplicateCommand(lesson_id=payload.lesson_id, position=payload.position),
+    )
+    return QuestionAdminResponse.model_validate(view)
+
+
+@router.post(
+    "/content/lessons/{lesson_id}/questions/bulk",
+    response_model=QuestionBulkResponse,
+    summary="Add several questions in one transaction",
+)
+async def bulk_create_questions(
+    lesson_id: uuid.UUID,
+    payload: QuestionBulkRequest,
+    response: Response,
+    editor: ContentEditorDep,
+    service: AdminContentServiceDep,
+    _limit_guard: AdminRateLimitDep,
+) -> QuestionBulkResponse:
+    """All-or-nothing: every item is validated before any row is written.
+
+    A rejection is a ``422`` whose ``details.failures`` names each failing ``index`` with its
+    problems, and leaves the lesson exactly as it was. ``dryRun`` answers the same question
+    without writing anything, which is what an import preview uses.
+
+    The status is `201` when rows were created and `200` for a dry run, so a caller can tell
+    "written" from "would be written" without reading the body.
+    """
+    view = await service.create_questions(
+        editor.id,
+        lesson_id,
+        [_question_command(item) for item in payload.questions],
+        dry_run=payload.dry_run,
+    )
+    response.status_code = status.HTTP_200_OK if view.dry_run else status.HTTP_201_CREATED
+    return _bulk_response(view)
+
+
+@router.get(
+    "/content/lessons/{lesson_id}/questions/export",
+    response_model=QuestionExportResponse,
+    summary="Export a lesson's questions",
+)
+async def export_questions(
+    lesson_id: uuid.UUID,
+    _editor: ContentEditorDep,
+    service: AdminContentServiceDep,
+    _limit_guard: AdminRateLimitDep,
+) -> QuestionExportResponse:
+    """The lesson's questions as a package the import route accepts unchanged.
+
+    Ids and positions are deliberately absent, so the package is a template for authoring
+    rather than a copy of database rows a second deployment could not use.
+    """
+    view = await service.export_questions(lesson_id)
+    return QuestionExportResponse(
+        version=view.version,
+        lesson_id=view.lesson_id,
+        lesson_title=view.lesson_title,
+        exported_at=view.exported_at,
+        questions=[QuestionExportItem.model_validate(item) for item in view.questions],
+    )
+
+
+@router.post(
+    "/content/lessons/{lesson_id}/questions/import",
+    response_model=QuestionBulkResponse,
+    summary="Import a lesson's questions from an exported package",
+)
+async def import_questions(
+    lesson_id: uuid.UUID,
+    payload: QuestionImportRequest,
+    response: Response,
+    editor: ContentEditorDep,
+    service: AdminContentServiceDep,
+    _limit_guard: AdminRateLimitDep,
+) -> QuestionBulkResponse:
+    """Write a package produced by the export route, atomically.
+
+    The package's ``version`` must be one this build knows, and the whole batch is validated
+    before anything is written — an import that half-succeeded would be worse than one that
+    refused. Positions are appended in the package's own order, so importing twice is two
+    copies rather than a silent edit of the first.
+    """
+    view = await service.import_questions(
+        editor.id,
+        lesson_id,
+        [_question_command(item) for item in payload.questions],
+        version=payload.version,
+        dry_run=payload.dry_run,
+    )
+    response.status_code = status.HTTP_200_OK if view.dry_run else status.HTTP_201_CREATED
+    return _bulk_response(view)
+
+
 # =========================================================================== users
 @router.get(
     "/users",
@@ -526,7 +678,102 @@ async def replace_user_roles(
     return AdminUserResponse.model_validate(view)
 
 
+# ========================================================================== stats
+#: The activity window, in days. Bounded at both ends: a window of zero has no meaning and
+#: a window past a quarter stops distinguishing activity from the lifetime total.
+Window = Annotated[int, Query(ge=1, le=MAX_WINDOW_DAYS, description="Activity window, in days.")]
+
+
+@router.get(
+    "/stats/overview",
+    response_model=AdminStatsResponse,
+    summary="Read the dashboard's aggregate totals",
+)
+async def get_stats_overview(
+    _admin: AdminDep,
+    service: AdminStatsServiceDep,
+    _limit_guard: AdminRateLimitDep,
+    window: Window = DEFAULT_WINDOW_DAYS,
+) -> AdminStatsResponse:
+    """Accounts, learning and catalogue totals in one read, as aggregates.
+
+    Admin-only, unlike the content routes: half of this payload is account data, and a role
+    that may author a lesson has no business counting users. A content editor who needs the
+    catalogue numbers can derive them from the levels they already list.
+
+    ``window`` scopes exactly one figure — how many accounts signed in during that period.
+    Everything else is a lifetime total, so changing the window never makes the other numbers
+    jump around.
+    """
+    return _stats_response(await service.overview(window_days=window))
+
+
 # ====================================================================== internals
+def _stats_response(view: AdminOverviewView) -> AdminStatsResponse:
+    totals = view.totals
+    return AdminStatsResponse(
+        generated_at=view.generated_at,
+        window_days=view.window_days,
+        users=StatsUsersResponse(
+            total=totals.users_total,
+            new=totals.users_new,
+            active=totals.users_active,
+            deleted=totals.users_deleted,
+        ),
+        learning=StatsLearningResponse(
+            lessons_completed=totals.lessons_completed,
+            sessions_completed=totals.sessions_completed,
+            answers_graded=totals.answers_graded,
+            correct_answers=totals.correct_answers,
+            accuracy_percent=view.accuracy_percent,
+            xp_awarded=totals.xp_awarded,
+        ),
+        content=StatsContentResponse(
+            levels=totals.levels,
+            units=totals.units,
+            lessons=totals.lessons,
+            published_lessons=totals.published_lessons,
+            drafts=totals.drafts,
+            in_review=totals.in_review,
+        ),
+    )
+
+
+def _question_command(
+    item: QuestionCreateRequest | QuestionImportItem,
+) -> QuestionCreateCommand:
+    """A create body as the command the service takes.
+
+    Shared by the bulk and import routes because the two bodies differ only in the fields they
+    accept (import has no ``position``) — the mapping onto the command is identical, and
+    duplicating it is how one of the two silently stops passing a field.
+    """
+    return QuestionCreateCommand(
+        kind=item.kind,
+        skill=item.skill,
+        prompt=item.prompt,
+        choices=tuple(item.choices),
+        accepted_answers=tuple(item.accepted_answers),
+        correct_index=item.correct_index,
+        explanation=item.explanation,
+        image_url=item.image_url,
+        audio_url=item.audio_url,
+        points=item.points,
+        position=getattr(item, "position", None),
+    )
+
+
+def _bulk_response(view: Any) -> QuestionBulkResponse:
+    """Project a bulk result onto the wire, with ``total`` as the number written now."""
+    items = [QuestionAdminResponse.model_validate(item) for item in view.items]
+    return QuestionBulkResponse(
+        items=items,
+        total=len(items),
+        accepted=view.accepted,
+        dry_run=view.dry_run,
+    )
+
+
 def _level_update(payload: LevelUpdateRequest) -> LevelUpdateCommand:
     fields = payload.model_fields_set
     return LevelUpdateCommand(

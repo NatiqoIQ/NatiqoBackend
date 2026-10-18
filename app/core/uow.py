@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Protocol, Self, runtime_checkable
 
 if TYPE_CHECKING:  # pragma: no cover
     from app.modules.admin.domain.ports import (
+        AdminStatsRepositoryPort,
         AuditLogRepositoryPort,
         EditorialRepositoryPort,
     )
@@ -126,6 +127,9 @@ class UnitOfWorkProtocol(Protocol):
 
     @property
     def audit_logs(self) -> AuditLogRepositoryPort: ...
+
+    @property
+    def stats(self) -> AdminStatsRepositoryPort: ...
 
     async def commit(self) -> None: ...
 

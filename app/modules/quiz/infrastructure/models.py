@@ -98,6 +98,10 @@ class QuizSessionModel(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         CheckConstraint("xp_awarded >= 0", name="non_negative_xp"),
         Index("ix_quiz_sessions_user_status", "user_id", "status"),
         Index("ix_quiz_sessions_lesson", "lesson_id"),
+        # Completion is charted over time and filtered by status; the pair serves both the
+        # daily series and the funnel, and the single column serves a plain date range.
+        Index("ix_quiz_sessions_completed_at", "completed_at"),
+        Index("ix_quiz_sessions_status_completed_at", "status", "completed_at"),
     )
 
 
@@ -139,6 +143,9 @@ class QuizAnswerModel(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         CheckConstraint("points_awarded >= 0", name="non_negative_points"),
         CheckConstraint("attempt >= 1", name="positive_attempt"),
         Index("ix_quiz_answers_session", "session_id", "position"),
+        # Question quality groups answers by question; without this the report scans every
+        # graded answer ever written to count one question's history.
+        Index("ix_quiz_answers_question", "question_id"),
     )
 
 
@@ -170,4 +177,6 @@ class LessonProgressModel(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         CheckConstraint("best_score BETWEEN 0 AND 100", name="score_in_range"),
         CheckConstraint("attempts >= 0", name="non_negative_attempts"),
         Index("ix_lesson_progress_user_state", "user_id", "state"),
+        # "Hardest lessons" groups by lesson, which the per-learner index cannot serve.
+        Index("ix_lesson_progress_lesson", "lesson_id"),
     )

@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 if TYPE_CHECKING:  # pragma: no cover
     from app.core.uow import UnitOfWorkProtocol
     from app.modules.admin.domain.ports import (
+        AdminStatsRepositoryPort,
         AuditLogRepositoryPort,
         EditorialRepositoryPort,
     )
@@ -305,6 +306,14 @@ class SqlAlchemyUnitOfWork:
         from app.modules.admin.infrastructure.repositories import SqlAlchemyAuditLogRepository
 
         return self._repo("audit_logs", SqlAlchemyAuditLogRepository)
+
+    @property
+    def stats(self) -> AdminStatsRepositoryPort:
+        from app.modules.admin.infrastructure.stats_repository import (
+            SqlAlchemyAdminStatsRepository,
+        )
+
+        return self._repo("stats", SqlAlchemyAdminStatsRepository)
 
     def _repo(self, key: str, factory: Any) -> Any:
         if key not in self._repositories:

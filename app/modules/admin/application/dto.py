@@ -35,8 +35,12 @@ __all__ = [
     "LevelCreateCommand",
     "LevelUpdateCommand",
     "QuestionAdminView",
+    "QuestionBulkResult",
     "QuestionCreateCommand",
+    "QuestionDuplicateCommand",
+    "QuestionExportItemView",
     "QuestionUpdateCommand",
+    "QuestionsExportView",
     "UnitAdminView",
     "UnitCreateCommand",
     "UnitUpdateCommand",
@@ -133,6 +137,57 @@ class LessonAdminDetailView(LessonAdminView):
 
 
 @dataclass(frozen=True, slots=True)
+class QuestionExportItemView:
+    """One question as a portable record.
+
+    Deliberately carries no ``id``, no ``lesson_id`` and no ``position``: an export is a
+    template for authoring, not a set of ids a second database would have no use for, and
+    leaving the slot out is what lets an import append instead of colliding with whatever
+    already sits at that position.
+    """
+
+    kind: str
+    skill: str
+    prompt: str
+    choices: tuple[str, ...]
+    accepted_answers: tuple[str, ...]
+    correct_index: int | None
+    explanation: str
+    image_url: str | None
+    audio_url: str | None
+    points: int
+
+
+@dataclass(frozen=True, slots=True)
+class QuestionsExportView:
+    """A whole lesson's questions in the shape ``import`` accepts.
+
+    ``version`` is the round-trip contract: an importer that meets a version it does not
+    know must refuse rather than guess, because the failure mode of guessing is a silently
+    mis-keyed question, not a loud error.
+    """
+
+    version: int
+    lesson_id: uuid.UUID
+    lesson_title: str
+    exported_at: datetime
+    questions: tuple[QuestionExportItemView, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class QuestionBulkResult:
+    """The outcome of a bulk write, or of the validation pass a dry run performs.
+
+    ``accepted`` is what the caller needs from a dry run: the number of items that would
+    have been written. ``items`` is empty there, because nothing was.
+    """
+
+    items: tuple[QuestionAdminView, ...]
+    accepted: int
+    dry_run: bool
+
+
+@dataclass(frozen=True, slots=True)
 class AdminUserView:
     id: uuid.UUID
     email: str
@@ -217,6 +272,14 @@ class QuestionCreateCommand:
     image_url: str | None = None
     audio_url: str | None = None
     points: int = 1
+    position: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class QuestionDuplicateCommand:
+    """Where a copy should land. Both fields default to "beside the original"."""
+
+    lesson_id: uuid.UUID | None = None
     position: int | None = None
 
 

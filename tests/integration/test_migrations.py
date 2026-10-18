@@ -529,3 +529,67 @@ def test_migration_files_are_never_shadowed_by_a_stale_env() -> None:
     """
     expected = os.environ.get("TEST_DATABASE_URL") or "sqlite+aiosqlite:///:memory:"
     assert os.environ["DATABASE_URL"] == expected
+
+
+#: The indexes the dashboard's aggregate reads rely on, table by table.
+#:
+#: Listed by hand rather than derived from the models on purpose: this is the check that a
+#: revision actually *creates* them. Deriving the list from the metadata would assert that
+#: the models agree with themselves, which ``test_migrated_schema_matches_the_models``
+#: already covers through ``alembic check``.
+ANALYTICS_INDEXES: dict[str, set[str]] = {
+    "users": {"ix_users_created_at"},
+    "user_identities": {"ix_identity_last_login"},
+    "quiz_sessions": {
+        "ix_quiz_sessions_completed_at",
+        "ix_quiz_sessions_status_completed_at",
+    },
+    "quiz_answers": {"ix_quiz_answers_question"},
+    "lesson_progress": {"ix_lesson_progress_lesson"},
+    "audit_logs": {"ix_audit_logs_created_at"},
+    "ai_usage_records": {"ix_ai_usage_created_at"},
+    "media_assets": {"ix_media_assets_created_at"},
+}
+
+
+def test_the_analytics_indexes_exist_in_the_migrated_schema(
+    alembic_config: Config,
+) -> None:
+    """An index that only exists in the models costs a full scan in production.
+
+    The dashboard's screens are aggregates over tables that grow without bound, so a missing
+    index is not a slow query — it is a query that degrades every week. Reading
+    ``sqlite_master`` after a real ``upgrade head`` is the only check that proves the
+    revision created them, rather than a developer's local ``create_all`` doing it.
+    """
+    command.upgrade(alembic_config, "head")
+
+    connection = sqlite3.connect(_db_path(alembic_config))
+    try:
+        for table, expected in ANALYTICS_INDEXES.items():
+            rows = connection.execute(
+                "select name from sqlite_master where type = 'index' and tbl_name = ?",
+                (table,),
+            ).fetchall()
+            present = {row[0] for row in rows}
+            assert expected <= present, f"{table} is missing {sorted(expected - present)}"
+    finally:
+        connection.close()
+
+
+def test_the_analytics_indexes_are_dropped_by_a_downgrade(alembic_config: Config) -> None:
+    """A downgrade that leaves indexes behind makes the next upgrade fail on a duplicate."""
+    command.upgrade(alembic_config, "head")
+    command.downgrade(alembic_config, "d4c9a17b6e02")
+
+    connection = sqlite3.connect(_db_path(alembic_config))
+    try:
+        for table, dropped in ANALYTICS_INDEXES.items():
+            rows = connection.execute(
+                "select name from sqlite_master where type = 'index' and tbl_name = ?",
+                (table,),
+            ).fetchall()
+            present = {row[0] for row in rows}
+            assert not (dropped & present), f"{table} kept {sorted(dropped & present)}"
+    finally:
+        connection.close()

@@ -25,6 +25,7 @@ from app.core.events import InProcessEventBus
 from app.core.logging import get_logger
 from app.core.uow_sqlalchemy import SqlAlchemyUnitOfWork
 from app.modules.admin.application.content_service import AdminContentService
+from app.modules.admin.application.stats_service import AdminStatsService
 from app.modules.admin.application.users_service import AdminUserService
 from app.modules.ai.application.tutor_service import AiTutorService
 from app.modules.content.application.catalogue_service import CatalogueService
@@ -349,6 +350,14 @@ def get_admin_user_service(uow: UowDep) -> AdminUserService:
 
 
 AdminUserServiceDep = Annotated[AdminUserService, Depends(get_admin_user_service)]
+
+
+def get_admin_stats_service(uow: UowDep) -> AdminStatsService:
+    """Build a request-scoped :class:`AdminStatsService` on the request's unit of work."""
+    return AdminStatsService(uow)
+
+
+AdminStatsServiceDep = Annotated[AdminStatsService, Depends(get_admin_stats_service)]
 
 
 # ------------------------------------------------------------------------ media

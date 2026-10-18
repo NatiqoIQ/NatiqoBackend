@@ -26,6 +26,7 @@ forcing a client to compute the next slot is how two editors race onto the same 
 from __future__ import annotations
 
 import uuid
+from collections.abc import Sequence
 from typing import Any
 
 from app.core.errors import (
@@ -41,6 +42,7 @@ from app.core.pagination import (
     decode_position_cursor,
     paginate,
 )
+from app.core.time import utc_now
 from app.core.types import ContentId, ContentState, UserId, new_id
 from app.core.uow import UnitOfWorkProtocol
 from app.modules.admin.application.dto import (
@@ -52,7 +54,11 @@ from app.modules.admin.application.dto import (
     LevelCreateCommand,
     LevelUpdateCommand,
     QuestionAdminView,
+    QuestionBulkResult,
     QuestionCreateCommand,
+    QuestionDuplicateCommand,
+    QuestionExportItemView,
+    QuestionsExportView,
     QuestionUpdateCommand,
     UnitAdminView,
     UnitCreateCommand,
@@ -72,6 +78,20 @@ from app.modules.content.domain.policy import (
     InvalidContentState,
     question_shape_problems,
 )
+
+#: The version stamped on an export and required by an import.
+#:
+#: A number rather than a date: it says "this shape", and a client that meets a version it
+#: does not know refuses instead of half-reading a payload whose fields may have moved.
+EXPORT_VERSION = 1
+
+#: The largest number of questions one bulk or import call accepts.
+#:
+#: A ceiling rather than no limit because the whole batch is validated before anything is
+#: written: an unbounded list would let one request hold the transaction open while it
+#: re-validates thousands of items, and the honest way to import a large curriculum is a
+#: deliberately sized run, not one unbounded call.
+MAX_BULK_QUESTIONS = 200
 
 
 def _key(row: Level | Unit | Lesson) -> tuple[int, uuid.UUID]:
@@ -453,6 +473,128 @@ class AdminContentService:
         await self._uow.commit()
         return _question_view(question)
 
+    async def get_question(self, question_id: uuid.UUID) -> QuestionAdminView:
+        """One question by id, answer key included.
+
+        The same role gate as the rest of the surface: a caller who may edit a question is
+        exactly the caller who may read its key, and the public catalogue never reaches this
+        projection.
+        """
+        return _question_view(await self._require_question(question_id))
+
+    async def duplicate_question(
+        self, actor_id: UserId, question_id: uuid.UUID, command: QuestionDuplicateCommand
+    ) -> QuestionAdminView:
+        """Copy a question, beside the original unless the caller says otherwise.
+
+        The copy is a fresh aggregate with a new id, so it is editable and deletable on its
+        own; nothing about the original changes, including its position. A copy into another
+        lesson is allowed on purpose — reusing a well-written item across a unit is the usual
+        reason to duplicate one, and refusing it would only make the author retype it.
+        """
+        source = await self._require_question(question_id)
+        lesson = await self._require_lesson(command.lesson_id or source.lesson_id)
+        position = await self._question_position(lesson.id, command.position)
+        copy = Question(
+            id=ContentId(new_id()),
+            lesson_id=lesson.id,
+            position=position,
+            kind=source.kind,
+            skill=source.skill,
+            prompt=source.prompt,
+            choices=tuple(source.choices),
+            accepted_answers=tuple(source.accepted_answers),
+            correct_index=source.correct_index,
+            explanation=source.explanation,
+            image_url=source.image_url,
+            audio_url=source.audio_url,
+            points=source.points,
+        )
+        await self._uow.editorial.add_question(copy)
+        await self._audit(
+            actor_id,
+            AuditAction.QUESTION_DUPLICATE,
+            ENTITY_QUESTION,
+            copy.id,
+            f"Duplicated a question into lesson {lesson.id}.",
+            {
+                "source_id": str(source.id),
+                "lesson_id": str(lesson.id),
+                "position": position,
+            },
+        )
+        await self._uow.commit()
+        return _question_view(copy)
+
+    async def create_questions(
+        self,
+        actor_id: UserId,
+        lesson_id: uuid.UUID,
+        commands: Sequence[QuestionCreateCommand],
+        *,
+        dry_run: bool = False,
+    ) -> QuestionBulkResult:
+        """Add several questions in one transaction, or none of them.
+
+        The all-or-nothing rule is the whole reason this exists: a loop of single calls
+        leaves the first nineteen rows behind when the twentieth is invalid, and the author
+        then has to work out which of them landed. Every item is validated first, so a
+        rejection names each failing index and writes nothing.
+        """
+        return await self._write_questions(
+            actor_id,
+            lesson_id,
+            commands,
+            dry_run=dry_run,
+            action=AuditAction.QUESTION_BULK_CREATE,
+            verb="Added",
+        )
+
+    async def import_questions(
+        self,
+        actor_id: UserId,
+        lesson_id: uuid.UUID,
+        commands: Sequence[QuestionCreateCommand],
+        *,
+        version: int,
+        dry_run: bool = False,
+    ) -> QuestionBulkResult:
+        """Write a lesson's questions from a previously exported package.
+
+        Identical to :meth:`create_questions` apart from the version gate and the audit
+        action: a package whose ``version`` this build does not know is refused whole, because
+        guessing at an unknown shape is how a mis-keyed question gets imported silently.
+        """
+        if version != EXPORT_VERSION:
+            raise ValidationFailed(
+                f"Export version {version} is not supported by this build.",
+                details={"field": "version", "supported": [EXPORT_VERSION]},
+            )
+        return await self._write_questions(
+            actor_id,
+            lesson_id,
+            commands,
+            dry_run=dry_run,
+            action=AuditAction.QUESTION_IMPORT,
+            verb="Imported",
+        )
+
+    async def export_questions(self, lesson_id: uuid.UUID) -> QuestionsExportView:
+        """A lesson's questions as a portable package ``import`` accepts unchanged.
+
+        The answer key is included: this is the editorial surface, and a package without it
+        could not rebuild the lesson it came from.
+        """
+        lesson = await self._require_lesson(lesson_id)
+        questions = await self._uow.editorial.list_questions_for_lesson(lesson.id)
+        return QuestionsExportView(
+            version=EXPORT_VERSION,
+            lesson_id=lesson.id,
+            lesson_title=lesson.title,
+            exported_at=utc_now(),
+            questions=tuple(_export_item(question) for question in questions),
+        )
+
     async def update_question(
         self, actor_id: UserId, question_id: uuid.UUID, command: QuestionUpdateCommand
     ) -> QuestionAdminView:
@@ -651,6 +793,123 @@ class AdminContentService:
         ):
             raise _position_taken("question", position)
 
+    async def _write_questions(
+        self,
+        actor_id: UserId,
+        lesson_id: uuid.UUID,
+        commands: Sequence[QuestionCreateCommand],
+        *,
+        dry_run: bool,
+        action: AuditAction,
+        verb: str,
+    ) -> QuestionBulkResult:
+        """The shared body of bulk-create and import: validate all, then write all.
+
+        The audit row is one row for the batch rather than one per question. A bulk write is
+        one editorial act with one author, and a row per item would bury that act under
+        exactly the noise an audit trail is supposed to cut through; the count and the kinds
+        are in ``changes`` for anyone who needs the detail.
+        """
+        lesson = await self._require_lesson(lesson_id)
+        if not commands:
+            raise ValidationFailed(
+                "At least one question is required.", details={"field": "questions"}
+            )
+        if len(commands) > MAX_BULK_QUESTIONS:
+            raise ValidationFailed(
+                f"A batch may hold at most {MAX_BULK_QUESTIONS} questions.",
+                details={"field": "questions", "max": MAX_BULK_QUESTIONS},
+            )
+
+        built, failures = await self._prepare_questions(lesson.id, commands)
+        if failures:
+            # Nothing has been written at this point, so the caller's lesson is untouched.
+            raise ValidationFailed(
+                "Some questions are not answerable as written.",
+                details={"failures": failures, "total": len(commands)},
+            )
+        if dry_run:
+            return QuestionBulkResult(items=(), accepted=len(built), dry_run=True)
+
+        for question in built:
+            await self._uow.editorial.add_question(question)
+        await self._audit(
+            actor_id,
+            action,
+            ENTITY_LESSON,
+            lesson.id,
+            f"{verb} {len(built)} questions in lesson {lesson.title!r}.",
+            {
+                "lesson_id": str(lesson.id),
+                "count": len(built),
+                "kinds": [question.kind.value for question in built],
+            },
+        )
+        await self._uow.commit()
+        return QuestionBulkResult(
+            items=tuple(_question_view(question) for question in built),
+            accepted=len(built),
+            dry_run=False,
+        )
+
+    async def _prepare_questions(
+        self, lesson_id: ContentId, commands: Sequence[QuestionCreateCommand]
+    ) -> tuple[list[Question], list[dict[str, Any]]]:
+        """Validate and build every question without touching the database.
+
+        Positions are resolved against the lesson's occupied slots and against the rest of
+        the batch, so an explicit duplicate inside one request is reported as a problem with
+        its index instead of surfacing as a unique-constraint violation half way through the
+        inserts. A failed item does not reserve its slot, so the items after it still get the
+        positions they would have had.
+        """
+        occupied = {
+            question.position
+            for question in await self._uow.editorial.list_questions_for_lesson(lesson_id)
+        }
+        cursor = await self._uow.editorial.next_question_position(lesson_id)
+        built: list[Question] = []
+        failures: list[dict[str, Any]] = []
+
+        for index, command in enumerate(commands):
+            position = command.position
+            if position is None:
+                while cursor in occupied:
+                    cursor += 1
+                position = cursor
+                cursor += 1
+            problems = list(_question_problems(command))
+            if position < 1:
+                problems.append("position must be one or greater.")
+            elif position in occupied:
+                problems.append(f"Another question already sits at position {position}.")
+            if problems:
+                failures.append({"index": index, "problems": problems})
+                continue
+            occupied.add(position)
+            try:
+                built.append(
+                    Question(
+                        id=ContentId(new_id()),
+                        lesson_id=lesson_id,
+                        position=position,
+                        kind=command.kind,
+                        skill=command.skill,
+                        prompt=command.prompt,
+                        choices=tuple(command.choices),
+                        accepted_answers=tuple(command.accepted_answers),
+                        correct_index=command.correct_index,
+                        explanation=command.explanation,
+                        image_url=command.image_url,
+                        audio_url=command.audio_url,
+                        points=command.points,
+                    )
+                )
+            except ValueError as exc:
+                failures.append({"index": index, "problems": [str(exc)]})
+
+        return built, failures
+
     def _build_question(
         self,
         lesson_id: ContentId,
@@ -659,21 +918,12 @@ class AdminContentService:
         *,
         question_id: uuid.UUID | None = None,
     ) -> Question:
-        problems = question_shape_problems(
-            command.kind,
-            choices=command.choices,
-            accepted_answers=command.accepted_answers,
-            correct_index=command.correct_index,
-            explanation=command.explanation,
-            image_url=command.image_url,
-            audio_url=command.audio_url,
-        )
+        problems = _question_problems(command)
         if problems:
             raise ValidationFailed(
                 "The question is not answerable as written.",
                 details={"problems": list(problems)},
             )
-        _require_positive("points", command.points)
         try:
             return Question(
                 id=ContentId(question_id or new_id()),
@@ -731,6 +981,31 @@ def _position_taken(entity: str, position: int) -> ConflictError:
     )
 
 
+def _question_problems(command: QuestionCreateCommand) -> tuple[str, ...]:
+    """Every reason a submitted question could not be scored, in report order.
+
+    The kind-specific rules live in the content policy; this adds the two checks that belong
+    to the act of writing a row rather than to the shape of the item: a blank prompt is not a
+    question, and a zero-point item can never be scored.
+    """
+    problems = list(
+        question_shape_problems(
+            command.kind,
+            choices=command.choices,
+            accepted_answers=command.accepted_answers,
+            correct_index=command.correct_index,
+            explanation=command.explanation,
+            image_url=command.image_url,
+            audio_url=command.audio_url,
+        )
+    )
+    if not command.prompt.strip():
+        problems.append("A question must carry a prompt.")
+    if command.points < 1:
+        problems.append("points must be one or greater.")
+    return tuple(problems)
+
+
 def _require_text(field: str, value: str) -> None:
     if not value or not value.strip():
         raise ValidationFailed(f"{field} must not be blank.", details={"field": field})
@@ -780,6 +1055,21 @@ def _lesson_view(lesson: Lesson) -> LessonAdminView:
     )
 
 
+def _export_item(question: Question) -> QuestionExportItemView:
+    return QuestionExportItemView(
+        kind=question.kind.value,
+        skill=question.skill.value,
+        prompt=question.prompt,
+        choices=tuple(question.choices),
+        accepted_answers=tuple(question.accepted_answers),
+        correct_index=question.correct_index,
+        explanation=question.explanation,
+        image_url=question.image_url,
+        audio_url=question.audio_url,
+        points=question.points,
+    )
+
+
 def _question_view(question: Question) -> QuestionAdminView:
     return QuestionAdminView(
         id=question.id,
@@ -798,4 +1088,4 @@ def _question_view(question: Question) -> QuestionAdminView:
     )
 
 
-__all__ = ["AdminContentService"]
+__all__ = ["EXPORT_VERSION", "MAX_BULK_QUESTIONS", "AdminContentService"]

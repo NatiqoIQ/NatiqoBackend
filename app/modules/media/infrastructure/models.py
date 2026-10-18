@@ -53,4 +53,6 @@ class MediaAssetModel(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         CheckConstraint("size_bytes >= 0", name="non_negative_size"),
         # "What has this account uploaded?" — the lookup a quota or an account purge runs.
         Index("ix_media_assets_owner", "owner_id"),
+        # The library screen lists newest first across all owners.
+        Index("ix_media_assets_created_at", "created_at"),
     )

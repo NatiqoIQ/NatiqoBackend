@@ -57,6 +57,9 @@ class AuditAction(StrEnum):
     LESSON_REORDER_QUESTIONS = "content.lesson.reorder_questions"
 
     QUESTION_CREATE = "content.question.create"
+    QUESTION_BULK_CREATE = "content.question.bulk_create"
+    QUESTION_IMPORT = "content.question.import"
+    QUESTION_DUPLICATE = "content.question.duplicate"
     QUESTION_UPDATE = "content.question.update"
     QUESTION_DELETE = "content.question.delete"
 

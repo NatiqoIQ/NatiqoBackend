@@ -64,6 +64,9 @@ class AiUsageRecord(Base):
         # Budget checks hit (user_id, created_at); cost reports hit (created_at, feature).
         Index("ix_ai_usage_user_created", "user_id", "created_at"),
         Index("ix_ai_usage_feature_created", "feature", "created_at"),
+        # A deployment-wide daily cost series is not filtered by user or feature, so it
+        # cannot use either composite above — they both lead with a filter column.
+        Index("ix_ai_usage_created_at", "created_at"),
     )
 
 

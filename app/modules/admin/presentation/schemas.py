@@ -24,6 +24,7 @@ from app.core.responses import WireModel
 from app.core.types import CEFRLevel, ContentState, QuestionKind, SkillKind
 
 __all__ = [
+    "AdminStatsResponse",
     "AdminUserListResponse",
     "AdminUserResponse",
     "LessonCreateRequest",
@@ -34,7 +35,14 @@ __all__ = [
     "LevelResponse",
     "LevelUpdateRequest",
     "QuestionAdminResponse",
+    "QuestionBulkRequest",
+    "QuestionBulkResponse",
     "QuestionCreateRequest",
+    "QuestionDuplicateRequest",
+    "QuestionExportItem",
+    "QuestionExportResponse",
+    "QuestionImportItem",
+    "QuestionImportRequest",
     "QuestionListResponse",
     "QuestionReorderRequest",
     "QuestionUpdateRequest",
@@ -174,6 +182,98 @@ class QuestionListResponse(_AdminWire):
     total: int
 
 
+class QuestionDuplicateRequest(_AdminWire):
+    """Where the copy should land. Omitting both fields copies beside the original."""
+
+    lesson_id: uuid.UUID | None = None
+    position: int | None = Field(default=None, ge=1)
+
+
+class QuestionBulkRequest(_AdminWire):
+    """Several questions in one call.
+
+    ``dryRun`` validates the whole batch and writes nothing, which is what an import preview
+    uses: it answers "would these be accepted" without leaving a half-imported lesson behind.
+    """
+
+    questions: list[QuestionCreateRequest] = Field(min_length=1, max_length=200)
+    dry_run: bool = False
+
+
+class QuestionBulkResponse(_AdminWire):
+    """What a bulk write changed, or — for a dry run — what it would have.
+
+    ``items`` is empty on a dry run and ``accepted`` is the count that passed validation, so a
+    caller never has to infer success from an empty list.
+    """
+
+    items: list[QuestionAdminResponse] = Field(default_factory=list)
+    total: int
+    accepted: int
+    dry_run: bool = False
+
+
+class QuestionExportItem(_AdminWire):
+    """One portable question: content and key, but no id, lesson or position.
+
+    Leaving out the identity fields is the contract that makes import an append rather than a
+    collision, and it means the same package can be imported into any lesson.
+    """
+
+    kind: str
+    skill: str
+    prompt: str
+    choices: list[str] = Field(default_factory=list)
+    accepted_answers: list[str] = Field(default_factory=list)
+    correct_index: int | None = None
+    explanation: str
+    image_url: str | None = None
+    audio_url: str | None = None
+    points: int
+
+
+class QuestionExportResponse(_AdminWire):
+    """A lesson's questions as a package whose shape ``QuestionImportRequest`` accepts.
+
+    ``version`` is the round-trip contract; an importer that does not recognise it must
+    refuse the whole package rather than half-read it.
+    """
+
+    version: int
+    lesson_id: uuid.UUID
+    lesson_title: str
+    exported_at: datetime
+    questions: list[QuestionExportItem] = Field(default_factory=list)
+
+
+class QuestionImportItem(_AdminWire):
+    """A question read from an export.
+
+    No ``position``: an import appends in the order the package lists, which is the export's
+    own order. Unknown keys are ignored on purpose, so a package written by a slightly newer
+    build still imports its known fields rather than being refused outright.
+    """
+
+    kind: QuestionKind
+    skill: SkillKind
+    prompt: str = Field(min_length=1, max_length=2000)
+    choices: list[str] = Field(default_factory=list)
+    accepted_answers: list[str] = Field(default_factory=list)
+    correct_index: int | None = None
+    explanation: str = Field(default="", max_length=2000)
+    image_url: str | None = None
+    audio_url: str | None = None
+    points: int = Field(default=1, ge=1, le=100)
+
+
+class QuestionImportRequest(_AdminWire):
+    """A package produced by the export endpoint, optionally as a validation-only dry run."""
+
+    version: int = 1
+    questions: list[QuestionImportItem] = Field(min_length=1, max_length=200)
+    dry_run: bool = False
+
+
 class QuestionReorderRequest(_AdminWire):
     question_ids: list[uuid.UUID] = Field(min_length=1)
 
@@ -201,3 +301,53 @@ class AdminUserListResponse(_AdminWire):
     total: int
     has_more: bool
     next_cursor: str | None = None
+
+
+# ----------------------------------------------------------------------- stats
+class StatsUsersResponse(_AdminWire):
+    """Account totals. ``active`` is scoped to the request's window; the rest are lifetime."""
+
+    total: int = Field(ge=0)
+    new: int = Field(ge=0)
+    active: int = Field(ge=0)
+    deleted: int = Field(ge=0)
+
+
+class StatsLearningResponse(_AdminWire):
+    """What learners have actually done, as raw counts plus the one derived ratio.
+
+    ``accuracyPercent`` is weighted by answers, not an average of per-session percentages: a
+    two-question sitting must not outweigh a twenty-question one.
+    """
+
+    lessons_completed: int = Field(ge=0)
+    sessions_completed: int = Field(ge=0)
+    answers_graded: int = Field(ge=0)
+    correct_answers: int = Field(ge=0)
+    accuracy_percent: int = Field(ge=0, le=100)
+    xp_awarded: int = Field(ge=0)
+
+
+class StatsContentResponse(_AdminWire):
+    """The catalogue's size, and how much of it is still in the editorial pipeline.
+
+    ``drafts`` and ``inReview`` sum levels, units and lessons into the two queues the screen
+    shows, so a caller does not have to add three numbers itself and get the definition wrong.
+    """
+
+    levels: int = Field(ge=0)
+    units: int = Field(ge=0)
+    lessons: int = Field(ge=0)
+    published_lessons: int = Field(ge=0)
+    drafts: int = Field(ge=0)
+    in_review: int = Field(ge=0)
+
+
+class AdminStatsResponse(_AdminWire):
+    """The overview screen's whole payload: aggregated, never a list of rows."""
+
+    generated_at: datetime
+    window_days: int = Field(ge=1)
+    users: StatsUsersResponse
+    learning: StatsLearningResponse
+    content: StatsContentResponse
