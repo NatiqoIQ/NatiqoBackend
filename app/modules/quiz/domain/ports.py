@@ -9,22 +9,26 @@ indivisible change rather than three that can half-succeed.
 from __future__ import annotations
 
 import uuid
+from collections.abc import Sequence
 from datetime import datetime
 from typing import Protocol, runtime_checkable
 
 from app.core.pagination import TimeCursor
 from app.core.types import UserId
 from app.modules.quiz.domain.entities import (
+    AnswerHistory,
     AnswerTally,
     LessonProgress,
     QuizAnswer,
     QuizSession,
+    UnitProgress,
 )
 
 __all__ = [
     "LessonProgressRepositoryPort",
     "QuizAnswerRepositoryPort",
     "QuizSessionRepositoryPort",
+    "UnitProgressRepositoryPort",
 ]
 
 
@@ -102,6 +106,23 @@ class QuizAnswerRepositoryPort(Protocol):
         """
         ...
 
+    async def history_for_user(
+        self, user_id: UserId, question_ids: Sequence[uuid.UUID]
+    ) -> dict[uuid.UUID, AnswerHistory]:
+        """The learner's answer history for the given questions, keyed by question id.
+
+        One grouped query over the whole batch — checkpoint selection asks about every
+        question in a unit at once, and a per-question read would turn one fact-gathering
+        step into dozens. Questions never answered simply do not appear in the mapping,
+        so absence and ``AnswerHistory()`` mean the same thing and a caller cannot
+        mistake a miss for a query failure.
+
+        Spans every session the learner has, including checkpoints: "ever missed" is the
+        whole point, and a miss recorded on a previous checkpoint must weight the next
+        one just as a miss in a lesson does.
+        """
+        ...
+
 
 @runtime_checkable
 class LessonProgressRepositoryPort(Protocol):
@@ -116,5 +137,23 @@ class LessonProgressRepositoryPort(Protocol):
 
         Unpaginated: it backs the summary roll-up and the unlock map, both of which need
         the whole set at once, and a learner can have at most one row per published lesson.
+        """
+        ...
+
+
+@runtime_checkable
+class UnitProgressRepositoryPort(Protocol):
+    async def get(self, user_id: UserId, unit_id: uuid.UUID) -> UnitProgress | None: ...
+
+    async def save(self, progress: UnitProgress) -> None:
+        """Insert or update the learner's checkpoint record for one unit."""
+        ...
+
+    async def list_for_user(self, user_id: UserId) -> list[UnitProgress]:
+        """Every checkpoint record the learner owns.
+
+        Unpaginated for the same reason as lesson progress: the unlock map evaluates a
+        unit against its predecessor in order, so it needs the whole set in one read, and
+        a learner can have at most one row per unit.
         """
         ...

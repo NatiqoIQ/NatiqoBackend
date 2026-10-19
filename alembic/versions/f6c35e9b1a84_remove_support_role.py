@@ -1,9 +1,9 @@
-\"\"\"remove support role from users.roles
+"""remove support role from users.roles
 
 Revision ID: f6c35e9b1a84
 Revises: f5d27c9a3e41
 Create Date: 2026-10-19 10:00:00.000000+00:00
-\"\"\"
+"""
 
 from __future__ import annotations
 

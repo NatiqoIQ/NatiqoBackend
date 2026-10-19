@@ -79,6 +79,8 @@ class ErrorCode(StrEnum):
     QUIZ_SESSION_EXPIRED = "QUIZ_SESSION_EXPIRED"
     QUIZ_ALREADY_COMPLETED = "QUIZ_ALREADY_COMPLETED"
     QUIZ_NOT_COMPLETED = "QUIZ_NOT_COMPLETED"
+    #: A unit's checkpoint was requested before its published lessons were all complete.
+    CHECKPOINT_NOT_READY = "CHECKPOINT_NOT_READY"
 
     # -------------------------------------------------------------- progress
     PROGRESS_NOT_FOUND = "PROGRESS_NOT_FOUND"

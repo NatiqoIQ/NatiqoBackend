@@ -5,6 +5,13 @@ sitting ends without a score. Every rule lives here rather than in the route, so
 question be answered", "is it too late" and "what does it score" can be exercised without
 an HTTP request.
 
+Two session shapes share that lifecycle: a **lesson** session over one published lesson's
+questions, and a **checkpoint** — a weighted sample across a unit's lessons that a learner
+sits once every lesson in the unit is done, and which unlocks the next unit at 80%. The
+checkpoint adds gates (is the unit open, are its lessons finished) and a scorer's side
+effect (the unit-progress row), but the attempt engine below answer/complete is mode-blind:
+a frozen question list is a frozen question list.
+
 Two invariants are worth naming:
 
 * **Grading is server-side.** The service loads the question with its answer key, compares
@@ -20,7 +27,13 @@ import uuid
 from datetime import timedelta
 
 from app.core.config import Settings
-from app.core.errors import ConflictError, ErrorCode, NotFoundError, ValidationFailed
+from app.core.errors import (
+    ConflictError,
+    ErrorCode,
+    ForbiddenError,
+    NotFoundError,
+    ValidationFailed,
+)
 from app.core.events import EventBus, LessonCompleted
 from app.core.time import ensure_aware, utc_now
 from app.core.types import ContentId, QuestionKind, UserId, new_id
@@ -44,6 +57,7 @@ from app.modules.quiz.domain.entities import (
     QuizSession,
     SessionMode,
     SessionStatus,
+    UnitProgress,
 )
 from app.modules.quiz.domain.policy import (
     FIRST_ATTEMPT,
@@ -60,6 +74,16 @@ from app.modules.quiz.domain.presentation import (
     question_seed,
 )
 from app.modules.quiz.domain.review import new_card
+from app.modules.quiz.domain.selection import (
+    QuestionStat,
+    card_is_easy,
+    select_checkpoint_questions,
+)
+from app.modules.quiz.domain.unlock import (
+    CHECKPOINT_PASSING_SCORE,
+    next_unit_id,
+    unit_locked,
+)
 
 __all__ = ["QuizService"]
 
@@ -88,16 +112,33 @@ class QuizService:
         *,
         mode: SessionMode,
         lesson_id: uuid.UUID | None,
+        unit_id: uuid.UUID | None = None,
     ) -> SessionDetailView:
-        """Open a sitting over a published lesson's questions.
+        """Open a sitting: one published lesson's questions, or one unit's checkpoint.
 
-        The lesson must be published and carry at least one question. An unpublishable
-        attempt (a lesson with no questions) is refused here rather than handed to a client
-        that would show an empty quiz.
+        A lesson session needs a published ``lessonId`` carrying at least one question.
+        A checkpoint session needs a ``unitId`` instead and passes three gates — the unit
+        must be published, open under the sequential-unlock rule, and finished (every
+        published lesson complete) — before its weighted sample is drawn. An unpublishable
+        attempt is refused here rather than handed to a client that would show an empty
+        quiz.
+
+        The field each mode does *not* use is ignored rather than rejected: ``lessonId``
+        on a checkpoint and ``unitId`` on a lesson describe the other mode, and the
+        session records only what its own mode says, so the stray field cannot smuggle a
+        second scope into a sitting.
         """
+        if mode is SessionMode.CHECKPOINT:
+            if unit_id is None:
+                raise ValidationFailed(
+                    "A checkpoint session needs a unitId.",
+                    code=ErrorCode.VALIDATION_ERROR,
+                    details={"field": "unitId"},
+                )
+            return await self._start_checkpoint(user_id, unit_id)
         if mode is not SessionMode.LESSON:
             raise ValidationFailed(
-                "Only lesson sessions can be started today.",
+                "Only lesson and checkpoint sessions can be started today.",
                 code=ErrorCode.VALIDATION_ERROR,
                 details={"field": "mode"},
             )
@@ -114,6 +155,7 @@ class QuizService:
                 "There is no published lesson with that id.",
                 code=ErrorCode.LESSON_NOT_FOUND,
             )
+        await self._assert_unit_open(user_id, lesson.unit_id)
 
         questions = await self._uow.questions.list_for_lessons([lesson.id])
         if not questions:
@@ -269,8 +311,11 @@ class QuizService:
     ) -> CompletedSessionView:
         """Finish a fully answered sitting, score it and fold it into progress.
 
-        Refuses a partial session so a score always describes a whole lesson; the client
-        finishes the remaining questions first.
+        Refuses a partial session so a score always describes a whole sitting; the client
+        finishes the remaining questions first. A lesson's completion lands on its
+        progress row; a checkpoint's lands on the unit's row instead, where the 80% bar
+        decides whether ``passed_at`` latches and the next unit opens. Both verdicts come
+        back on the response so one client branch renders either result.
         """
         session = await self._require_owned(user_id, session_id)
         await self._expire_if_due(session)
@@ -287,11 +332,27 @@ class QuizService:
         xp_awarded = sum(answer.points_awarded for answer in answers)
         score_percent = _percentage(correct_count, session.total)
 
-        session.complete(xp_awarded=xp_awarded)
+        # Practice XP is a lesson ledger — ``lesson_progress.xp_earned`` backs the
+        # learner's total and the gamification projection, while completed sessions back
+        # admin stats — so a checkpoint sitting completes with no XP of its own rather
+        # than earning a number only one of those roll-ups would see. A checkpoint is a
+        # gate: its reward is the unlock, and (with the gamification phase) an explicit
+        # passing bonus announced as its own event.
+        is_checkpoint = session.mode is SessionMode.CHECKPOINT
+        session.complete(xp_awarded=0 if is_checkpoint else xp_awarded)
         await self._uow.quiz_sessions.save(session)
-        is_retry = await self._record_progress(
-            user_id, session.lesson_id, score_percent=score_percent, xp=xp_awarded
-        )
+
+        passed: bool | None = None
+        unlocked_unit_id: uuid.UUID | None = None
+        is_retry = False
+        if is_checkpoint and session.unit_id is not None:
+            passed, unlocked_unit_id = await self._record_unit_progress(
+                user_id, session.unit_id, score_percent=score_percent
+            )
+        else:
+            is_retry = await self._record_progress(
+                user_id, session.lesson_id, score_percent=score_percent, xp=xp_awarded
+            )
         await self._publish_completion(
             user_id,
             session,
@@ -308,6 +369,15 @@ class QuizService:
                 answered_question_ids=tuple(answer.question_id for answer in answers),
             ),
             score_percent=score_percent,
+            passed=passed,
+            unlocked_unit_id=unlocked_unit_id,
+            correct_question_ids=tuple(
+                answer.question_id for answer in answers if answer.is_correct
+            ),
+            missed_question_ids=tuple(
+                answer.question_id for answer in answers if not answer.is_correct
+            ),
+            retry_available=any(not answer.is_correct for answer in answers),
         )
 
     # ============================================================== abandon
@@ -329,6 +399,163 @@ class QuizService:
         )
 
     # ============================================================= internals
+    async def _assert_unit_open(self, user_id: UserId, unit_id: uuid.UUID) -> None:
+        """Refuse a sitting in a unit the sequential-unlock rule has not reached.
+
+        The hard half of the lock: the read-only views grey a shut unit out, but a client
+        that calls the API directly is stopped here, so "locked" is a rule and not a hint.
+        Both facts the rule needs — the published order and what the learner has passed —
+        are read here rather than passed in, so every caller agrees on the chain.
+        """
+        ordered = await self._uow.units.list_published_ordered()
+        progress_rows = await self._uow.unit_progress.list_for_user(user_id)
+        passed_units = {row.unit_id for row in progress_rows if row.has_passed}
+        if unit_locked(unit_id, [item.unit.id for item in ordered], passed_units):
+            raise ForbiddenError(
+                "Pass the previous unit's checkpoint to unlock this unit.",
+                code=ErrorCode.LESSON_LOCKED,
+            )
+
+    async def _start_checkpoint(self, user_id: UserId, unit_id: uuid.UUID) -> SessionDetailView:
+        """Open a sitting over a weighted sample of one unit's questions.
+
+        Three gates, each its own error so a client can say the right thing:
+
+        1. **Existence** (404) is answered *from the published order* — the same read
+           that settles "which unit", "is it shut" and "what would it unlock" at once, so
+           the three answers can never disagree. A unit under a draft level is absent
+           from that order and reads as not found, inheriting visibility like everything
+           else in the catalogue.
+        2. **The sequential-unlock rule** (403): the predecessor must be passed.
+        3. **Readiness** (409): every published lesson of the unit complete, so the
+           sample's coverage promise — one question per lesson — describes lessons the
+           learner has actually met.
+
+        After the gates the facts are gathered (answer history, review-card state, the
+        unit's questions) and handed to the pure selector in ``domain/selection.py``.
+        Its output is frozen into the session exactly as a lesson's question list is.
+        """
+        ordered = await self._uow.units.list_published_ordered()
+        placement = next((item for item in ordered if item.unit.id == unit_id), None)
+        if placement is None:
+            raise NotFoundError(
+                "There is no published unit with that id.",
+                code=ErrorCode.UNIT_NOT_FOUND,
+            )
+
+        # The same rule ``_assert_unit_open`` applies, judged against the order already read
+        # for the existence check above rather than fetched a second time.
+        progress_rows = await self._uow.unit_progress.list_for_user(user_id)
+        passed_units = {row.unit_id for row in progress_rows if row.has_passed}
+        if unit_locked(unit_id, [item.unit.id for item in ordered], passed_units):
+            raise ForbiddenError(
+                "Pass the previous unit's checkpoint to unlock this unit.",
+                code=ErrorCode.LESSON_LOCKED,
+            )
+
+        lesson_counts = await self._uow.lessons.count_published_by_unit()
+        lessons_total = lesson_counts.get(ContentId(unit_id), 0)
+        if lessons_total == 0:
+            raise ConflictError(
+                "This unit has no published lessons to be examined on yet.",
+                code=ErrorCode.CHECKPOINT_NOT_READY,
+            )
+        lessons = await self._uow.lessons.list_published_for_unit(
+            ContentId(unit_id), limit=lessons_total, after=None
+        )
+
+        lesson_progress = await self._uow.lesson_progress.list_for_user(user_id)
+        completed = {
+            row.lesson_id for row in lesson_progress if row.state is ProgressState.COMPLETED
+        }
+        lessons_remaining = sum(1 for lesson in lessons if lesson.id not in completed)
+        if lessons_remaining:
+            raise ConflictError(
+                "Finish every lesson in this unit before sitting its checkpoint.",
+                code=ErrorCode.CHECKPOINT_NOT_READY,
+                details={"lessons_remaining": lessons_remaining},
+            )
+
+        questions = await self._uow.questions.list_for_lessons(
+            [ContentId(lesson.id) for lesson in lessons]
+        )
+        if not questions:
+            raise NotFoundError(
+                "This unit has no questions to attempt yet.",
+                code=ErrorCode.LESSON_NOT_AVAILABLE,
+            )
+
+        selected_ids = select_checkpoint_questions(
+            await self._checkpoint_stats(user_id, questions)
+        )
+        by_id = {question.id: question for question in questions}
+        # The coverage pass guarantees a question exists for every lesson *that has one*;
+        # a published lesson with no questions cannot be represented and the sample still
+        # stands. Filtering is the same freeze-safety resume applies: an id that vanished
+        # between selection and insert is skipped, never resurrected.
+        ordered_questions = [
+            by_id[ContentId(question_id)]
+            for question_id in selected_ids
+            if ContentId(question_id) in by_id
+        ]
+
+        now = utc_now()
+        session = QuizSession(
+            id=new_id(),
+            user_id=user_id,
+            mode=SessionMode.CHECKPOINT,
+            lesson_id=None,
+            question_ids=tuple(question.id for question in ordered_questions),
+            started_at=now,
+            expires_at=now + timedelta(seconds=self._settings.quiz_session_ttl_seconds),
+            unit_id=unit_id,
+        )
+        await self._uow.quiz_sessions.add(session)
+        await self._uow.commit()
+
+        return SessionDetailView(
+            session=_session_view(session, answered_question_ids=()),
+            questions=tuple(
+                _question_view(question, order=_choice_order(session.id, question, FIRST_ATTEMPT))
+                for question in ordered_questions
+            ),
+        )
+
+    async def _checkpoint_stats(
+        self, user_id: UserId, questions: list[Question]
+    ) -> list[QuestionStat]:
+        """Reduce the learner's history and review schedule to the facts selection weighs.
+
+        Three batched reads for the whole unit — answers, cards, and the question list
+        already in hand — because a per-question read would make starting a checkpoint
+        dozens of round trips. Absence is data: a question with no answer row is
+        ``answered=False``, one with no card is not due and not easy.
+        """
+        question_ids = [question.id for question in questions]
+        history = await self._uow.quiz_answers.history_for_user(user_id, question_ids)
+        cards = await self._uow.review_cards.list_for_questions(user_id, question_ids)
+        card_by_question = {card.question_id: card for card in cards}
+        now = utc_now()
+
+        stats: list[QuestionStat] = []
+        for question in questions:
+            facts = history.get(question.id)
+            card = card_by_question.get(question.id)
+            stats.append(
+                QuestionStat(
+                    question_id=question.id,
+                    lesson_id=question.lesson_id,
+                    position=question.position,
+                    answered=facts.answered if facts is not None else False,
+                    was_wrong=facts.ever_wrong if facts is not None else False,
+                    card_lapses=card.lapses if card is not None else 0,
+                    card_due=card is not None and ensure_aware(card.due_at) <= now,
+                    card_easy=card is not None
+                    and card_is_easy(card.ease_factor, card.lapses),
+                )
+            )
+        return stats
+
     async def _require_owned(self, user_id: UserId, session_id: uuid.UUID) -> QuizSession:
         session = await self._uow.quiz_sessions.get_for_user(session_id, user_id)
         if session is None:
@@ -356,13 +583,21 @@ class QuizService:
     async def _load_session_questions(self, session: QuizSession) -> list[Question]:
         """The session's questions, in the order frozen at start.
 
-        Re-read from the lesson but re-ordered by ``question_ids``, and filtered to ids
+        Re-read from the catalogue but re-ordered by ``question_ids``, and filtered to ids
         that are still present, so a question retired mid-session is skipped rather than
-        resurrecting a stale row.
+        resurrecting a stale row. A lesson session re-reads through its lesson; a
+        checkpoint spans the unit's lessons, so the frozen list is fetched by id directly
+        — it is already the scope, and the published-lesson predicate it comes with is the
+        same visibility check the lesson path gets from its caller having checked.
         """
         if session.lesson_id is None:
-            return []
-        questions = await self._uow.questions.list_for_lessons([ContentId(session.lesson_id)])
+            questions = await self._uow.questions.list_published_by_ids(
+                [ContentId(question_id) for question_id in session.question_ids]
+            )
+        else:
+            questions = await self._uow.questions.list_for_lessons(
+                [ContentId(session.lesson_id)]
+            )
         by_id = {question.id: question for question in questions}
         wanted = (ContentId(question_id) for question_id in session.question_ids)
         return [by_id[question_id] for question_id in wanted if question_id in by_id]
@@ -391,7 +626,7 @@ class QuizService:
         fact is known here (where the prior state is read) and nowhere else, so it is
         returned rather than re-derived by the caller.
         """
-        if lesson_id is None:  # pragma: no cover - lesson mode always sets it
+        if lesson_id is None:  # pragma: no cover - checkpoint completions take the other branch
             return False
         progress = await self._uow.lesson_progress.get(user_id, lesson_id)
         if progress is None:
@@ -400,6 +635,37 @@ class QuizService:
         progress.record_completion(score_percent=score_percent, xp=xp)
         await self._uow.lesson_progress.save(progress)
         return is_retry
+
+    async def _record_unit_progress(
+        self,
+        user_id: UserId,
+        unit_id: uuid.UUID,
+        *,
+        score_percent: int,
+    ) -> tuple[bool, uuid.UUID | None]:
+        """Fold a finished checkpoint into the unit's row, returning the verdict.
+
+        ``passed`` is the 80% bar applied to this sitting's score — an immediate,
+        lock-free retake can flip it, and the record keeps ``best_score`` and the first
+        ``passed_at`` regardless, so a later failure never takes back what an earlier pass
+        opened. ``unlocked_unit_id`` is the navigation target handed back only to a
+        passing score: the next unit in curriculum order, or ``None`` at the end of the
+        course. The unlock inputs are re-read here rather than cached from start because
+        a completion may itself be the pass that opens the door, and the answer has to
+        reflect the row this very call just wrote.
+        """
+        passed = score_percent >= CHECKPOINT_PASSING_SCORE
+        progress = await self._uow.unit_progress.get(user_id, unit_id)
+        if progress is None:
+            progress = UnitProgress(id=new_id(), user_id=user_id, unit_id=unit_id)
+        progress.record_attempt(score_percent=score_percent, passed=passed)
+        await self._uow.unit_progress.save(progress)
+
+        unlocked_unit_id = None
+        if passed:
+            ordered = await self._uow.units.list_published_ordered()
+            unlocked_unit_id = next_unit_id(unit_id, [item.unit.id for item in ordered])
+        return passed, unlocked_unit_id
 
     async def _publish_completion(
         self,
@@ -649,5 +915,6 @@ def _session_view(
         answered_count=len(answered_question_ids),
         correct_count=session.correct_count,
         xp_awarded=session.xp_awarded,
+        unit_id=session.unit_id,
         answered_question_ids=answered_question_ids,
     )

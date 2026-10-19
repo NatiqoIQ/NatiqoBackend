@@ -13,6 +13,7 @@ and appending its log either land whole or not at all.
 from __future__ import annotations
 
 import uuid
+from collections.abc import Sequence
 from datetime import datetime
 
 from sqlalchemy import case, func, select
@@ -96,6 +97,23 @@ class SqlAlchemyReviewCardRepository:
             select(ReviewCardModel)
             .where(ReviewCardModel.user_id == user_id)
             .order_by(ReviewCardModel.id)
+        )
+        models = (await self._session.execute(stmt)).scalars().all()
+        return [to_card(model) for model in models]
+
+    async def list_for_questions(
+        self, user_id: UserId, question_ids: Sequence[uuid.UUID]
+    ) -> list[ReviewCard]:
+        """See :meth:`ReviewCardRepositoryPort.list_for_questions`."""
+        if not question_ids:
+            return []
+        stmt = (
+            select(ReviewCardModel)
+            .where(
+                ReviewCardModel.user_id == user_id,
+                ReviewCardModel.question_id.in_(list(question_ids)),
+            )
+            .order_by(ReviewCardModel.question_id, ReviewCardModel.id)
         )
         models = (await self._session.execute(stmt)).scalars().all()
         return [to_card(model) for model in models]

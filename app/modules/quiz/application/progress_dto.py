@@ -15,6 +15,7 @@ from datetime import datetime
 __all__ = [
     "LessonProgressView",
     "ProgressSummaryView",
+    "UnitProgressItemView",
     "UnlockMapItemView",
     "XpEventView",
 ]
@@ -47,9 +48,8 @@ class LessonProgressView:
 
     ``state`` and ``locked`` are separate on purpose: ``state`` is what the learner has
     done (``available`` / ``in_progress`` / ``completed``), ``locked`` is whether the
-    curriculum currently lets them start. With no gating rule yet, ``locked`` is always
-    ``false`` — but it is a field from day one so enabling a rule later is a data change,
-    not a wire change.
+    curriculum currently lets them start. ``locked`` follows the unit: a lesson is open
+    exactly when its unit's checkpoint chain has reached it.
     """
 
     lesson_id: uuid.UUID
@@ -63,6 +63,31 @@ class LessonProgressView:
     attempts: int
     xp_earned: int
     completed_at: datetime | None
+
+
+@dataclass(frozen=True, slots=True)
+class UnitProgressItemView:
+    """One unit's placement plus the learner's checkpoint record against it.
+
+    Everything a unit list needs to draw the sequence and offer the next action: whether
+    the sequential rule has opened the unit (``locked``), whether its lessons are all done
+    (``checkpoint_ready``), and how the checkpoint itself stands (``passed``,
+    ``best_score``, ``attempts``). ``checkpoint_ready`` counts the unit's published
+    lessons — a unit with none is never ready.
+    """
+
+    unit_id: uuid.UUID
+    level_code: str
+    title: str
+    position: int
+    locked: bool
+    passed: bool
+    best_score: int
+    attempts: int
+    passed_at: datetime | None
+    lessons_total: int
+    lessons_completed: int
+    checkpoint_ready: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,7 +116,13 @@ class UnlockMapItemView:
 
 @dataclass(frozen=True, slots=True)
 class XpEventView:
-    """One completed session, as a row of the XP history feed."""
+    """One completed session, as a row of the XP history feed.
+
+    ``lesson_id`` and ``unit_id`` are the two scopes a session can have — a lesson
+    sitting fills the first, a checkpoint the second — so a feed row can be labelled
+    without a second lookup. A lesson's row carries no unit id even though its lesson
+    belongs to one: the feed restates the session, not the catalogue.
+    """
 
     session_id: uuid.UUID
     lesson_id: uuid.UUID | None
@@ -100,3 +131,4 @@ class XpEventView:
     total_count: int
     score_percent: int
     completed_at: datetime | None
+    unit_id: uuid.UUID | None = None

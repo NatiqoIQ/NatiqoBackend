@@ -19,11 +19,13 @@ from app.modules.quiz.domain.entities import (
     QuizSession,
     SessionMode,
     SessionStatus,
+    UnitProgress,
 )
 from app.modules.quiz.infrastructure.models import (
     LessonProgressModel,
     QuizAnswerModel,
     QuizSessionModel,
+    UnitProgressModel,
 )
 
 
@@ -40,6 +42,7 @@ def to_session(model: QuizSessionModel) -> QuizSession:
         completed_at=model.completed_at,
         correct_count=model.correct_count,
         xp_awarded=model.xp_awarded,
+        unit_id=model.unit_id,
     )
 
 
@@ -81,6 +84,7 @@ def to_session_model(session: QuizSession) -> QuizSessionModel:
         user_id=session.user_id,
         mode=session.mode.value,
         lesson_id=session.lesson_id,
+        unit_id=session.unit_id,
         status=session.status.value,
         question_ids=_session_question_ids(session),
         started_at=session.started_at,
@@ -156,14 +160,45 @@ def apply_progress(progress: LessonProgress, model: LessonProgressModel) -> None
     model.completed_at = progress.completed_at
 
 
+def to_unit_progress(model: UnitProgressModel) -> UnitProgress:
+    return UnitProgress(
+        id=model.id,
+        user_id=UserId(model.user_id),
+        unit_id=model.unit_id,
+        best_score=model.best_score,
+        attempts=model.attempts,
+        passed_at=model.passed_at,
+    )
+
+
+def to_unit_progress_model(progress: UnitProgress) -> UnitProgressModel:
+    return UnitProgressModel(
+        id=progress.id,
+        user_id=progress.user_id,
+        unit_id=progress.unit_id,
+        best_score=progress.best_score,
+        attempts=progress.attempts,
+        passed_at=progress.passed_at,
+    )
+
+
+def apply_unit_progress(progress: UnitProgress, model: UnitProgressModel) -> None:
+    model.best_score = progress.best_score
+    model.attempts = progress.attempts
+    model.passed_at = progress.passed_at
+
+
 __all__ = [
     "apply_answer",
     "apply_progress",
     "apply_session",
+    "apply_unit_progress",
     "to_answer",
     "to_answer_model",
     "to_progress",
     "to_progress_model",
     "to_session",
     "to_session_model",
+    "to_unit_progress",
+    "to_unit_progress_model",
 ]

@@ -67,6 +67,7 @@ def _session_response(view: SessionView) -> SessionResponse:
         answered_count=view.answered_count,
         correct_count=view.correct_count,
         xp_awarded=view.xp_awarded,
+        unit_id=view.unit_id,
         answered_question_ids=list(view.answered_question_ids),
     )
 
@@ -97,7 +98,7 @@ def _detail_response(view: SessionDetailView) -> SessionDetailResponse:
     "/sessions",
     response_model=SessionDetailResponse,
     status_code=status.HTTP_201_CREATED,
-    summary="Start a quiz session over a lesson",
+    summary="Start a quiz session over a lesson or a unit checkpoint",
 )
 async def start_session(
     payload: StartSessionRequest,
@@ -107,10 +108,19 @@ async def start_session(
 ) -> SessionDetailResponse:
     """Open a sitting and return its questions — without any answer key.
 
+    A ``lesson`` sitting covers one published lesson; a ``checkpoint`` sitting covers a
+    weighted sample across a unit's lessons, and is refused with ``LESSON_LOCKED`` while
+    the unit is shut and ``CHECKPOINT_NOT_READY`` until its lessons are all complete.
+
     Safe to retry: send an ``Idempotency-Key`` and a repeat of the same request replays the
     original ``sessionId`` instead of opening a second sitting.
     """
-    detail = await service.start_session(user.id, mode=payload.mode, lesson_id=payload.lesson_id)
+    detail = await service.start_session(
+        user.id,
+        mode=payload.mode,
+        lesson_id=payload.lesson_id,
+        unit_id=payload.unit_id,
+    )
     return _detail_response(detail)
 
 
@@ -179,6 +189,11 @@ async def command_session(
             result=CompletedSessionResponse(
                 session=_session_response(completed.session),
                 score_percent=completed.score_percent,
+                passed=completed.passed,
+                unlocked_unit_id=completed.unlocked_unit_id,
+                correct_question_ids=list(completed.correct_question_ids),
+                missed_question_ids=list(completed.missed_question_ids),
+                retry_available=completed.retry_available,
             )
         )
     return AbandonCommandResult(

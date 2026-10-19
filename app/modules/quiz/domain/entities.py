@@ -1,17 +1,22 @@
-"""The attempt engine's aggregates: a session, its answers, a lesson's progress.
+"""The attempt engine's aggregates: a session, its answers, a lesson's and unit's progress.
 
-Three shapes, kept apart because they change for different reasons:
+Four shapes, kept apart because they change for different reasons:
 
-* :class:`QuizSession` — one sitting with a lesson. Its question list is frozen at
-  start, so a page reload, an app kill or an editor publishing mid-lesson cannot change
-  the questions a learner already committed to.
+* :class:`QuizSession` — one sitting with a lesson or a unit checkpoint. Its question list
+  is frozen at start, so a page reload, an app kill or an editor publishing mid-lesson
+  cannot change the questions a learner already committed to.
 * :class:`QuizAnswer` — one row per question, holding the learner's latest attempt. It
   snapshots the verdict *and* the explanation at the moment it was graded, so revising a
   question row cannot retroactively change what a learner was told. A retry re-grades
   that same row (half marks, see ``domain/policy.py``) instead of appending a second one,
   which is what keeps a question counting exactly once towards a session's total.
 * :class:`LessonProgress` — the durable per-learner record a lesson was attempted and how
-  it went. It is the only one of the three that outlives a session on purpose.
+  it went.
+* :class:`UnitProgress` — the per-learner record of a unit's checkpoint, and the row the
+  sequential-unlock rule reads: ``passed_at`` set means the unit's material is done and
+  the next unit may open.
+
+The two progress records are the only shapes that outlive a session on purpose.
 
 The engine grades on the server and never hands the client an answer key; see
 ``domain/policy.py`` for the rule — including what a second attempt is worth — and
@@ -29,6 +34,7 @@ from app.core.time import ensure_aware, utc_now
 from app.core.types import UserId
 
 __all__ = [
+    "AnswerHistory",
     "AnswerTally",
     "LessonProgress",
     "ProgressState",
@@ -36,19 +42,22 @@ __all__ = [
     "QuizSession",
     "SessionMode",
     "SessionStatus",
+    "UnitProgress",
 ]
 
 
 class SessionMode(StrEnum):
     """What a session is for.
 
-    Only ``LESSON`` can be started today; ``REVIEW`` and ``PLACEMENT`` are named now so
+    ``LESSON`` (a lesson's questions) and ``CHECKPOINT`` (a weighted sample across a
+    unit's lessons) can be started today. ``REVIEW`` and ``PLACEMENT`` are named now so
     the column, the constraint and the wire enum do not have to be reshaped when the SRS
     and onboarding slices land. A mode with no way to be reached is rejected at the
     service boundary rather than silently treated as a lesson.
     """
 
     LESSON = "lesson"
+    CHECKPOINT = "checkpoint"
     REVIEW = "review"
     PLACEMENT = "placement"
 
@@ -79,12 +88,15 @@ class ProgressState(StrEnum):
 
 @dataclass(slots=True)
 class QuizSession:
-    """One attempt at a lesson.
+    """One attempt at a lesson, or at a unit's checkpoint.
 
     ``question_ids`` is the ordering authority. It is fixed when the session starts and
     never re-derived from the lesson, because a lesson edited mid-session must not change
     the set of questions a learner is being scored on. ``total`` is derived from it rather
     than stored, so there is exactly one place that can be wrong.
+
+    A checkpoint session carries ``unit_id`` instead of relying on ``lesson_id``: its
+    questions span every lesson in the unit, so no single lesson owns it.
     """
 
     id: uuid.UUID
@@ -93,6 +105,8 @@ class QuizSession:
     lesson_id: uuid.UUID | None
     question_ids: tuple[uuid.UUID, ...]
     expires_at: datetime
+    #: The unit a ``CHECKPOINT`` session is scored against; ``None`` in every other mode.
+    unit_id: uuid.UUID | None = None
     status: SessionStatus = SessionStatus.ACTIVE
     started_at: datetime = field(default_factory=utc_now)
     completed_at: datetime | None = None
@@ -212,6 +226,40 @@ class LessonProgress:
         self.completed_at = at or utc_now()
 
 
+@dataclass(slots=True)
+class UnitProgress:
+    """One learner's record against one unit's checkpoint.
+
+    Created when a checkpoint is first attempted and updated on every attempt. It is the
+    row the sequential-unlock rule reads: a unit's successor opens once ``passed_at`` is
+    set, which means the checkpoint's 80% bar was cleared at least once.
+    """
+
+    id: uuid.UUID
+    user_id: UserId
+    unit_id: uuid.UUID
+    best_score: int = 0
+    attempts: int = 0
+    #: First time a passing score was recorded. Never cleared: a later attempt that
+    #: scores worse cannot re-lock what a passing one already opened.
+    passed_at: datetime | None = None
+
+    @property
+    def has_passed(self) -> bool:
+        return self.passed_at is not None
+
+    def record_attempt(self, *, score_percent: int, passed: bool, at: datetime | None = None) -> None:
+        """Fold one finished checkpoint in.
+
+        ``best_score`` keeps the maximum, mirroring :class:`LessonProgress`, so the
+        record can only improve. ``passed_at`` latches on the first pass.
+        """
+        self.attempts += 1
+        self.best_score = max(self.best_score, score_percent)
+        if passed and self.passed_at is None:
+            self.passed_at = at or utc_now()
+
+
 @dataclass(frozen=True, slots=True)
 class AnswerTally:
     """How many questions a learner has answered, and how many they got right.
@@ -230,3 +278,21 @@ class AnswerTally:
         if self.answered <= 0:
             return 0
         return round(self.correct / self.answered * 100)
+
+
+@dataclass(frozen=True, slots=True)
+class AnswerHistory:
+    """What a learner's answers *in any session* say about one question.
+
+    The two facts checkpoint selection needs, already reduced across every session the
+    question was ever asked in: ``answered`` says whether it has been met at all, and
+    ``ever_wrong`` says whether it was ever missed — true for a first-attempt miss and
+    true for a question whose later retry succeeded, because the engine overwrites one
+    row per session and ``attempt > 1`` is the surviving evidence that a miss happened.
+
+    A read-only projection like :class:`AnswerTally`, not a stored counter: "have I ever
+    got this wrong" is a property of the history, so the history is where it is asked.
+    """
+
+    answered: bool = False
+    ever_wrong: bool = False

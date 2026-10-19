@@ -41,6 +41,7 @@ if TYPE_CHECKING:  # pragma: no cover
         LessonProgressRepositoryPort,
         QuizAnswerRepositoryPort,
         QuizSessionRepositoryPort,
+        UnitProgressRepositoryPort,
     )
     from app.modules.quiz.domain.review_ports import (
         ReviewCardRepositoryPort,
@@ -103,6 +104,9 @@ class UnitOfWorkProtocol(Protocol):
 
     @property
     def lesson_progress(self) -> LessonProgressRepositoryPort: ...
+
+    @property
+    def unit_progress(self) -> UnitProgressRepositoryPort: ...
 
     @property
     def review_cards(self) -> ReviewCardRepositoryPort: ...

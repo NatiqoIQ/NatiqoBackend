@@ -57,6 +57,7 @@ EXPECTED_TABLES = {
     "refresh_tokens",
     "review_cards",
     "review_logs",
+    "unit_progress",
     "units",
     "user_achievements",
     "user_devices",
@@ -454,6 +455,165 @@ class TestMigratedContentConstraints:
         ).fetchone()
         assert survivors is not None
         assert survivors[0] == 0, "content below the deleted level survived the cascade"
+
+
+class TestCheckpointBackfill:
+    """The grandfather rule, exercised against a database with real rows in it.
+
+    ``upgrade head`` on an empty database runs the backfill's SQL exactly zero times, so
+    every other test here only proves the statement parses — not that it decides
+    anything. These tests stop one revision short, seed the situation the backfill exists
+    for (learners who finished units before checkpoints existed), then finish the
+    upgrade and read what it wrote.
+
+    The verdict the tests pin down: a ``(user, unit)`` pair is grandfathered exactly when
+    every *published* lesson of that unit has a ``completed`` row for that user. Draft
+    lessons do not count towards the bar — completing one while its published sibling is
+    outstanding leaves the unit locked.
+    """
+
+    @staticmethod
+    def _user(connection: sqlite3.Connection, tag: str) -> str:
+        import uuid
+
+        user_id = str(uuid.uuid4())
+        connection.execute(
+            "insert into users (id, email, status, roles, created_at, updated_at)"
+            " values (?, ?, 'active', '[]', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+            (user_id, f"{tag}@example.com"),
+        )
+        return user_id
+
+    @staticmethod
+    def _curriculum(connection: sqlite3.Connection) -> dict[str, str]:
+        """One level, two units.
+
+        Unit 1 holds two published lessons; unit 2 holds one published and one draft —
+        the pair of edges the backfill's filter has to tell apart.
+        """
+        import uuid
+
+        ids = {name: str(uuid.uuid4()) for name in ("u1", "u2", "l1", "l2", "l3", "l4")}
+        connection.execute(
+            "insert into levels (id, code, title, position, state, created_at, updated_at)"
+            " values (?, 'A1', 'Level', 1, 'published', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+            (str(uuid.uuid4()),),
+        )
+        level_id = connection.execute("select id from levels").fetchone()
+        assert level_id is not None
+        for tag, unit_key in (("u1", "u1"), ("u2", "u2")):
+            connection.execute(
+                "insert into units (id, level_id, title, position, state, created_at,"
+                " updated_at) values (?, ?, ?, ?, 'published', CURRENT_TIMESTAMP,"
+                " CURRENT_TIMESTAMP)",
+                (ids[unit_key], level_id[0], tag, int(unit_key[1])),
+            )
+        for lesson_key, unit_key, position, state in (
+            ("l1", "u1", 1, "published"),
+            ("l2", "u1", 2, "published"),
+            ("l3", "u2", 1, "published"),
+            ("l4", "u2", 2, "draft"),
+        ):
+            connection.execute(
+                "insert into lessons (id, unit_id, title, summary, position,"
+                " estimated_minutes, state, created_at, updated_at) values (?, ?, ?,"
+                " 'Summary', ?, 10, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+                (ids[lesson_key], ids[unit_key], lesson_key, position, state),
+            )
+        return ids
+
+    @staticmethod
+    def _completed(connection: sqlite3.Connection, user_id: str, lesson_id: str) -> None:
+        import uuid
+
+        connection.execute(
+            "insert into lesson_progress (id, user_id, lesson_id, state, best_score,"
+            " attempts, xp_earned, created_at, updated_at) values (?, ?, ?, 'completed',"
+            " 100, 1, 10, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+            (str(uuid.uuid4()), user_id, lesson_id),
+        )
+
+    @pytest.fixture
+    def seeded_then_upgraded(self, alembic_config: Config) -> sqlite3.Connection:
+        command.upgrade(alembic_config, "f6c35e9b1a84")
+        connection = sqlite3.connect(_db_path(alembic_config))
+        connection.execute("PRAGMA foreign_keys=ON")
+        ids = self._curriculum(connection)
+        finished = self._user(connection, "finished")
+        partial = self._user(connection, "partial")
+        # "finished" completed every lesson in both units, drafts included.
+        for lesson_key in ("l1", "l2", "l3", "l4"):
+            self._completed(connection, finished, ids[lesson_key])
+        # "partial" finished unit 1, then touched only unit 2's *draft* lesson — the
+        # exact edge the filter exists for: some progress in the unit, even a completed
+        # row, but the published lesson is still outstanding.
+        for lesson_key in ("l1", "l2", "l4"):
+            self._completed(connection, partial, ids[lesson_key])
+        connection.commit()
+
+        command.upgrade(alembic_config, "head")
+        yield connection
+        connection.close()
+
+    def test_every_lesson_finished_earns_a_grandfathered_pass(
+        self, seeded_then_upgraded: sqlite3.Connection
+    ) -> None:
+        rows = seeded_then_upgraded.execute(
+            "select user_id, unit_id, best_score, attempts, passed_at from unit_progress"
+        ).fetchall()
+
+        # Three pairs: "finished" for both units, "partial" for unit 1 only. Unit 2 stays
+        # open for "partial" — its published lesson is unfinished, no matter that the
+        # draft lesson next to it has a completed row.
+        assert len(rows) == 3, f"unexpected grandfathering: {rows}"
+
+        for _, _, best_score, attempts, passed_at in rows:
+            assert best_score == 0, "nobody scored these units; the score must stay honest"
+            assert attempts == 0
+            assert passed_at is not None, "without passed_at the unit would stay locked"
+
+    def test_a_unit_short_of_one_published_lesson_stays_locked(
+        self, seeded_then_upgraded: sqlite3.Connection
+    ) -> None:
+        rows = seeded_then_upgraded.execute(
+            "select count(*) from unit_progress up"
+            " join users u on u.id = up.user_id"
+            " where u.email = 'partial@example.com'"
+            " and up.unit_id = (select id from units where position = 2)"
+        ).fetchone()
+        assert rows is not None
+        assert rows[0] == 0, "a unit with an unfinished published lesson was grandfathered"
+
+    def test_the_migrated_mode_check_admits_checkpoint_and_nothing_new(
+        self, seeded_then_upgraded: sqlite3.Connection
+    ) -> None:
+        """The widened CHECK is the whole point of the batch ALTER, so read it back.
+
+        Admitting ``checkpoint`` is the positive half; rejecting a value that was never
+        in the vocabulary is the negative half — a constraint that accepts everything is
+        indistinguishable from no constraint until someone relies on it.
+        """
+        import uuid
+
+        connection = seeded_then_upgraded
+        user_id = connection.execute("select id from users limit 1").fetchone()
+        unit_id = connection.execute("select id from units limit 1").fetchone()
+        assert user_id is not None and unit_id is not None
+
+        def insert(mode: str) -> None:
+            connection.execute(
+                "insert into quiz_sessions (id, user_id, mode, unit_id, status,"
+                " question_ids, correct_count, xp_awarded, started_at, expires_at,"
+                " created_at, updated_at) values (?, ?, ?, ?, 'active', '[]', 0, 0,"
+                " CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP,"
+                " CURRENT_TIMESTAMP)",
+                (str(uuid.uuid4()), user_id[0], mode, unit_id[0]),
+            )
+
+        insert("checkpoint")
+        with pytest.raises(sqlite3.IntegrityError):
+            insert("speedrun")
+        connection.rollback()
 
 
 def test_alembic_ini_hardcodes_no_credentials() -> None:

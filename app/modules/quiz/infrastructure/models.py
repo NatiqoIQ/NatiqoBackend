@@ -1,16 +1,19 @@
 """Quiz module — SQLAlchemy models.
 
-Three tables:
+Four tables:
 
 * ``quiz_sessions`` — one sitting. ``question_ids`` is a JSON array frozen at start; the
   total is derived from it rather than stored so there is a single source of truth for
-  "how many questions was this learner scored on".
+  "how many questions was this learner scored on". ``unit_id`` is set only for
+  ``checkpoint`` sessions, whose questions span a whole unit.
 * ``quiz_answers`` — one row per ``(session, question)``, with a ``UNIQUE
   (session_id, question_id)`` that makes a double submission a database error rather than
   a doubled score. A retry after a wrong answer re-grades that row in place, so the row
   count stays equal to the questions the learner has committed to.
 * ``lesson_progress`` — the durable per-learner record, ``UNIQUE (user_id, lesson_id)`` so
   a retry updates the row instead of stacking a new one.
+* ``unit_progress`` — the checkpoint record behind sequential unlocking, ``UNIQUE
+  (user_id, unit_id)`` for the same reason; ``passed_at`` latched once set.
 
 The ``relationship()``s here carry no navigation the code uses (they are read with
 ``lazy="raise_on_sql"``); they exist so the unit of work knows the insert order. A user or
@@ -45,7 +48,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
-from app.modules.content.infrastructure.models import LessonModel, QuestionModel
+from app.modules.content.infrastructure.models import LessonModel, QuestionModel, UnitModel
 from app.modules.quiz.domain.entities import ProgressState, SessionMode, SessionStatus
 from app.modules.users.infrastructure.models import UserModel
 
@@ -73,6 +76,11 @@ class QuizSessionModel(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     lesson_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("lessons.id", ondelete="SET NULL"), nullable=True
     )
+    #: Set only for ``checkpoint`` sessions; ``SET NULL`` for the same reason as
+    #: ``lesson_id``. A retired unit must not erase the sessions that sat it.
+    unit_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("units.id", ondelete="SET NULL"), nullable=True
+    )
     status: Mapped[str] = mapped_column(
         String(20), nullable=False, default=SessionStatus.ACTIVE.value
     )
@@ -90,6 +98,7 @@ class QuizSessionModel(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     #: Ordering metadata only — see the module docstring. Never navigated.
     user: Mapped[UserModel] = relationship(lazy="raise_on_sql")
     lesson: Mapped[LessonModel | None] = relationship(lazy="raise_on_sql")
+    unit: Mapped[UnitModel | None] = relationship(lazy="raise_on_sql")
 
     __table_args__ = (
         CheckConstraint(f"mode IN ({SESSION_MODES_SQL})", name="valid_mode"),
@@ -98,6 +107,8 @@ class QuizSessionModel(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         CheckConstraint("xp_awarded >= 0", name="non_negative_xp"),
         Index("ix_quiz_sessions_user_status", "user_id", "status"),
         Index("ix_quiz_sessions_lesson", "lesson_id"),
+        # Checkpoint analytics group a unit's sessions (attempts, pass rate).
+        Index("ix_quiz_sessions_unit", "unit_id"),
         # Completion is charted over time and filtered by status; the pair serves both the
         # daily series and the funnel, and the single column serves a plain date range.
         Index("ix_quiz_sessions_completed_at", "completed_at"),
@@ -179,4 +190,39 @@ class LessonProgressModel(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         Index("ix_lesson_progress_user_state", "user_id", "state"),
         # "Hardest lessons" groups by lesson, which the per-learner index cannot serve.
         Index("ix_lesson_progress_lesson", "lesson_id"),
+    )
+
+
+class UnitProgressModel(Base, UUIDPrimaryKeyMixin, TimestampMixin):
+    """One learner's checkpoint record against one unit.
+
+    ``passed_at`` is written once and never cleared — the column the unlock rule reads.
+    """
+
+    __tablename__ = "unit_progress"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    unit_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("units.id", ondelete="CASCADE"), nullable=False
+    )
+    #: Best percentage across checkpoint attempts. ``SmallInteger`` is ample for 0..100.
+    best_score: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=0)
+    attempts: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=0)
+    #: Latched on the first passing attempt; never updated afterwards.
+    passed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    #: Ordering metadata only — see the module docstring.
+    user: Mapped[UserModel] = relationship(lazy="raise_on_sql")
+    unit: Mapped[UnitModel] = relationship(lazy="raise_on_sql")
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "unit_id", name="uq_unit_progress_user_unit"),
+        CheckConstraint("best_score BETWEEN 0 AND 100", name="score_in_range"),
+        CheckConstraint("attempts >= 0", name="non_negative_attempts"),
+        # The unlock map reads every unit row for a learner in one pass.
+        Index("ix_unit_progress_user", "user_id"),
+        # "Which units are passed" groups by unit, which the per-learner index cannot serve.
+        Index("ix_unit_progress_unit", "unit_id"),
     )

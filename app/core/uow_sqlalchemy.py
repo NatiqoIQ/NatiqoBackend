@@ -38,6 +38,7 @@ if TYPE_CHECKING:  # pragma: no cover
         LessonProgressRepositoryPort,
         QuizAnswerRepositoryPort,
         QuizSessionRepositoryPort,
+        UnitProgressRepositoryPort,
     )
     from app.modules.quiz.domain.review_ports import (
         ReviewCardRepositoryPort,
@@ -248,6 +249,14 @@ class SqlAlchemyUnitOfWork:
         )
 
         return self._repo("lesson_progress", SqlAlchemyLessonProgressRepository)
+
+    @property
+    def unit_progress(self) -> UnitProgressRepositoryPort:
+        from app.modules.quiz.infrastructure.repositories import (
+            SqlAlchemyUnitProgressRepository,
+        )
+
+        return self._repo("unit_progress", SqlAlchemyUnitProgressRepository)
 
     @property
     def review_cards(self) -> ReviewCardRepositoryPort:

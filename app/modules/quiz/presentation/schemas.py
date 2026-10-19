@@ -42,10 +42,16 @@ __all__ = [
 
 
 class StartSessionRequest(WireModel):
-    """Open a sitting. ``lessonId`` is required for the only mode that exists today."""
+    """Open a sitting.
+
+    ``mode`` picks the scope: ``lesson`` needs ``lessonId``, ``checkpoint`` needs
+    ``unitId``. The field the chosen mode does not use is ignored rather than rejected —
+    the service records only what the mode says — so a client may keep sending both.
+    """
 
     mode: SessionMode = SessionMode.LESSON
     lesson_id: uuid.UUID | None = None
+    unit_id: uuid.UUID | None = None
 
 
 class AnswerPayload(WireModel):
@@ -99,6 +105,9 @@ class SessionResponse(WireModel):
     answered_count: int = Field(ge=0)
     correct_count: int = Field(ge=0)
     xp_awarded: int = Field(ge=0)
+    #: The unit a checkpoint sitting is scored against; ``null`` for a lesson sitting,
+    #: where ``lesson_id`` carries the scope instead.
+    unit_id: uuid.UUID | None = None
     answered_question_ids: list[uuid.UUID] = Field(default_factory=list)
 
 
@@ -121,8 +130,21 @@ class GradedAnswerResponse(WireModel):
 
 
 class CompletedSessionResponse(WireModel):
+    """The finished sitting, its score, and — for a checkpoint — the verdict.
+
+    ``passed`` and ``unlockedUnitId`` are meaningful only for a checkpoint sitting and
+    come back ``null`` for a lesson. The question id lists describe either mode, and
+    ``retryAvailable`` is true whenever anything was missed, which is the client's cue
+    to offer another pass.
+    """
+
     session: SessionResponse
     score_percent: int = Field(ge=0, le=100)
+    passed: bool | None = None
+    unlocked_unit_id: uuid.UUID | None = None
+    correct_question_ids: list[uuid.UUID] = Field(default_factory=list)
+    missed_question_ids: list[uuid.UUID] = Field(default_factory=list)
+    retry_available: bool = False
 
 
 # ----------------------------------------------------------------- commands

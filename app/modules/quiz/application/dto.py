@@ -64,6 +64,9 @@ class SessionView:
     answered_count: int
     correct_count: int
     xp_awarded: int
+    #: The unit a checkpoint session is scored against — what a client titles the sitting
+    #: with, since no single lesson owns it. ``None`` in every other mode.
+    unit_id: uuid.UUID | None = None
     #: Which questions are already answered, so a resumed client can skip exactly those
     #: rather than replay the whole lesson. It is the caller's own data.
     answered_question_ids: tuple[uuid.UUID, ...] = ()
@@ -93,7 +96,22 @@ class GradedAnswerView:
 
 @dataclass(frozen=True, slots=True)
 class CompletedSessionView:
-    """The finished sitting and its score."""
+    """The finished sitting, its score, and what the score unlocked.
+
+    One shape serves both modes so a client renders a result branch-free where it can:
+    ``correctQuestionIds``/``missedQuestionIds`` always describe the sitting, and
+    ``passed``/``unlockedUnitId`` carry meaning only for a checkpoint (``None`` for a
+    lesson, where there is no such bar). ``retryAvailable`` is true whenever anything was
+    missed — the sitting is worth another pass — and is mode-independent on purpose.
+    """
 
     session: SessionView
     score_percent: int
+    #: Whether a checkpoint cleared its passing bar. ``None`` for a lesson sitting.
+    passed: bool | None = None
+    #: The unit a passing checkpoint opens, or ``None`` when it is the last one (or the
+    #: mode has no units to unlock).
+    unlocked_unit_id: uuid.UUID | None = None
+    correct_question_ids: tuple[uuid.UUID, ...] = ()
+    missed_question_ids: tuple[uuid.UUID, ...] = ()
+    retry_available: bool = False

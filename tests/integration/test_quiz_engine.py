@@ -132,16 +132,20 @@ def _lesson(
     session: AsyncSession,
     *,
     code: str = "A1",
+    position: int = 1,
     state: str = ContentState.PUBLISHED.value,
     with_questions: bool = True,
 ) -> tuple[LessonModel, list[QuestionModel]]:
     """One level → unit → lesson, plus its questions.
 
     ``code`` is unique per level, so a test that needs a second lesson must pass a
-    different CEFR code rather than colliding on the unique index.
+    different CEFR code rather than colliding on the unique index. That second level also
+    needs a higher ``position``: the curriculum is ordered by level position, and with both
+    at the same one which unit came first — and so which unit is unlocked — would be a coin
+    toss.
     """
     level = LevelModel(
-        id=uuid.uuid4(), code=code, title=code, position=1, state=ContentState.PUBLISHED.value
+        id=uuid.uuid4(), code=code, title=code, position=position, state=ContentState.PUBLISHED.value
     )
     session.add(level)
     unit = UnitModel(
@@ -447,7 +451,10 @@ class TestSubmitAnswer:
         self, service: QuizService, session: AsyncSession
     ) -> None:
         user_id, lesson_id, _ = await _seed(session)
-        _, other_questions = _lesson(session, code="A2")
+        # A question from a *later* unit, which the sequential-unlock rule leaves shut —
+        # which is fine here: this test never starts a sitting on it. All it needs is a
+        # question that exists and does not belong to the lesson the session was opened on.
+        _, other_questions = _lesson(session, code="A2", position=2)
         await session.flush()
         session_id = await _start(service, user_id, lesson_id)
 

@@ -108,7 +108,9 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["S101", "S105", "S106", "B011", "N802"]
+# S311: the suite seeds stdlib Random on purpose — deterministic draws are the point
+# (checkpoint selection tests), and nothing here is anywhere near a secret.
+"tests/**" = ["S101", "S105", "S106", "S311", "B011", "N802"]
 "scripts/**" = ["S101"]
 "alembic/**" = ["S101"]
 # S106 fires on any string literal passed to a parameter named push_token, which makes

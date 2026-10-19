@@ -151,6 +151,22 @@ class LessonPlacement:
 
 
 @dataclass(frozen=True, slots=True)
+class UnitPlacement:
+    """A published unit together with where it sits in the curriculum.
+
+    The unit's :class:`LessonPlacement` counterpart: the sequential-unlock rule and the
+    progress screen both order units by ``(level position, unit position)`` across levels,
+    a span no single aggregate owns, and both need the level's code beside it. The full
+    chain is part of the projection — a unit under a draft level is not published for a
+    learner and does not appear.
+    """
+
+    unit: Unit
+    level_code: CEFRLevel
+    level_position: int
+
+
+@dataclass(frozen=True, slots=True)
 class Question:
     """A practice item inside a lesson.
 

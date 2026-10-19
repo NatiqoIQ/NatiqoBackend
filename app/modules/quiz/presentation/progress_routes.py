@@ -26,11 +26,14 @@ from app.api.deps import ProgressRateLimitDep, ProgressServiceDep
 from app.core.responses import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, build_page
 from app.modules.quiz.application.progress_dto import (
     ProgressSummaryView,
+    UnitProgressItemView,
     UnlockMapItemView,
 )
 from app.modules.quiz.presentation.progress_schemas import (
     ProgressOverviewResponse,
     ProgressSummaryResponse,
+    UnitProgressItemResponse,
+    UnitsResponse,
     UnlockMapItemResponse,
     UnlockMapResponse,
     XpEventResponse,
@@ -91,13 +94,39 @@ async def get_unlocks(
 
     Whole-map rather than paginated: the published catalogue is the bound, and a map a
     client draws incrementally would need the whole set anyway. Each node carries the
-    learner's ``bestScore``, ``attempts`` and ``xpEarned``. Nothing is locked until a
-    gating rule exists, but ``locked`` is present from the first version so turning one on
-    is a data change, not a wire change.
+    learner's ``bestScore``, ``attempts`` and ``xpEarned``, and ``locked`` is the
+    sequential-unlock rule made visible: a lesson is shut while its unit is, and a unit
+    opens once its predecessor's checkpoint has been passed. The unit-level view of the
+    same rule — with the checkpoint record itself — is ``GET /progress/units``.
     """
     items: list[UnlockMapItemView] = await service.unlock_map(user.id)
     return UnlockMapResponse(
         items=[UnlockMapItemResponse.model_validate(item) for item in items],
+        total=len(items),
+    )
+
+
+@router.get(
+    "/units",
+    response_model=UnitsResponse,
+    summary="Read the unit checkpoints' standing",
+)
+async def get_units(
+    user: CurrentUser,
+    service: ProgressServiceDep,
+    _limit: ProgressRateLimitDep,
+) -> UnitsResponse:
+    """Every published unit in curriculum order, with its checkpoint standing.
+
+    Whole-list like the map, and for the same reason: the published catalogue is the
+    bound. Each item combines the sequential rule (``locked``) with the checkpoint
+    record (``passed``, ``bestScore``, ``attempts``, ``passedAt``) and the lesson counts,
+    so the client can offer the next action — finish a lesson, sit the checkpoint, or
+    pass the previous unit first — from this one read.
+    """
+    items: list[UnitProgressItemView] = await service.units(user.id)
+    return UnitsResponse(
+        items=[UnitProgressItemResponse.model_validate(item) for item in items],
         total=len(items),
     )
 

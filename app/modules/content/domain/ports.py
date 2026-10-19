@@ -18,7 +18,14 @@ from typing import Protocol, runtime_checkable
 
 from app.core.pagination import PositionCursor
 from app.core.types import CEFRLevel, ContentId
-from app.modules.content.domain.entities import Lesson, LessonPlacement, Level, Question, Unit
+from app.modules.content.domain.entities import (
+    Lesson,
+    LessonPlacement,
+    Level,
+    Question,
+    Unit,
+    UnitPlacement,
+)
 
 
 @runtime_checkable
@@ -54,6 +61,20 @@ class UnitRepositoryPort(Protocol):
 
         Counting this way keeps a page of levels at one query regardless of page size;
         a per-row count would make the levels screen scale with the page.
+        """
+        ...
+
+    async def list_published_ordered(self) -> list[UnitPlacement]:
+        """Every published unit in curriculum order, with its placement.
+
+        Ordered by ``(level position, unit position, id)``. A unit counts as published
+        only when both it and its level are published — visibility is inherited, so a
+        unit under a draft level is not reachable and must not appear in a learner's
+        progression.
+
+        Deliberately unpaginated, like the lesson equivalent: the sequential-unlock rule
+        walks the unit chain start to finish, so a partially read order would silently
+        unlock the wrong predecessor.
         """
         ...
 

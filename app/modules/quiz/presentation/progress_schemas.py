@@ -22,6 +22,8 @@ from app.core.responses import Page, WireModel
 __all__ = [
     "ProgressOverviewResponse",
     "ProgressSummaryResponse",
+    "UnitProgressItemResponse",
+    "UnitsResponse",
     "UnlockMapItemResponse",
     "UnlockMapResponse",
     "XpEventResponse",
@@ -91,8 +93,41 @@ class UnlockMapResponse(_ProgressWire):
     total: int = Field(ge=0, description="Published lessons in the curriculum.")
 
 
+class UnitProgressItemResponse(_ProgressWire):
+    """One unit's placement plus its checkpoint standing.
+
+    ``locked`` and ``checkpointReady`` answer different questions — may I start this
+    unit at all, and have I finished its lessons — and both are sent so the client picks
+    the next action without a third read.
+    """
+
+    unit_id: uuid.UUID
+    level_code: str
+    title: str
+    position: int
+    locked: bool
+    passed: bool
+    best_score: int = Field(ge=0, le=100)
+    attempts: int = Field(ge=0)
+    passed_at: datetime | None = None
+    lessons_total: int = Field(ge=0)
+    lessons_completed: int = Field(ge=0)
+    checkpoint_ready: bool
+
+
+class UnitsResponse(_ProgressWire):
+    """Every published unit in curriculum order. Enveloped for the same reason as the map."""
+
+    items: list[UnitProgressItemResponse] = Field(default_factory=list)
+    total: int = Field(ge=0, description="Published units in the curriculum.")
+
+
 class XpEventResponse(_ProgressWire):
-    """One completed session as a row of the XP history feed."""
+    """One completed session as a row of the XP history feed.
+
+    ``lessonId`` and ``unitId`` are the two scopes a session can have, so a checkpoint
+    row is labelable without a second lookup.
+    """
 
     session_id: uuid.UUID
     lesson_id: uuid.UUID | None
@@ -101,6 +136,7 @@ class XpEventResponse(_ProgressWire):
     total_count: int = Field(ge=0)
     score_percent: int = Field(ge=0, le=100)
     completed_at: datetime | None = None
+    unit_id: uuid.UUID | None = None
 
 
 XpHistoryPage = Page[XpEventResponse]

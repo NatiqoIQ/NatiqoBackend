@@ -500,7 +500,8 @@ Wire shapes (camelCase; field names are exact):
 ```jsonc
 // POST /quiz/sessions        → 201
 {
-  "session": { "id":"uuid", "mode":"lesson", "lessonId":"uuid", "status":"active",
+  "session": { "id":"uuid", "mode":"lesson", "lessonId":"uuid", "unitId":null,
+               "status":"active",
                "startedAt":"…", "expiresAt":"…", "completedAt":null,
                "totalCount":6, "answeredCount":0, "correctCount":0, "xpAwarded":0,
                "answeredQuestionIds":[] },

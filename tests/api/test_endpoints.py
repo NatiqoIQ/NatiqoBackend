@@ -108,6 +108,7 @@ PUBLISHED_OPERATIONS: set[tuple[str, str]] = {
     ("POST", "/api/v1/quiz/sessions/{session_id}"),
     ("GET", "/api/v1/progress"),
     ("GET", "/api/v1/progress/unlocks"),
+    ("GET", "/api/v1/progress/units"),
     ("GET", "/api/v1/review/due"),
     ("GET", "/api/v1/review/stats"),
     ("GET", "/api/v1/review/preview"),
@@ -2507,6 +2508,7 @@ async def _complete_a_lesson(
     [
         "/api/v1/progress",
         "/api/v1/progress/unlocks",
+        "/api/v1/progress/units",
     ],
 )
 async def test_progress_reads_need_a_token(client: AsyncClient, path: str) -> None:
@@ -2574,8 +2576,9 @@ async def test_the_unlock_map_lists_the_published_curriculum_in_order(
         "Lesson 2",
     ]
     assert all(item["state"] == "available" for item in body["items"])
-    # No gating rule exists yet, so ``locked`` is present but always false.
-    assert all(item["locked"] is False for item in body["items"])
+    # The sequential rule: the first unit is open, everything after it is shut until
+    # its predecessor's checkpoint is passed.
+    assert [item["locked"] for item in body["items"]] == [False, False, True, True]
 
 
 @pytest.mark.asyncio
@@ -2631,6 +2634,180 @@ async def test_a_draft_lesson_is_absent_from_the_unlock_map(
     assert body["total"] == 4, "the draft must not be counted"
 
 
+async def _pass_the_first_unit(
+    client: AsyncClient, headers: dict[str, str], ids: dict[str, uuid.UUID]
+) -> None:
+    """Finish both A1 lessons, which is what makes its checkpoint ready to sit."""
+    await _complete_a_lesson(client, headers, ids["A1-lesson-1"])
+    await _complete_a_lesson(client, headers, ids["A1-lesson-2"])
+
+
+async def _sit_the_first_checkpoint(
+    client: AsyncClient, headers: dict[str, str], ids: dict[str, uuid.UUID], choice: str
+) -> dict[str, Any]:
+    """Open the A1 checkpoint, answer every question with ``choice``, and complete it."""
+    started = await client.post(
+        "/api/v1/quiz/sessions",
+        json={"mode": "checkpoint", "unitId": str(ids["A1-unit"])},
+        headers=headers,
+    )
+    assert started.status_code == 201, started.text
+    session_id = started.json()["session"]["id"]
+    for question in started.json()["questions"]:
+        answered = await client.post(
+            f"/api/v1/quiz/sessions/{session_id}",
+            json={"op": "answer", "questionId": question["id"], "answer": {"choice": choice}},
+            headers=headers,
+        )
+        assert answered.status_code == 200, answered.text
+    completed = await client.post(
+        f"/api/v1/quiz/sessions/{session_id}", json={"op": "complete"}, headers=headers
+    )
+    assert completed.status_code == 200, completed.text
+    return completed.json()["result"]
+
+
+@pytest.mark.asyncio
+async def test_the_units_read_lists_each_unit_with_its_checkpoint_standing(
+    client: AsyncClient, content_db: AsyncSession
+) -> None:
+    """The unit list: the curriculum in order, the lock, and how the checkpoint stands."""
+    headers, ids = await _learner_with_catalogue(client, content_db)
+
+    body = (await client.get("/api/v1/progress/units", headers=headers)).json()
+
+    assert body["total"] == 2
+    assert [item["levelCode"] for item in body["items"]] == ["A1", "A2"]
+    assert [item["title"] for item in body["items"]] == ["Introductions", "Introductions"]
+    first, second = body["items"]
+    assert first["unitId"] == str(ids["A1-unit"])
+    assert (first["locked"], first["passed"]) == (False, False)
+    assert (first["lessonsTotal"], first["lessonsCompleted"]) == (2, 0)
+    assert (first["checkpointReady"], first["bestScore"], first["attempts"]) == (False, 0, 0)
+    assert first["passedAt"] is None
+    # The sequential rule: the second unit is shut until the first is passed.
+    assert (second["locked"], second["checkpointReady"]) == (True, False)
+
+
+@pytest.mark.asyncio
+async def test_a_checkpoint_becomes_ready_only_when_every_lesson_is_finished(
+    client: AsyncClient, content_db: AsyncSession
+) -> None:
+    """``lessonsCompleted`` counts up and ``checkpointReady`` flips at the last lesson."""
+    headers, ids = await _learner_with_catalogue(client, content_db)
+    await _complete_a_lesson(client, headers, ids["A1-lesson-1"])
+
+    after_one = (await client.get("/api/v1/progress/units", headers=headers)).json()["items"][0]
+    assert (after_one["lessonsCompleted"], after_one["checkpointReady"]) == (1, False)
+
+    await _complete_a_lesson(client, headers, ids["A1-lesson-2"])
+
+    after_both = (await client.get("/api/v1/progress/units", headers=headers)).json()["items"][0]
+    assert (after_both["lessonsCompleted"], after_both["checkpointReady"]) == (2, True)
+
+
+@pytest.mark.asyncio
+async def test_a_locked_units_lesson_cannot_be_started(
+    client: AsyncClient, content_db: AsyncSession
+) -> None:
+    """The hard lock: the second unit's lessons are refused while the first is unpassed."""
+    headers, ids = await _learner_with_catalogue(client, content_db)
+
+    response = await client.post(
+        "/api/v1/quiz/sessions",
+        json={"mode": "lesson", "lessonId": str(ids["A2-lesson-1"])},
+        headers=headers,
+    )
+
+    assert response.status_code == 403, response.text
+    assert error_code(response) == "LESSON_LOCKED"
+
+
+@pytest.mark.asyncio
+async def test_a_checkpoint_is_refused_until_the_lessons_are_done(
+    client: AsyncClient, content_db: AsyncSession
+) -> None:
+    """Opening the checkpoint early is a conflict, reported with how much is left."""
+    headers, ids = await _learner_with_catalogue(client, content_db)
+    await _complete_a_lesson(client, headers, ids["A1-lesson-1"])
+
+    response = await client.post(
+        "/api/v1/quiz/sessions",
+        json={"mode": "checkpoint", "unitId": str(ids["A1-unit"])},
+        headers=headers,
+    )
+
+    assert response.status_code == 409, response.text
+    assert error_code(response) == "CHECKPOINT_NOT_READY"
+    assert response.json()["error"]["details"]["lessons_remaining"] == 1
+
+
+@pytest.mark.asyncio
+async def test_a_checkpoint_on_a_locked_unit_is_refused(
+    client: AsyncClient, content_db: AsyncSession
+) -> None:
+    """A shut unit's checkpoint is a lock error, before any readiness is even considered."""
+    headers, ids = await _learner_with_catalogue(client, content_db)
+
+    response = await client.post(
+        "/api/v1/quiz/sessions",
+        json={"mode": "checkpoint", "unitId": str(ids["A2-unit"])},
+        headers=headers,
+    )
+
+    assert response.status_code == 403, response.text
+    assert error_code(response) == "LESSON_LOCKED"
+
+
+@pytest.mark.asyncio
+async def test_passing_a_checkpoint_unlocks_the_next_unit(
+    client: AsyncClient, content_db: AsyncSession
+) -> None:
+    """A pass records the unit and opens the next one — on the unit list and the map."""
+    headers, ids = await _learner_with_catalogue(client, content_db)
+    await _pass_the_first_unit(client, headers, ids)
+
+    result = await _sit_the_first_checkpoint(client, headers, ids, "Hello")
+
+    assert (result["passed"], result["scorePercent"]) == (True, 100)
+    assert result["unlockedUnitId"] == str(ids["A2-unit"])
+    assert result["correctQuestionIds"], "a full pass names the questions that were right"
+    assert result["missedQuestionIds"] == []
+    assert result["retryAvailable"] is False
+
+    units = (await client.get("/api/v1/progress/units", headers=headers)).json()["items"]
+    first, second = units
+    assert (first["passed"], first["bestScore"], first["attempts"]) == (True, 100, 1)
+    assert first["passedAt"] is not None
+    assert second["locked"] is False, "passing A1 must open A2"
+
+    unlocks = (await client.get("/api/v1/progress/unlocks", headers=headers)).json()
+    a2 = [item for item in unlocks["items"] if item["levelCode"] == "A2"]
+    assert all(item["locked"] is False for item in a2)
+
+
+@pytest.mark.asyncio
+async def test_failing_a_checkpoint_leaves_the_next_unit_shut(
+    client: AsyncClient, content_db: AsyncSession
+) -> None:
+    """A miss keeps the unit unpassed, names what to review, and leaves the gate closed."""
+    headers, ids = await _learner_with_catalogue(client, content_db)
+    await _pass_the_first_unit(client, headers, ids)
+
+    result = await _sit_the_first_checkpoint(client, headers, ids, "Goodbye")
+
+    assert result["passed"] is False
+    assert result["unlockedUnitId"] is None
+    assert result["retryAvailable"] is True
+    assert result["correctQuestionIds"] == []
+    assert len(result["missedQuestionIds"]) == result["session"]["totalCount"]
+
+    units = (await client.get("/api/v1/progress/units", headers=headers)).json()["items"]
+    assert (units[0]["passed"], units[0]["attempts"]) == (False, 1)
+    assert units[1]["locked"] is True, "a failed checkpoint must not open the next unit"
+
+
+@pytest.mark.asyncio
 @pytest.mark.asyncio
 async def test_completing_a_lesson_flows_into_the_summary_and_the_feed(
     client: AsyncClient, content_db: AsyncSession
@@ -2704,7 +2881,7 @@ async def test_the_xp_feed_pages_with_a_cursor_without_overlap(
     """Two completions, read one per page, must each appear exactly once."""
     headers, ids = await _learner_with_catalogue(client, content_db)
     first = await _complete_a_lesson(client, headers, ids["A1-lesson-1"])
-    second = await _complete_a_lesson(client, headers, ids["A2-lesson-1"])
+    second = await _complete_a_lesson(client, headers, ids["A1-lesson-2"])
 
     page_one = (await client.get("/api/v1/progress", params={"limit": 1}, headers=headers)).json()[
         "xp"

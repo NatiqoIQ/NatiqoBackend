@@ -8,6 +8,7 @@ together or not at all.
 from __future__ import annotations
 
 import uuid
+from collections.abc import Sequence
 from datetime import datetime
 from typing import Protocol, runtime_checkable
 
@@ -62,6 +63,18 @@ class ReviewCardRepositoryPort(Protocol):
 
         Unpaginated: it backs the stats roll-up, which needs the whole set at once, and a
         learner has at most one card per published question.
+        """
+        ...
+
+    async def list_for_questions(
+        self, user_id: UserId, question_ids: Sequence[uuid.UUID]
+    ) -> list[ReviewCard]:
+        """The learner's cards for the given questions, keyed by nothing in particular.
+
+        One query for a whole batch — checkpoint selection needs the schedule state of
+        every question in a unit at once, and a per-question read would be dozens of
+        round trips for one session start. Questions with no card simply do not come
+        back, which is the fact in itself: never scheduled is not due and not easy.
         """
         ...
 

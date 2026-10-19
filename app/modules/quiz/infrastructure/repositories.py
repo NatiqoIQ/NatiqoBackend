@@ -2,9 +2,9 @@
 
 ``get_for_user`` carries the ownership predicate in the query rather than checking it
 after a fetch, so a session id belonging to another account reads as absent. The unique
-constraints on ``(session_id, question_id)`` and ``(user_id, lesson_id)`` are the other
-half of the invariants the service enforces in logic; a race between two requests hits the
-database rather than double-counting.
+constraints on ``(session_id, question_id)``, ``(user_id, lesson_id)`` and
+``(user_id, unit_id)`` are the other half of the invariants the service enforces in
+logic; a race between two requests hits the database rather than double-counting.
 
 None of these methods commit. The unit of work owns the transaction, so a completion that
 touches the session, its answers and the learner's progress either lands whole or not at
@@ -14,6 +14,7 @@ all.
 from __future__ import annotations
 
 import uuid
+from collections.abc import Sequence
 from datetime import datetime
 
 from sqlalchemy import and_, case, func, or_, select
@@ -23,32 +24,39 @@ from sqlalchemy.sql.elements import ColumnElement
 from app.core.pagination import TimeCursor
 from app.core.types import UserId
 from app.modules.quiz.domain.entities import (
+    AnswerHistory,
     AnswerTally,
     LessonProgress,
     QuizAnswer,
     QuizSession,
     SessionStatus,
+    UnitProgress,
 )
 from app.modules.quiz.domain.ports import (
     LessonProgressRepositoryPort,
     QuizAnswerRepositoryPort,
     QuizSessionRepositoryPort,
+    UnitProgressRepositoryPort,
 )
 from app.modules.quiz.infrastructure.mappers import (
     apply_answer,
     apply_progress,
     apply_session,
+    apply_unit_progress,
     to_answer,
     to_answer_model,
     to_progress,
     to_progress_model,
     to_session,
     to_session_model,
+    to_unit_progress,
+    to_unit_progress_model,
 )
 from app.modules.quiz.infrastructure.models import (
     LessonProgressModel,
     QuizAnswerModel,
     QuizSessionModel,
+    UnitProgressModel,
 )
 
 _COMPLETED = SessionStatus.COMPLETED.value
@@ -182,6 +190,51 @@ class SqlAlchemyQuizAnswerRepository(QuizAnswerRepositoryPort):
         answered, correct = (await self._session.execute(stmt)).one()
         return AnswerTally(answered=int(answered), correct=int(correct))
 
+    async def history_for_user(
+        self, user_id: UserId, question_ids: Sequence[uuid.UUID]
+    ) -> dict[uuid.UUID, AnswerHistory]:
+        """See :meth:`QuizAnswerRepositoryPort.history_for_user`.
+
+        A miss is counted two ways in one expression: the row's verdict is wrong, or the
+        attempt number is past one — the second catching a question the engine overwrote
+        with a successful retry, where the verdict alone would claim it was always known.
+        The join reaches the owner through the session, because an answer row carries no
+        user id of its own.
+        """
+        if not question_ids:
+            return {}
+        misses = case(
+            (
+                or_(
+                    QuizAnswerModel.is_correct.is_(False),
+                    QuizAnswerModel.attempt > 1,
+                ),
+                1,
+            ),
+            else_=0,
+        )
+        stmt = (
+            select(
+                QuizAnswerModel.question_id,
+                func.count(),
+                func.coalesce(func.sum(misses), 0),
+            )
+            .join(QuizSessionModel, QuizSessionModel.id == QuizAnswerModel.session_id)
+            .where(
+                QuizSessionModel.user_id == user_id,
+                QuizAnswerModel.question_id.in_(list(question_ids)),
+            )
+            .group_by(QuizAnswerModel.question_id)
+        )
+        rows = (await self._session.execute(stmt)).all()
+        return {
+            question_id: AnswerHistory(
+                answered=int(attempts) > 0,
+                ever_wrong=int(miss_count) > 0,
+            )
+            for question_id, attempts, miss_count in rows
+        }
+
 
 class SqlAlchemyLessonProgressRepository(LessonProgressRepositoryPort):
     def __init__(self, session: AsyncSession) -> None:
@@ -212,8 +265,38 @@ class SqlAlchemyLessonProgressRepository(LessonProgressRepositoryPort):
         return [to_progress(model) for model in models]
 
 
+class SqlAlchemyUnitProgressRepository(UnitProgressRepositoryPort):
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def get(self, user_id: UserId, unit_id: uuid.UUID) -> UnitProgress | None:
+        stmt = select(UnitProgressModel).where(
+            UnitProgressModel.user_id == user_id,
+            UnitProgressModel.unit_id == unit_id,
+        )
+        model = (await self._session.execute(stmt)).scalar_one_or_none()
+        return to_unit_progress(model) if model is not None else None
+
+    async def save(self, progress: UnitProgress) -> None:
+        model = await self._session.get(UnitProgressModel, progress.id)
+        if model is None:
+            self._session.add(to_unit_progress_model(progress))
+            return
+        apply_unit_progress(progress, model)
+
+    async def list_for_user(self, user_id: UserId) -> list[UnitProgress]:
+        stmt = (
+            select(UnitProgressModel)
+            .where(UnitProgressModel.user_id == user_id)
+            .order_by(UnitProgressModel.unit_id)
+        )
+        models = (await self._session.execute(stmt)).scalars().all()
+        return [to_unit_progress(model) for model in models]
+
+
 __all__ = [
     "SqlAlchemyLessonProgressRepository",
     "SqlAlchemyQuizAnswerRepository",
     "SqlAlchemyQuizSessionRepository",
+    "SqlAlchemyUnitProgressRepository",
 ]

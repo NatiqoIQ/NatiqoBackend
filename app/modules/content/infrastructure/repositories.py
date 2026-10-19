@@ -31,7 +31,14 @@ from sqlalchemy.sql.elements import ColumnElement
 
 from app.core.pagination import PositionCursor
 from app.core.types import CEFRLevel, ContentId, ContentState
-from app.modules.content.domain.entities import Lesson, LessonPlacement, Level, Question, Unit
+from app.modules.content.domain.entities import (
+    Lesson,
+    LessonPlacement,
+    Level,
+    Question,
+    Unit,
+    UnitPlacement,
+)
 from app.modules.content.infrastructure.mappers import (
     to_lesson,
     to_level,
@@ -146,6 +153,29 @@ class SqlAlchemyUnitRepository:
         )
         rows = (await self._session.execute(stmt)).all()
         return {ContentId(level_id): int(count) for level_id, count in rows}
+
+    async def list_published_ordered(self) -> list[UnitPlacement]:
+        """See :meth:`UnitRepositoryPort.list_published_ordered`.
+
+        The level join carries half the state predicate: a unit whose level is still in
+        draft is not visible to a learner, and filtering it here rather than in the caller
+        keeps "published" meaning the whole chain, as every other method here does.
+        """
+        stmt = (
+            select(UnitModel, LevelModel.code, LevelModel.position)
+            .join(LevelModel, LevelModel.id == UnitModel.level_id)
+            .where(UnitModel.state == _PUBLISHED, LevelModel.state == _PUBLISHED)
+            .order_by(LevelModel.position, UnitModel.position, UnitModel.id)
+        )
+        rows = (await self._session.execute(stmt)).all()
+        return [
+            UnitPlacement(
+                unit=to_unit(model),
+                level_code=CEFRLevel(code),
+                level_position=level_position,
+            )
+            for model, code, level_position in rows
+        ]
 
 
 class SqlAlchemyLessonRepository:
