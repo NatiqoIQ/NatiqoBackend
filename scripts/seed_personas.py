@@ -226,7 +226,7 @@ PERSONAS: tuple[SeedPersona, ...] = (
         key="admin",
         email="admin@natiqo.app",
         display_name="Ali Al-Hashemi",
-        roles=(UserRole.ADMIN, UserRole.SUPPORT),
+        roles=(UserRole.ADMIN,),
         current_level=CEFRLevel.B2,
         # The admin is the account a reviewer signs in with, so it is the one that has to
         # have something on every screen. Staff also work the course from the beginning

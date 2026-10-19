@@ -18,7 +18,7 @@ public ``content`` schemas so the two field lists can never be confused.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 
 from pydantic import ConfigDict, Field
 
@@ -324,11 +324,13 @@ class StatsLearningResponse(_AdminWire):
     """What learners have actually done, as raw counts plus the one derived ratio.
 
     ``accuracyPercent`` is weighted by answers, not an average of per-session percentages: a
-    two-question sitting must not outweigh a twenty-question one.
+    two-question sitting must not outweigh a twenty-question one. ``sessionsActive`` is the
+    one live figure in the payload — sittings in flight right now, not a windowed count.
     """
 
     lessons_completed: int = Field(ge=0)
     sessions_completed: int = Field(ge=0)
+    sessions_active: int = Field(ge=0)
     answers_graded: int = Field(ge=0)
     correct_answers: int = Field(ge=0)
     accuracy_percent: int = Field(ge=0, le=100)
@@ -350,11 +352,79 @@ class StatsContentResponse(_AdminWire):
     in_review: int = Field(ge=0)
 
 
+class StatsQuestionsResponse(_AdminWire):
+    """The question stock and its two breakdowns.
+
+    ``published`` counts questions under a published lesson — a question has no editorial
+    state of its own. The maps are always complete across their enums (a kind nobody has
+    authored reads ``0``, never absent) so a chart's categories cannot shift under it.
+    """
+
+    total: int = Field(ge=0)
+    published: int = Field(ge=0)
+    by_kind: dict[str, int]
+    by_skill: dict[str, int]
+
+
+class StatsPerformanceResponse(_AdminWire):
+    """Learner quality: finished-lesson scores and spaced-repetition grades.
+
+    ``retentionPercent`` is passed reviews over all reviews, weighted by review rather
+    than by learner; ``averageQuality`` is the mean SM-2 grade (0..5) with the same zero
+    state as the rest of this payload — no reviews yet means ``0``, not ``null``.
+    """
+
+    average_score: int = Field(ge=0, le=100)
+    reviews_total: int = Field(ge=0)
+    reviews_passed: int = Field(ge=0)
+    retention_percent: int = Field(ge=0, le=100)
+    average_quality: float = Field(ge=0, le=5)
+
+
+class StatsGamificationResponse(_AdminWire):
+    """Reward state across the learner base. ``activeStreaks`` is streaks alive today."""
+
+    xp_total: int = Field(ge=0)
+    active_streaks: int = Field(ge=0)
+    longest_streak: int = Field(ge=0)
+    achievements_unlocked: int = Field(ge=0)
+
+
+class StatsAiResponse(_AdminWire):
+    """Lifetime metering, so the home page can show AI spend without a second request."""
+
+    requests: int = Field(ge=0)
+    errors: int = Field(ge=0)
+    tokens: int = Field(ge=0)
+    cost_usd: float = Field(ge=0)
+    conversations: int = Field(ge=0)
+
+
+class StatsSeriesPointResponse(_AdminWire):
+    """One day of the chart, UTC. Days nobody used are present with zeroes."""
+
+    day: date
+    new_users: int = Field(ge=0)
+    sessions_completed: int = Field(ge=0)
+    xp_awarded: int = Field(ge=0)
+    ai_requests: int = Field(ge=0)
+
+
 class AdminStatsResponse(_AdminWire):
-    """The overview screen's whole payload: aggregated, never a list of rows."""
+    """The overview screen's whole payload: aggregated, never a list of rows.
+
+    ``series`` is the one array here, and it is bounded by ``windowDays + 1`` — one point
+    per day the window touches, its endpoints partial because the window opens at this
+    clock time and today is still running.
+    """
 
     generated_at: datetime
     window_days: int = Field(ge=1)
     users: StatsUsersResponse
     learning: StatsLearningResponse
     content: StatsContentResponse
+    questions: StatsQuestionsResponse
+    performance: StatsPerformanceResponse
+    gamification: StatsGamificationResponse
+    ai: StatsAiResponse
+    series: list[StatsSeriesPointResponse]

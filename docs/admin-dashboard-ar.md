@@ -71,7 +71,7 @@ VITE_API_BASE_URL=http://192.168.69.67:8000
 ### 2.3 الدخول التجريبي
 
 المسار الوحيد الذي يقبل اسم مستخدم وكلمة مرور هو `POST /api/v1/auth/dev-login`. الحساب
-الافتراضي `admin` / `admin` ويُمنح دوري `admin` و`support` عند أول دخول، لذلك يملك كل
+الافتراضي `admin` / `admin` ويُمنح دور `admin` عند أول دخول، لذلك يملك كل إذن يتطلبه.
 الصلاحيات. **في الإنتاج** يجب تغيير `DEV_ADMIN_PASSWORD` أو إيقاف المسار بـ
 `DEV_LOGIN_ENABLED=false` بعد ربط دخول Google، لأن الرموز الصادرة منه تعيش 10 سنوات
 (`DEV_LOGIN_TOKEN_TTL_SECONDS`).
@@ -326,11 +326,29 @@ Content-Type: application/json
 ```json
 { "generatedAt": "2026-10-18T09:00:00Z", "windowDays": 7,
   "users": { "total": 120, "new": 14, "active": 63, "deleted": 2 },
-  "learning": { "lessonsCompleted": 410, "sessionsCompleted": 530,
+  "learning": { "lessonsCompleted": 410, "sessionsCompleted": 530, "sessionsActive": 4,
                 "answersGraded": 5200, "correctAnswers": 4108,
                 "accuracyPercent": 79, "xpAwarded": 9420 },
   "content": { "levels": 6, "units": 42, "lessons": 260,
-               "publishedLessons": 214, "drafts": 38, "inReview": 6 } }
+               "publishedLessons": 214, "drafts": 38, "inReview": 6 },
+  "questions": { "total": 3120, "published": 2480,
+                 "byKind": { "multiple_choice": 1400, "multi_select": 320, "true_false": 480,
+                             "fill_blank": 310, "word_bank": 220, "ordering": 210,
+                             "matching": 180 },
+                 "bySkill": { "vocabulary": 1240, "grammar": 620, "listening": 500,
+                              "reading": 460, "writing": 180, "speaking": 120 } },
+  "performance": { "averageScore": 78, "reviewsTotal": 4100, "reviewsPassed": 3280,
+                   "retentionPercent": 80, "averageQuality": 3.6 },
+  "gamification": { "xpTotal": 184200, "activeStreaks": 41, "longestStreak": 63,
+                    "achievementsUnlocked": 210 },
+  "ai": { "requests": 1850, "errors": 27, "tokens": 9420000, "costUsd": 41.2,
+          "conversations": 320 },
+  "series": [
+    { "day": "2026-10-11", "newUsers": 2, "sessionsCompleted": 71, "xpAwarded": 1240,
+      "aiRequests": 210 },
+    { "day": "2026-10-18", "newUsers": 3, "sessionsCompleted": 12, "xpAwarded": 210,
+      "aiRequests": 40 }
+  ] }
 ```
 
 كل الأرقام مجاميع محسوبة على الخادم (`count`/`sum`)، لا صفوف تُجلب وتُعدّ في المتصفح — فالزمن
@@ -341,13 +359,28 @@ Content-Type: application/json
 | `users.new` | حسابات أُنشئت خلال النافذة |
 | `users.active` | حسابات سجّلت دخولًا خلال النافذة (مميّزة، لأن للحساب هويّات متعددة) — ليس شرطًا إكمال درس |
 | `users.deleted` | حسابات مغلقة (حذف منطقي) ضمن الإجمالي |
+| `learning.sessionsActive` | جلسات قائمة الآن (الرقم الحيّ الوحيد في الحمولة، لا يعتمد على النافذة) |
 | `learning.lessonsCompleted` | صفوف `lesson_progress` بحالة `completed` |
 | `learning.sessionsCompleted` | جلسات اختبار مكتملة |
 | `learning.accuracyPercent` | `correctAnswers ÷ answersGraded` موزونة بعدد الإجابات، مقرّبة |
 | `content.drafts` | مجموع المستويات والوحدات والدروس في `draft` |
 | `content.inReview` | نفس المجموع في `review` |
+| `questions.published` | أسئلة الدروس المنشورة — السؤال لا يملك حالة نشر مستقلة |
+| `questions.byKind` / `bySkill` | توزيع كامل عبر قيم `QuestionKind` و`SkillKind` — صفر للأنواع التي لم يُؤلَّف منها شيء، فلا تختفي فئة من الرسم |
+| `performance.averageScore` | متوسط `best_score` للدروس المكتملة فقط |
+| `performance.reviewsPassed` | مراجعات بدرجة `quality ≥ 3` (حدّ النجاح في محرك SM-2) |
+| `performance.retentionPercent` | المراجعات الناجحة ÷ كل المراجعات (بالوزن بالمراجعة لا بال المتعلّم) |
+| `performance.averageQuality` | متوسط درجة SM-2 (0..5)، وصفر قبل أول مراجعة لا `null` |
+| `gamification.activeStreaks` | حسابات `current_streak > 0` (سلسلة حيّة اليوم) |
+| `ai.errors` | طلبات AI بحالة غير `ok` |
+| `ai.costUsd` | مجموع تكلفة الاستخدامات المقيسة (lifetime) |
+| `series[].day` | يوم تقويمي بتوقيت UTC؛ الأيام بلا نشاط تظهر بأصفار |
 
-`window` يغيّر `users.active` و`users.new` فقط؛ بقية الأرقام إجمالية ولا تتحرك مع النافذة.
+`window` يحدّد `users.new` و`users.active` وسلسلة `series`؛ بقية الأرقام إجمالية (أو الرقم
+الحيّ `learning.sessionsActive`) ولا تتحرك مع النافذة. طول السلسلة `windowDays + 1`
+(يومان جزئيان عند طرفَي النافذة: الأولى تبدأ الآن-نافذة، والأخيرة اليوم قيد الإكمال)،
+ومجاميع أعمدة السلسلة تساوي بالضبط البطاقات المجاورة (`users.new`، `sessionsCompleted`،
+`xpAwarded`، `ai.requests`).
 
 ### 5.5 المستخدمون (admin فقط)
 
@@ -483,10 +516,20 @@ MediaKind      : avatar image audio
 | إجمالي الحسابات | `users.total` |
 | الجدد خلال النافذة | `users.new` |
 | النشطون خلال النافذة | `users.active` |
+| جلسات قائمة الآن | `learning.sessionsActive` |
 | الدروس المكتملة | `learning.lessonsCompleted` |
 | الدقة | `learning.accuracyPercent` (والمقام `answersGraded`) |
 | المستويات / الوحدات / الدروس | `content.levels` / `content.units` / `content.lessons` |
 | مسودات وبانتظار المراجعة | `content.drafts` / `content.inReview` |
+| مخزون الأسئلة | `questions.total` (و`questions.published` للمنشور فقط) |
+| توزيع الأسئلة | `questions.byKind` و`questions.bySkill` — رسمان يعتمدان الخريطة الكاملة |
+| متوسط نتيجة الدروس | `performance.averageScore` |
+| احتفاظ المراجعة | `performance.retentionPercent` (و`reviewsTotal` كمقام) |
+| إجمالي XP | `gamification.xpTotal` |
+| سلاسل حيّة / أطولها | `gamification.activeStreaks` / `gamification.longestStreak` |
+| إنجازات مفتوحة | `gamification.achievementsUnlocked` |
+| استهلاك الذكاء الاصطناعي | `ai.requests` و`ai.errors` و`ai.costUsd` |
+| النشاط اليومي | `series` — رسم بياني لكل يوم في النافذة (أعمدة: `newUsers`/`sessionsCompleted`/`xpAwarded`/`aiRequests`) |
 
 الإحصاءات لوحة `admin` فقط؛ المحرّر يرى `403` ويجب أن تُخفى عنه البطاقات كلها بدل إظهار أصفار.
 لا تعرض النسب في هذه الصفحة إذا كان `learning.answersGraded = 0` — «0%» هنا ليست دقة، بل دليل
@@ -601,7 +644,7 @@ POST /media/confirm  {mediaKey}
 - [ ] تصدير درس ثم استيراده في درس آخر يعيد بناء نفس الأسئلة بمفاتيحها وبالترتيب نفسه.
 - [ ] زر النسخ ينشئ سؤالًا جديدًا بمعرّف مختلف وموضع تالٍ، والأصل لا يتغيّر.
 - [ ] بطاقات النظرة العامة تُقرأ من `/admin/stats/overview` في طلب واحد، وتتغيّر `users.active`
-  و`users.new` وحدهما عند تغيير `window`.
+  و`users.new` وطول `series` وحدها عند تغيير `window`.
 - [ ] تعديل أدوار مستخدم يستبدل المجموعة، ويظهر `403` عند محاولته بدور أقل من `admin`.
 - [ ] كل طلب يضيف `Authorization`، و`401/403/409/422/429` لها معالجة موحّدة في مكان واحد.
 - [ ] لا يوجد أي طلب إلى مسار غير موجود في القسم 5 (تحقّق من تبويب الشبكة).
@@ -687,7 +730,8 @@ curl -s "$BASE/api/v1/admin/users?limit=5" -H "Authorization: Bearer $TOKEN" | j
 
 # 6) إحصاءات النظرة العامة
 curl -s "$BASE/api/v1/admin/stats/overview?window=7" \
-  -H "Authorization: Bearer $TOKEN" | jq '{users, learning, content}'
+  -H "Authorization: Bearer $TOKEN" \
+  | jq '{users, learning, content, questions, performance, gamification, ai, series}'
 
 # 7) مرفوض بلا رمز (يجب أن يكون 401 وليس 200)
 curl -s -o /dev/null -w '%{http_code}\n' "$BASE/api/v1/admin/content/levels"

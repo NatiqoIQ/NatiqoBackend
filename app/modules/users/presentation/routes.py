@@ -309,7 +309,7 @@ async def dev_login(
     )
     result = await service.login_with_identity(command)
 
-    required = {UserRole.ADMIN, UserRole.SUPPORT}
+    required = {UserRole.ADMIN}
     if not required <= {UserRole(role) for role in result.user.roles}:
         # First sight of this account: it was created with the default role, so the
         # tokens minted a line ago carry no admin claims. Grant the roles, revoke that
@@ -322,7 +322,7 @@ async def dev_login(
                 "This sign-in is no longer linked to an account.",
                 code=ErrorCode.AUTH_IDENTITY_INVALID,
             )
-        user.roles = (UserRole.ADMIN, UserRole.SUPPORT)
+        user.roles = (UserRole.ADMIN,)
         await uow.users.update(user)
         await uow.commit()
         await service.logout(LogoutCommand(refresh_token=result.tokens.refresh_token))

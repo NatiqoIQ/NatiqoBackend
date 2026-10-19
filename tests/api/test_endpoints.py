@@ -27,6 +27,7 @@ import re
 import uuid
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -44,12 +45,14 @@ from app.core.registry import import_all_models
 from app.core.types import ContentState, QuestionKind, SkillKind, UserRole, UserStatus
 from app.main import app
 from app.modules.admin.infrastructure.models import AuditLogModel
+from app.modules.ai.infrastructure.models import AiUsageRecord
 from app.modules.content.infrastructure.models import (
     LessonModel,
     LevelModel,
     QuestionModel,
     UnitModel,
 )
+from app.modules.gamification.infrastructure.models import UserStatsModel
 from app.modules.quiz.domain.entities import ProgressState, SessionStatus
 from app.modules.quiz.domain.review import ReviewState
 from app.modules.quiz.infrastructure.models import (
@@ -57,7 +60,7 @@ from app.modules.quiz.infrastructure.models import (
     QuizAnswerModel,
     QuizSessionModel,
 )
-from app.modules.quiz.infrastructure.review_models import ReviewCardModel
+from app.modules.quiz.infrastructure.review_models import ReviewCardModel, ReviewLogModel
 from app.modules.users.application.auth_service import AuthService
 from app.modules.users.domain.identity import (
     IdentityProvider,
@@ -1073,6 +1076,7 @@ async def seed_catalogue(
     with_explanation: bool = True,
     image_url: str | None = None,
     audio_url: str | None = None,
+    video_url: str | None = None,
 ) -> dict[str, uuid.UUID]:
     """Two published levels, each with a unit, lessons and one question per lesson.
 
@@ -1123,6 +1127,7 @@ async def seed_catalogue(
                         explanation="A greeting." if with_explanation else None,
                         image_url=image_url,
                         audio_url=audio_url,
+                        video_url=video_url,
                         points=1,
                     ),
                 ]
@@ -1259,7 +1264,6 @@ async def test_the_lesson_detail_carries_the_question_audio_aid(
     assert body["questions"][0]["audioUrl"] == audio
 
 
-
 async def test_the_lesson_detail_carries_the_question_video_aid(
     client: AsyncClient, content_db: AsyncSession
 ) -> None:
@@ -1279,6 +1283,8 @@ async def test_a_question_without_a_video_serialises_a_null(
     body = (await client.get(f"/api/v1/content/lessons/{ids['A1-lesson-1']}")).json()
 
     assert body["questions"][0]["videoUrl"] is None
+
+
 async def test_a_question_without_audio_serialises_a_null(
     client: AsyncClient, content_db: AsyncSession
 ) -> None:
@@ -2123,7 +2129,10 @@ async def test_an_ordering_answer_is_graded_over_the_wire(
     result = response.json()["result"]
     assert result["isCorrect"] is True
     assert result["pointsAwarded"] == 2
-    assert result["correctAnswer"]["order"] == "Hello! Ã¢â€ â€™ How are you? Ã¢â€ â€™ I am fine. Ã¢â€ â€™ Goodbye!"
+    assert (
+        result["correctAnswer"]["order"]
+        == "Hello! Ã¢â€ â€™ How are you? Ã¢â€ â€™ I am fine. Ã¢â€ â€™ Goodbye!"
+    )
 
 
 #: A matching question's pairs, as a wrong answer and as the key. Declared once so the tests
@@ -2190,7 +2199,10 @@ async def test_a_matching_answer_is_graded_over_the_wire(
     result = response.json()["result"]
     assert result["isCorrect"] is True
     assert result["pointsAwarded"] == 2
-    assert result["correctAnswer"]["pairs"] == "Monday Ã¢â€¡â€™ 1; Tuesday Ã¢â€¡â€™ 2; Wednesday Ã¢â€¡â€™ 3"
+    assert (
+        result["correctAnswer"]["pairs"]
+        == "Monday Ã¢â€¡â€™ 1; Tuesday Ã¢â€¡â€™ 2; Wednesday Ã¢â€¡â€™ 3"
+    )
 
 
 async def test_a_wrong_matching_pairing_is_wrong_and_a_retry_is_worth_half(
@@ -3687,11 +3699,11 @@ async def test_admin_lists_accounts_and_replaces_roles(
 
     replaced = await client.post(
         "/api/v1/admin/users",
-        json={"user_id": target_id, "roles": ["support", "content_editor"]},
+        json={"user_id": target_id, "roles": ["user", "content_editor"]},
         headers=headers,
     )
     assert replaced.status_code == 200, replaced.text
-    assert set(replaced.json()["roles"]) == {"support", "content_editor"}
+    assert set(replaced.json()["roles"]) == {"user", "content_editor"}
 
     unknown_role = await client.post(
         "/api/v1/admin/users",
@@ -3702,7 +3714,7 @@ async def test_admin_lists_accounts_and_replaces_roles(
 
     unknown_user = await client.post(
         "/api/v1/admin/users",
-        json={"user_id": str(uuid.uuid4()), "roles": ["support"]},
+        json={"user_id": str(uuid.uuid4()), "roles": ["user"]},
         headers=headers,
     )
     assert unknown_user.status_code == 404, unknown_user.text
@@ -4089,7 +4101,7 @@ async def _record_learning(
 
 
 @pytest.mark.asyncio
-async def test_admin_overview_aggregates_accounts_learning_and_content(
+async def test_admin_overview_aggregates_every_card_of_the_home_screen(
     client: AsyncClient, content_db: AsyncSession
 ) -> None:
     """One read answers the whole screen, and every figure is a counted one."""
@@ -4114,6 +4126,62 @@ async def test_admin_overview_aggregates_accounts_learning_and_content(
         question_ids=(uuid.UUID(first["id"]), uuid.UUID(second["id"])),
     )
 
+    # The three cards the sitting alone cannot fill: a streak with XP behind it, two
+    # review grades (one passed, one not) so retention is a real ratio, and one metered
+    # AI call. Written directly for the same reason the sitting is: this test is about
+    # counting what exists, not about the engines that produced it.
+    now = datetime.now(UTC)
+    card = ReviewCardModel(
+        id=uuid.uuid4(),
+        user_id=learner_id,
+        question_id=uuid.UUID(first["id"]),
+        due_at=now,
+        state=ReviewState.NEW.value,
+    )
+    content_db.add_all(
+        [
+            card,
+            ReviewLogModel(
+                id=uuid.uuid4(),
+                user_id=learner_id,
+                card_id=card.id,
+                quality=4,
+                previous_interval_days=0,
+                new_interval_days=1,
+                reviewed_at=now,
+            ),
+            ReviewLogModel(
+                id=uuid.uuid4(),
+                user_id=learner_id,
+                card_id=card.id,
+                quality=2,
+                previous_interval_days=1,
+                new_interval_days=0,
+                reviewed_at=now,
+            ),
+            UserStatsModel(
+                user_id=learner_id,
+                xp_total=120,
+                current_streak=3,
+                longest_streak=9,
+            ),
+            AiUsageRecord(
+                id=uuid.uuid4(),
+                user_id=learner_id,
+                feature="tutor",
+                provider="anthropic",
+                model="claude",
+                input_tokens=60,
+                output_tokens=40,
+                latency_ms=900,
+                cost_usd=Decimal("0.25"),
+                status="ok",
+                created_at=now,
+            ),
+        ]
+    )
+    await content_db.commit()
+
     # One draft level holding one draft unit, so the pipeline queue is non-empty.
     draft_level = await _create_level(client, headers, code="A2")
     await client.post(
@@ -4131,6 +4199,7 @@ async def test_admin_overview_aggregates_accounts_learning_and_content(
     assert body["learning"] == {
         "lessonsCompleted": 1,
         "sessionsCompleted": 1,
+        "sessionsActive": 0,
         "answersGraded": 2,
         "correctAnswers": 1,
         "accuracyPercent": 50,
@@ -4145,12 +4214,63 @@ async def test_admin_overview_aggregates_accounts_learning_and_content(
         "drafts": 2,
         "inReview": 0,
     }
+    questions = body["questions"]
+    assert questions["total"] == 2
+    assert questions["published"] == 0, "a question's lesson is approved, not published"
+    assert questions["byKind"]["multiple_choice"] == 2
+    assert set(questions["byKind"]) == {kind.value for kind in QuestionKind}
+    assert questions["bySkill"]["vocabulary"] == 2
+    assert set(questions["bySkill"]) == {skill.value for skill in SkillKind}
+    # 50 from the one finished lesson; 4 and 2 average to 3.0 with one of two passing.
+    assert body["performance"] == {
+        "averageScore": 50,
+        "reviewsTotal": 2,
+        "reviewsPassed": 1,
+        "retentionPercent": 50,
+        "averageQuality": 3.0,
+    }
+    assert body["gamification"] == {
+        "xpTotal": 120,
+        "activeStreaks": 1,
+        "longestStreak": 9,
+        "achievementsUnlocked": 0,
+    }
+    assert body["ai"] == {
+        "requests": 1,
+        "errors": 0,
+        "tokens": 100,
+        "costUsd": 0.25,
+        "conversations": 0,
+    }
+
+    series = body["series"]
+    # The window's endpoints are partial days, so a seven-day window is eight points —
+    # the first is today minus seven, the last is today, both still real days.
+    assert len(series) == body["windowDays"] + 1
+    assert series[0]["day"] == (now - timedelta(days=7)).date().isoformat()
+    assert series[-1]["day"] == now.date().isoformat()
+    assert series[-1] == {
+        "day": now.date().isoformat(),
+        "newUsers": 2,
+        "sessionsCompleted": 1,
+        "xpAwarded": 15,
+        "aiRequests": 1,
+    }
+    # The chart's columns must add up to the card beside it, or the screen contradicts
+    # itself depending on which half is read.
+    assert sum(point["newUsers"] for point in series) == body["users"]["new"]
+    assert (
+        sum(point["sessionsCompleted"] for point in series) == body["learning"]["sessionsCompleted"]
+    )
+    assert sum(point["xpAwarded"] for point in series) == body["learning"]["xpAwarded"]
+    assert sum(point["aiRequests"] for point in series) == body["ai"]["requests"]
 
     wider = await client.get("/api/v1/admin/stats/overview?window=30", headers=headers)
     assert wider.status_code == 200, wider.text
     assert wider.json()["windowDays"] == 30
     # Only the activity figure follows the window; the rest are lifetime totals.
     assert wider.json()["content"] == body["content"]
+    assert len(wider.json()["series"]) == 31
 
 
 @pytest.mark.asyncio

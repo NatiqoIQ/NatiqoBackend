@@ -151,7 +151,7 @@ async def test_admin_keeps_its_roles_and_a_verified_email(uow, settings, verify)
     assert UserStatus(admin.status) is UserStatus.ACTIVE
     # Roles are stored as their string values; the admin persona must actually be an
     # admin, or every "log in as the admin" instruction in the README is a dead end.
-    assert set(admin.roles) >= {str(UserRole.ADMIN), str(UserRole.SUPPORT)}
+    assert set(admin.roles) >= {str(UserRole.ADMIN)}
     assert admin.email_verified_at is not None
 
 

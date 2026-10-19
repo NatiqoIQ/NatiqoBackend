@@ -99,7 +99,6 @@ class UserRole(StrEnum):
     """Authorization roles. Ordered from least to most privileged."""
 
     USER = "user"
-    SUPPORT = "support"
     CONTENT_EDITOR = "content_editor"
     CONTENT_REVIEWER = "content_reviewer"
     ADMIN = "admin"
@@ -114,10 +113,9 @@ class UserRole(StrEnum):
 
 _ROLE_RANK: dict[UserRole, int] = {
     UserRole.USER: 0,
-    UserRole.SUPPORT: 1,
-    UserRole.CONTENT_EDITOR: 2,
-    UserRole.CONTENT_REVIEWER: 3,
-    UserRole.ADMIN: 4,
+    UserRole.CONTENT_EDITOR: 1,
+    UserRole.CONTENT_REVIEWER: 2,
+    UserRole.ADMIN: 3,
 }
 
 

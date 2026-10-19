@@ -385,7 +385,7 @@ async def test_adopting_a_legacy_admin_backfills_its_history(
             id=legacy_id,
             email=ADMIN_EMAIL,
             status="active",
-            roles=["admin", "support"],
+            roles=["admin"],
         )
     )
     await verify.commit()

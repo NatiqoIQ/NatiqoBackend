@@ -75,8 +75,13 @@ from app.modules.admin.presentation.schemas import (
     QuestionListResponse,
     QuestionReorderRequest,
     QuestionUpdateRequest,
+    StatsAiResponse,
     StatsContentResponse,
+    StatsGamificationResponse,
     StatsLearningResponse,
+    StatsPerformanceResponse,
+    StatsQuestionsResponse,
+    StatsSeriesPointResponse,
     StatsUsersResponse,
     UnitCreateRequest,
     UnitResponse,
@@ -696,15 +701,17 @@ async def get_stats_overview(
     _limit_guard: AdminRateLimitDep,
     window: Window = DEFAULT_WINDOW_DAYS,
 ) -> AdminStatsResponse:
-    """Accounts, learning and catalogue totals in one read, as aggregates.
+    """Accounts, learning, catalogue, question stock, learner quality and AI spend in one
+    read, as aggregates.
 
     Admin-only, unlike the content routes: half of this payload is account data, and a role
     that may author a lesson has no business counting users. A content editor who needs the
     catalogue numbers can derive them from the levels they already list.
 
-    ``window`` scopes exactly one figure — how many accounts signed in during that period.
-    Everything else is a lifetime total, so changing the window never makes the other numbers
-    jump around.
+    ``window`` scopes what a period can honestly scope — how many accounts joined and
+    signed in during it, and the daily ``series`` the chart draws. Everything else is a
+    lifetime total (or the one live figure, ``learning.sessionsActive``), so changing the
+    window never makes the other numbers jump around.
     """
     return _stats_response(await service.overview(window_days=window))
 
@@ -712,6 +719,10 @@ async def get_stats_overview(
 # ====================================================================== internals
 def _stats_response(view: AdminOverviewView) -> AdminStatsResponse:
     totals = view.totals
+    questions = totals.questions
+    performance = totals.performance
+    gamification = totals.gamification
+    ai = totals.ai
     return AdminStatsResponse(
         generated_at=view.generated_at,
         window_days=view.window_days,
@@ -724,6 +735,7 @@ def _stats_response(view: AdminOverviewView) -> AdminStatsResponse:
         learning=StatsLearningResponse(
             lessons_completed=totals.lessons_completed,
             sessions_completed=totals.sessions_completed,
+            sessions_active=totals.sessions_active,
             answers_graded=totals.answers_graded,
             correct_answers=totals.correct_answers,
             accuracy_percent=view.accuracy_percent,
@@ -737,6 +749,42 @@ def _stats_response(view: AdminOverviewView) -> AdminStatsResponse:
             drafts=totals.drafts,
             in_review=totals.in_review,
         ),
+        questions=StatsQuestionsResponse(
+            total=questions.total,
+            published=questions.published,
+            by_kind=questions.by_kind,
+            by_skill=questions.by_skill,
+        ),
+        performance=StatsPerformanceResponse(
+            average_score=view.average_score,
+            reviews_total=performance.reviews_total,
+            reviews_passed=performance.reviews_passed,
+            retention_percent=view.retention_percent,
+            average_quality=view.average_quality,
+        ),
+        gamification=StatsGamificationResponse(
+            xp_total=gamification.xp_total,
+            active_streaks=gamification.active_streaks,
+            longest_streak=gamification.longest_streak,
+            achievements_unlocked=gamification.achievements_unlocked,
+        ),
+        ai=StatsAiResponse(
+            requests=ai.requests,
+            errors=ai.errors,
+            tokens=ai.tokens,
+            cost_usd=ai.cost_usd,
+            conversations=ai.conversations,
+        ),
+        series=[
+            StatsSeriesPointResponse(
+                day=point.day,
+                new_users=point.new_users,
+                sessions_completed=point.sessions_completed,
+                xp_awarded=point.xp_awarded,
+                ai_requests=point.ai_requests,
+            )
+            for point in view.series
+        ],
     )
 
 
