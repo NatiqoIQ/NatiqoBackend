@@ -125,11 +125,12 @@ class Settings(BaseSettings):
 
     # ------------------------------------------------- development sign-in
     #: A username/password sign-in that exists so a developer or QA can enter the app
-    #: without configuring a provider client id. On by default in **every** environment,
-    #: production included, so the ``admin``/``admin`` backdoor is always reachable; set
-    #: this to ``false`` to omit the route. The credentials are fixed settings
-    #: (``dev_admin_user``/``dev_admin_password``), not per-environment secrets.
-    dev_login_enabled: bool = True
+    #: without configuring a provider client id. **Off by default**, and production refuses
+    #: to boot while it is on: the credentials are fixed strings (``dev_admin_user`` /
+    #: ``dev_admin_password``) that live in the repository, so an enabled backdoor on a
+    #: public deployment is an open door for anyone who has read them. A local ``.env``
+    #: opts in explicitly.
+    dev_login_enabled: bool = False
     dev_admin_user: str = "admin"
     dev_admin_password: SecretStr = SecretStr("admin")
     #: Sessions minted through the dev sign-in live this long, so a test run is never
@@ -412,10 +413,23 @@ class Settings(BaseSettings):
             problems.append("POSTGRES_PASSWORD still holds a development placeholder")
         if not self.uses_redis:
             problems.append("REDIS_URL must be configured in production")
+        if self.uses_redis and not self.queue_enabled:
+            # Without this, the API enqueues into an in-memory queue inside its own
+            # process and the worker — a different process — sees an empty Redis. The
+            # only visible symptom would be background work that never happens.
+            problems.append(
+                "QUEUE_ENABLED must be true when REDIS_URL is set: otherwise the API "
+                "enqueues into a per-process memory queue the worker cannot see"
+            )
         if not self.uses_google and not self.uses_apple:
             problems.append("Configure GOOGLE_CLIENT_IDS and/or APPLE_CLIENT_IDS in production")
         if self.ai_enabled and self.ai_provider == "none":
             problems.append("AI_ENABLED requires a real AI_PROVIDER")
+        if self.dev_login_enabled:
+            problems.append(
+                "DEV_LOGIN_ENABLED must be false in production: its credentials are fixed "
+                "development strings, not deployment secrets"
+            )
         return problems
 
 

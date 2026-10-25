@@ -191,7 +191,7 @@ class MeView:
     id: UserId
     email: str
     status: str
-    roles: tuple[str, ...]
+    is_admin: bool
     email_verified: bool
     created_at: datetime
     profile: UserProfileView
@@ -203,7 +203,7 @@ class MeView:
             id=user.id,
             email=user.email,
             status=str(user.status),
-            roles=tuple(str(role) for role in user.roles),
+            is_admin=user.is_admin,
             email_verified=user.is_email_verified,
             created_at=user.created_at,
             profile=UserProfileView.of(profile),

@@ -93,23 +93,21 @@ class TestCoverage:
         # A unit with more lessons than the target asks one question per lesson anyway —
         # a sample that skips a lesson cannot certify the unit.
         stats = [stat(f"l{i}", 1) for i in range(20)]
-        picked = select_checkpoint_questions(stats, target=CHECKPOINT_TARGET, rng=random.Random(SEED))
+        picked = select_checkpoint_questions(
+            stats, target=CHECKPOINT_TARGET, rng=random.Random(SEED)
+        )
         assert len(picked) == 20
 
     def test_the_coverage_slot_goes_to_the_highest_weight_question(self) -> None:
         easy = stat("l1", 1, answered=True, card_easy=True)
         missed = stat("l1", 2, was_wrong=True)
-        picked = select_checkpoint_questions(
-            [easy, missed], target=1, rng=random.Random(SEED)
-        )
+        picked = select_checkpoint_questions([easy, missed], target=1, rng=random.Random(SEED))
         assert picked == [missed.question_id]
 
     def test_a_weight_tie_falls_to_catalogue_position(self) -> None:
         first = stat("l1", 1)
         second = stat("l1", 2)
-        picked = select_checkpoint_questions(
-            [first, second], target=1, rng=random.Random(SEED)
-        )
+        picked = select_checkpoint_questions([first, second], target=1, rng=random.Random(SEED))
         assert picked == [first.question_id]
 
 
@@ -133,7 +131,9 @@ class TestFill:
         # sample for 100 seeds shows whether the fill favours the gap or ignores it.
         stats = [stat("l1", 1), stat("l2", 1)]
         stats += [stat("l3", position) for position in range(3, 13)]  # ten plains
-        stats.append(stat("l3", 1, question="sibling", answered=False, was_wrong=True, card_due=True))
+        stats.append(
+            stat("l3", 1, question="sibling", answered=False, was_wrong=True, card_due=True)
+        )
         weak = stat("l3", 2, question="the-gap", was_wrong=True, card_due=True)
         stats.append(weak)
 
@@ -150,7 +150,7 @@ class TestFill:
         assert hits >= 25, f"the weighted fill ignored a known gap ({hits}/100 draws)"
 
     def test_the_same_seed_draws_the_same_sample(self) -> None:
-        stats = [stat(f"l{i%3}", i) for i in range(1, 30)]
+        stats = [stat(f"l{i % 3}", i) for i in range(1, 30)]
         first = select_checkpoint_questions(stats, target=12, rng=random.Random(SEED))
         second = select_checkpoint_questions(stats, target=12, rng=random.Random(SEED))
         assert first == second

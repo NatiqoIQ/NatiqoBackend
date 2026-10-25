@@ -49,6 +49,26 @@ class InvalidContentState(ValueError):
     """
 
 
+class ContentNotEditable(ValueError):
+    """A destructive edit asked of content that learners can already see.
+
+    Once an aggregate leaves ``draft`` its rows may be referenced by sessions, answers and
+    progress. Deleting them would either rewrite a learner's history or strand a foreign
+    key, so the supported retirement path is ``archived`` and the hard delete is reserved
+    for drafts that were never published.
+    """
+
+
+def assert_hard_delete_allowed(state: ContentState, *, subject: str) -> None:
+    """Refuse a hard delete unless the aggregate is still a draft.
+
+    ``archived`` is deliberately not enough: archiving hides content from the catalogue but
+    keeps its ids, and only ``draft`` guarantees no learner has ever seen the row.
+    """
+    if state is not ContentState.DRAFT:
+        raise ContentNotEditable(f"{subject} is {state.value}; archive it instead of deleting it.")
+
+
 def assert_valid_position(position: int) -> None:
     """Reject positions below 1.
 

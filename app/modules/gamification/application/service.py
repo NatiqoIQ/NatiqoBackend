@@ -1,6 +1,6 @@
 """Gamification use cases: the hub read, the achievements list, claiming, and the streak.
 
-Two roles live here:
+Two parts live here:
 
 * **The read/mutation surface** behind ``/gamification``, ``/achievements`` and ``/streak``.
 * **The lesson-completion subscriber** (:meth:`GamificationService.apply_lesson_completed`).

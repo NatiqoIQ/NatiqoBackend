@@ -75,7 +75,9 @@ from app.modules.admin.domain.audit import (
 )
 from app.modules.content.domain.entities import Lesson, Level, Question, Unit
 from app.modules.content.domain.policy import (
+    ContentNotEditable,
     InvalidContentState,
+    assert_hard_delete_allowed,
     question_shape_problems,
 )
 
@@ -200,6 +202,7 @@ class AdminContentService:
 
     async def delete_level(self, actor_id: UserId, level_id: uuid.UUID) -> None:
         level = await self._require_level(level_id)
+        _apply_delete(lambda: assert_hard_delete_allowed(level.state, subject="The level"))
         await self._uow.editorial.delete_level(level.id)
         await self._audit(
             actor_id,
@@ -301,6 +304,7 @@ class AdminContentService:
 
     async def delete_unit(self, actor_id: UserId, unit_id: uuid.UUID) -> None:
         unit = await self._require_unit(unit_id)
+        _apply_delete(lambda: assert_hard_delete_allowed(unit.state, subject="The unit"))
         await self._uow.editorial.delete_unit(unit.id)
         await self._audit(
             actor_id,
@@ -422,6 +426,7 @@ class AdminContentService:
 
     async def delete_lesson(self, actor_id: UserId, lesson_id: uuid.UUID) -> None:
         lesson = await self._require_lesson(lesson_id)
+        _apply_delete(lambda: assert_hard_delete_allowed(lesson.state, subject="The lesson"))
         await self._uow.editorial.delete_lesson(lesson.id)
         await self._audit(
             actor_id,
@@ -670,6 +675,12 @@ class AdminContentService:
 
     async def delete_question(self, actor_id: UserId, question_id: uuid.UUID) -> None:
         question = await self._require_question(question_id)
+        # A question carries no state of its own, so the parent lesson decides: a question
+        # in a published lesson is live content and its answers are already on record.
+        lesson = await self._require_lesson(question.lesson_id)
+        _apply_delete(
+            lambda: assert_hard_delete_allowed(lesson.state, subject="The question's lesson")
+        )
         await self._uow.editorial.delete_question(question.id)
         await self._audit(
             actor_id,
@@ -976,6 +987,14 @@ def _apply(move: Any) -> None:
         move()
     except InvalidContentState as exc:
         raise ConflictError(str(exc), code=ErrorCode.INVALID_STATE_TRANSITION) from exc
+
+
+def _apply_delete(move: Any) -> None:
+    """Run a hard-delete guard, turning its refusal into a 409 that names the way out."""
+    try:
+        move()
+    except ContentNotEditable as exc:
+        raise ConflictError(str(exc), code=ErrorCode.CONTENT_NOT_EDITABLE) from exc
 
 
 def _position_taken(entity: str, position: int) -> ConflictError:

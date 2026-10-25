@@ -53,7 +53,6 @@ class TokenClaims:
     device_id: uuid.UUID | None
     issued_at: datetime
     expires_at: datetime
-    roles: tuple[str, ...] = ()
 
     @property
     def user_id(self) -> UserId:
@@ -75,7 +74,6 @@ def _encode(payload: dict[str, Any]) -> str:
 def create_access_token(
     user_id: uuid.UUID,
     *,
-    roles: tuple[str, ...] = (),
     ttl_seconds: int | None = None,
 ) -> tuple[str, TokenClaims]:
     settings = get_settings()
@@ -92,7 +90,6 @@ def create_access_token(
         "exp": int(expires.timestamp()),
         "iss": settings.jwt_issuer,
         "aud": settings.jwt_audience,
-        "roles": list(roles),
     }
     claims = TokenClaims(
         subject=user_id,
@@ -102,7 +99,6 @@ def create_access_token(
         device_id=None,
         issued_at=now,
         expires_at=expires,
-        roles=roles,
     )
     return _encode(payload), claims
 
@@ -190,5 +186,4 @@ def decode_token(token: str, expected_type: TokenType) -> TokenClaims:
         device_id=device_id,
         issued_at=datetime.fromtimestamp(int(payload["iat"]), tz=utc_now().tzinfo),
         expires_at=datetime.fromtimestamp(int(payload["exp"]), tz=utc_now().tzinfo),
-        roles=tuple(payload.get("roles") or ()),
     )

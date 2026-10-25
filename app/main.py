@@ -168,8 +168,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # The development sign-in is mounted here rather than on ``api_router`` because
     # the flag is read from this app's own settings, so the route can be omitted from
     # the router and the OpenAPI document entirely — not merely refused at request
-    # time. The flag defaults to on in every environment (see ``Settings``); set
-    # ``DEV_LOGIN_ENABLED=false`` to keep the route out of the app object.
+    # time. It is off unless a local ``.env`` turns it on, and production refuses to
+    # boot with it on at all (see ``Settings.validate_environment``), so the fixed
+    # ``admin``/``admin`` credentials can never face the public internet.
     if app_settings.dev_login_enabled:
         app.include_router(
             dev_login_router,

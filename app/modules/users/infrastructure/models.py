@@ -44,7 +44,11 @@ class UserModel(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     #: merely unlikely.
     email: Mapped[str] = mapped_column(String(254), nullable=False, unique=True, index=True)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default=UserStatus.ACTIVE.value)
-    roles: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=lambda: ["user"])
+    #: The single privilege switch. There is no role vocabulary: an account either runs the
+    #: admin surface or it does not, and every gated route reads this column.
+    is_admin: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
 
     email_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 

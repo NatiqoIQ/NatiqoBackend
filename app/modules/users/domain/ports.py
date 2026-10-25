@@ -54,6 +54,14 @@ class UserRepositoryPort(Protocol):
 
     async def get_profile(self, user_id: UserId) -> UserProfile | None: ...
 
+    async def get_display_names(self, user_ids: list[UserId]) -> dict[UserId, str]:
+        """``user_id -> display_name`` for a batch of accounts.
+
+        One query for a whole admin page instead of a profile fetch per row. Accounts
+        with no profile row are simply absent from the mapping.
+        """
+        ...
+
     async def save_profile(self, profile: UserProfile) -> None: ...
 
     async def get_settings(self, user_id: UserId) -> UserSettings | None: ...
@@ -108,6 +116,21 @@ class RefreshTokenRepositoryPort(Protocol):
     async def revoke_for_device(
         self, user_id: UserId, device_id: uuid.UUID, *, at: object | None = None
     ) -> int: ...
+
+    async def purge_expired(self, *, before: object | None = None) -> int:
+        """Delete rows whose ``expires_at`` has passed, and return how many.
+
+        Rotation appends a row per issue and revokes rather than deletes, so the table
+        only grows: a learner who opens the app daily for a year leaves hundreds of dead
+        rows behind. Once a token has expired it can no longer authenticate anything, so
+        the row is history with no reader — deleting it cannot shorten a session or hide
+        a reuse attack, which is what revocation is for.
+
+        Replaced, revoked-but-unexpired rows are deliberately *kept*: a revoked token
+        that is presented again is a reuse signal, and that signal has to outlive the
+        revocation for the lifetime of the token at least.
+        """
+        ...
 
 
 @runtime_checkable

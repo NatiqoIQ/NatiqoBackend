@@ -38,13 +38,13 @@
 # .env على الخادم
 CORS_ORIGINS=http://192.168.69.67:3000,http://localhost:3000
 CORS_ALLOW_CREDENTIALS=true
-DEV_LOGIN_ENABLED=true          # على الحالة الافتراضية؛ يوفّر دخول admin/admin
+DEV_LOGIN_ENABLED=true          # معطّل افتراضيًا؛ عند تفعيله يوفّر دخول admin/admin
 ```
 
 `CORS_ORIGINS` قائمة أصول مفصولة بفواصل (أو مصفوفة JSON). الخادم يتحقّق منها عند الإقلاع
 ويوقف العملية إذا اجتمعت `*` مع السماح بالاعتمادات. بعد التعديل يجب إعادة تشغيل الحاوية.
 
-خارج الإنتاج، وما دام `DEV_LOGIN_ENABLED` مفعّلًا (وهو الافتراضي)، يُمنح تلقائيًا كل أصل
+خارج الإنتاج، وما دام `DEV_LOGIN_ENABLED` مفعّلًا (وهو **معطّل افتراضيًا**)، يُمنح تلقائيًا كل أصل
 loopback على أي منفذ (`http://localhost:5173`، `http://127.0.0.1:8100`، `http://[::1]:3000`).
 هذا ما يجعل `POST /api/v1/auth/dev-login` قابلًا للنداء من خادم تطوير اللوحة دون تسجيل منفذه،
 لأن Vite ينتقل إلى المنفذ التالي إذا كان السابق مشغولًا. والمنحة تختفي في الإنتاج وعند إطفاء
@@ -71,10 +71,10 @@ VITE_API_BASE_URL=http://192.168.69.67:8000
 ### 2.3 الدخول التجريبي
 
 المسار الوحيد الذي يقبل اسم مستخدم وكلمة مرور هو `POST /api/v1/auth/dev-login`. الحساب
-الافتراضي `admin` / `admin` ويُمنح دور `admin` عند أول دخول، لذلك يملك كل إذن يتطلبه.
-الصلاحيات. **في الإنتاج** يجب تغيير `DEV_ADMIN_PASSWORD` أو إيقاف المسار بـ
-`DEV_LOGIN_ENABLED=false` بعد ربط دخول Google، لأن الرموز الصادرة منه تعيش 10 سنوات
-(`DEV_LOGIN_TOKEN_TTL_SECONDS`).
+الافتراضي `admin` / `admin` ويُفعَّل له `isAdmin` عند أول دخول، لذلك يملك كل الصلاحيات.
+المسار **معطّل افتراضيًا**، و**الإنتاج يرفض الإقلاع** ما دام `DEV_LOGIN_ENABLED=true`
+(يرفض `validate_environment` الإقلاع). أما محليًا فأي رمز يصدر منه يعيش 10 سنوات
+(`DEV_LOGIN_TOKEN_TTL_SECONDS`)، فلا تتركه مفعّلًا على خادم مشترك.
 
 تسجيل الدخول عبر Google/Apple متاح تقنيًا، لكنه يشترط أن يكون معرّف عميل الويب ضمن
 `GOOGLE_CLIENT_IDS`، وهو ما لا يحدث تلقائيًا. لا تبنِ شاشة الدخول على Google قبل التحقّق من
@@ -100,7 +100,7 @@ Content-Type: application/json
 {
   "user": {
     "id": "…", "email": "admin@natiqo.dev", "status": "active",
-    "roles": ["admin", "support"], "emailVerified": true,
+    "isAdmin": true, "emailVerified": true,
     "createdAt": "2026-10-18T09:00:00Z",
     "profile": { "displayName": "Dev Admin", "avatarKey": null,
                  "nativeLanguage": "ar", "englishVariant": "british",
@@ -123,34 +123,29 @@ Content-Type: application/json
   وارجع لشاشة الدخول بدون إعادة محاولة.
 * الخروج: `POST /auth/logout` بالجسم `{ "refreshToken": "…" }` (أو `allDevices: true`).
   العملية idempotent، فتكرارها لا يفشل.
-* شاشة «الحساب»: `GET /me` لعرض الاسم والأدوار، و`GET /me/devices` لعرض الجلسات.
+* شاشة «الحساب»: `GET /me` لعرض الاسم وصلاحية المسؤول (`isAdmin`)، و`GET /me/devices` لعرض الجلسات.
 
-### 3.2 مصفوفة الأدوار
+### 3.2 بوابة المسؤول الوحيدة
 
-الأدوار مرتّبة، والشرط دائمًا «الحد الأدنى»: صاحب دور أعلى يمرّ من بوابة أدنى.
+لا توجد أدوار ولا تراتبية: الحقل الواحد `isAdmin` (منطقي) يفصل بين من لا شيء يستطيعه ومن
+يملك اللوحة كاملة.
 
-| الدور | الرتبة | ما يستطيعه في اللوحة |
-| --- | --- | --- |
-| `user` | 0 | لا شيء |
-| `support` | 1 | لا شيء من مسارات `/admin` — يحتاج endpoints قراءة جديدة |
-| `content_editor` | 2 | إنشاء/تعديل/حذف المنهج والأسئلة، ونقل الحالة حتى `approved` |
-| `content_reviewer` | 3 | كل ما سبق + `POST /admin/content/lessons/{id}/publish` |
-| `admin` | 4 | كل ما سبق + إدارة المستخدمين والأدوار |
+| `isAdmin` | ما يستطيعه في اللوحة |
+| --- | --- |
+| `false` | لا شيء من مسارات `/admin` |
+| `true` | إنشاء/تعديل/حذف المنهج والأسئلة، النشر، وإدارة المستخدمين |
 
-التحقّق يقرأ الحساب الحيّ لا الادعاء داخل الرمز، فسحب دور يسري على الطلب التالي مباشرة.
+كل مسارات `/admin` — بما فيها `POST /admin/users` — تمرّ عبر بوابة واحدة تُقرأ من الحساب الحيّ
+لا من الادعاء داخل الرمز، فسحب العلامة يسري على الطلب التالي مباشرة. عند النقص تعود
+`403 AUTH_ADMIN_REQUIRED`.
 
 **قاعدة واجهة ملزمة:** أخفِ عناصر التحكم التي لا يملك المستخدم صلاحيتها، لكن لا تعتمد على
 الإخفاء كحماية — كل مسار محمي على الخادم على أي حال.
 
-**تحذير صلاحيات معروف:** `PATCH /admin/content/lessons/{id}` بجسم `{"state":"published"}`
-متاح لدور `content_editor` (رتبة 2) وينفّذ النشر فعليًا، بينما `POST .../publish` يشترط
-`content_reviewer`. حتى يُغلق هذا على الخادم، **لا تعرض خيار `published` في قائمة الحالة
-لدور المحرّر**، واعتبر مسار `publish` هو زر النشر الوحيد في اللوحة.
+### 3.3 إعادة تحميل `/me` بعد تغيير صلاحية المسؤول
 
-### 3.3 تسجيل الخروج الإجباري عند تغيير الأدوار
-
-`POST /admin/users` يستبدل أدوار الحساب كاملةً. إن كان الحساب هو حسابك أنت، أعد تحميل `/me`
-مباشرة، لأن الواجهة قد تعرض أزرارًا لم تعد مسموحة.
+`POST /admin/users` يستبدل علامة `isAdmin` للحساب. إن كان الحساب هو حسابك أنت، أعد تحميل
+`/me` مباشرة، لأن الواجهة قد تعرض أزرارًا لم تعد مسموحة.
 
 ---
 
@@ -173,7 +168,7 @@ Content-Type: application/json
 | الحالة | المعنى في اللوحة |
 | --- | --- |
 | `401` | انتهت الجلسة أو الرمز غير صالح → تحديث أو خروج |
-| `403` | الدور لا يكفي (`AUTH_INSUFFICIENT_ROLE`) → رسالة «لا تملك صلاحية» |
+| `403` | ليس مسؤولًا (`AUTH_ADMIN_REQUIRED`) → رسالة «لا تملك صلاحية» |
 | `404` | العنصر غير موجود أو محذوف → أغلق النموذج وحدّث القائمة |
 | `409` | تعارض حالة (`CONFLICT`, `INVALID_STATE_TRANSITION`) → أعد تحميل العنصر قبل إعادة المحاولة |
 | `422` | جسم غير صالح. اقرأ `details.problems` واربطها بالحقول |
@@ -220,11 +215,12 @@ Content-Type: application/json
 
 ## 5. مرجع الـ API الكامل للوحة
 
-كل المسارات أدناه نسبية إلى `/api/v1`. عمود «الدور» هو الحد الأدنى.
+كل المسارات أدناه نسبية إلى `/api/v1`. عمود «البوابة» يذكر الشرط المطلوب: `isAdmin`
+لمسارات الإدارة، «مستخدم» لأى طلب موقّع، «عام» لمسارات بلا جلسة.
 
 ### 5.1 المصادقة
 
-| الطريقة | المسار | الدور | الجسم | الاستجابة |
+| الطريقة | المسار | البوابة | الجسم | الاستجابة |
 | --- | --- | --- | --- | --- |
 | POST | `/auth/dev-login` | عام | `username`, `password`, `device?` | `AuthResponse` |
 | POST | `/auth/google` | عام | `idToken`, `displayName?`, `device?` | `AuthResponse` |
@@ -237,13 +233,13 @@ Content-Type: application/json
 
 ### 5.2 المنهج — المستويات
 
-| الطريقة | المسار | الدور | ملاحظات |
+| الطريقة | المسار | البوابة | ملاحظات |
 | --- | --- | --- | --- |
-| GET | `/admin/content/levels` | `content_editor` | كل الحالات، مرتّبة بالموضع، مع الصفحات |
-| POST | `/admin/content/levels` | `content_editor` | ينشئ المستوى في `draft` |
-| GET | `/admin/content/levels/{levelId}` | `content_editor` | |
-| PATCH | `/admin/content/levels/{levelId}` | `content_editor` | جزئي: الحقول الموجودة فقط تُعدّل |
-| DELETE | `/admin/content/levels/{levelId}` | `content_editor` | يحذف المستوى ووحداته ودروسه تتابعيًا |
+| GET | `/admin/content/levels` | `isAdmin` | كل الحالات، مرتّبة بالموضع، مع الصفحات |
+| POST | `/admin/content/levels` | `isAdmin` | ينشئ المستوى في `draft` |
+| GET | `/admin/content/levels/{levelId}` | `isAdmin` | |
+| PATCH | `/admin/content/levels/{levelId}` | `isAdmin` | جزئي: الحقول الموجودة فقط تُعدّل |
+| DELETE | `/admin/content/levels/{levelId}` | `isAdmin` | يحذف المستوى ووحداته ودروسه تتابعيًا |
 
 جسم الإنشاء:
 
@@ -256,14 +252,14 @@ Content-Type: application/json
 
 ### 5.3 الوحدات والدروس
 
-| الطريقة | المسار | الدور |
+| الطريقة | المسار | البوابة |
 | --- | --- | --- |
-| GET / POST | `/admin/content/levels/{levelId}/units` | `content_editor` |
-| GET / PATCH / DELETE | `/admin/content/units/{unitId}` | `content_editor` |
-| GET / POST | `/admin/content/units/{unitId}/lessons` | `content_editor` |
-| GET | `/admin/content/lessons/{lessonId}` | `content_editor` |
-| PATCH / DELETE | `/admin/content/lessons/{lessonId}` | `content_editor` |
-| POST | `/admin/content/lessons/{lessonId}/publish` | `content_reviewer` |
+| GET / POST | `/admin/content/levels/{levelId}/units` | `isAdmin` |
+| GET / PATCH / DELETE | `/admin/content/units/{unitId}` | `isAdmin` |
+| GET / POST | `/admin/content/units/{unitId}/lessons` | `isAdmin` |
+| GET | `/admin/content/lessons/{lessonId}` | `isAdmin` |
+| PATCH / DELETE | `/admin/content/lessons/{lessonId}` | `isAdmin` |
+| POST | `/admin/content/lessons/{lessonId}/publish` | `isAdmin` |
 
 * جسم إنشاء الوحدة: `{ "title", "description?", "position?" }`. `position` فريد داخل المستوى.
 * جسم إنشاء الدرس: `{ "title", "summary", "estimatedMinutes", "position?" }`
@@ -276,17 +272,17 @@ Content-Type: application/json
 
 ### 5.4 الأسئلة
 
-| الطريقة | المسار | الدور | ملاحظات |
+| الطريقة | المسار | البوابة | ملاحظات |
 | --- | --- | --- | --- |
-| GET | `/admin/content/questions/{questionId}` | `content_editor` | العرض التحريري لسؤال واحد، بالمفتاح |
-| POST | `/admin/content/lessons/{lessonId}/questions` | `content_editor` | `details.problems` قائمة بكل ما يجب إصلاحه |
-| POST | `/admin/content/lessons/{lessonId}/questions/bulk` | `content_editor` | `{ "questions": [...], "dryRun": false }` — ذرّي |
-| POST | `/admin/content/questions/{questionId}/duplicate` | `content_editor` | `{ "lessonId?", "position?" }`؛ النسخة تأخذ موضعًا جديدًا |
-| PATCH | `/admin/content/questions/{questionId}` | `content_editor` | |
-| DELETE | `/admin/content/questions/{questionId}` | `content_editor` | `204` |
-| POST | `/admin/content/lessons/{lessonId}/questions/reorder` | `content_editor` | `{ "questionIds": [...] }` يجب أن تسرد **كل** أسئلة الدرس مرة واحدة |
-| GET | `/admin/content/lessons/{lessonId}/questions/export` | `content_editor` | حزمة بـ `version: 1`، بلا معرّفات ولا مواضع |
-| POST | `/admin/content/lessons/{lessonId}/questions/import` | `content_editor` | تقبل الحزمة كما هي، مع `dryRun?` |
+| GET | `/admin/content/questions/{questionId}` | `isAdmin` | العرض التحريري لسؤال واحد، بالمفتاح |
+| POST | `/admin/content/lessons/{lessonId}/questions` | `isAdmin` | `details.problems` قائمة بكل ما يجب إصلاحه |
+| POST | `/admin/content/lessons/{lessonId}/questions/bulk` | `isAdmin` | `{ "questions": [...], "dryRun": false }` — ذرّي |
+| POST | `/admin/content/questions/{questionId}/duplicate` | `isAdmin` | `{ "lessonId?", "position?" }`؛ النسخة تأخذ موضعًا جديدًا |
+| PATCH | `/admin/content/questions/{questionId}` | `isAdmin` | |
+| DELETE | `/admin/content/questions/{questionId}` | `isAdmin` | `204` |
+| POST | `/admin/content/lessons/{lessonId}/questions/reorder` | `isAdmin` | `{ "questionIds": [...] }` يجب أن تسرد **كل** أسئلة الدرس مرة واحدة |
+| GET | `/admin/content/lessons/{lessonId}/questions/export` | `isAdmin` | حزمة بـ `version: 1`، بلا معرّفات ولا مواضع |
+| POST | `/admin/content/lessons/{lessonId}/questions/import` | `isAdmin` | تقبل الحزمة كما هي، مع `dryRun?` |
 
 الترتيب يعيد `{ items, total }`. قائمة ترتيب ناقصة أو مكرّرة تُرفض بـ `422` يحمل
 `details.field = "question_ids"` — وليس `details.problems`. لا ترسل الترتيب في كل ضغطة سهم؛
@@ -387,11 +383,11 @@ Content-Type: application/json
 | الطريقة | المسار | الجسم | الاستجابة |
 | --- | --- | --- | --- |
 | GET | `/admin/users?limit=&cursor=` | — | `{ items, total, hasMore, nextCursor }` |
-| POST | `/admin/users` | `{ "userId": "…", "roles": ["content_editor"] }` | `AdminUserResponse` |
+| POST | `/admin/users` | `{ "userId": "…", "isAdmin": true }` | `AdminUserResponse` |
 
-عنصر المستخدم: `{ id, email, status, roles, createdAt }`.
-الأدوار المسموح إسنادها: `user, support, content_editor, content_reviewer, admin` (قائمة غير
-فارغة). الإرسال **يستبدل** المجموعة كاملة، فاحسب القائمة النهائية في الواجهة قبل الإرسال.
+عنصر المستخدم: `{ id, email, name, status, isAdmin, createdAt }`.
+`isAdmin` قيمة منطقية لا قائمة أدوار: الإرسال **يستبدل** العلامة، فالمنح والسحب
+عملية واحدة في أي اتجاه، وسحب الوصول يسري على الطلب التالي لا عند انتهاء الرمز.
 
 ### 5.6 الوسائط (لصور وأصوات الأسئلة)
 
@@ -483,7 +479,6 @@ CEFRLevel      : A1 A2 B1 B2 C1 C2
 ContentState   : draft review approved published archived
 QuestionKind   : multiple_choice multi_select true_false fill_blank word_bank ordering matching
 SkillKind      : vocabulary grammar listening reading writing pronunciation
-UserRole       : user support content_editor content_reviewer admin
 UserStatus     : active pending_verification suspended deleted
 MediaKind      : avatar image audio
 ```
@@ -501,8 +496,8 @@ MediaKind      : avatar image audio
 * الحقول: اسم المستخدم، كلمة المرور.
 * الفعل: `POST /auth/dev-login` ثم `GET /me`.
 * حالات: `401 AUTH_INVALID_CREDENTIALS` → «بيانات غير صحيحة»؛ `429` → «حاول بعد دقيقة»؛
-  `404` → المسار غير مُمكَّن (`DEV_LOGIN_ENABLED=false`) → رسالة صريحة بذلك.
-* بعد النجاح: احفظ `accessToken`/`refreshToken`، واعرض الاسم والأدوار في الشريط العلوي.
+  `404` → المسار غير مُمكَّن (`DEV_LOGIN_ENABLED=false`، وهو الافتراضي) → رسالة صريحة بذلك.
+* بعد النجاح: احفظ `accessToken`/`refreshToken`، واعرض الاسم وعلامة `isAdmin` في الشريط العلوي.
 
 ### 7.2 نظرة عامة
 
@@ -563,15 +558,15 @@ MediaKind      : avatar image audio
 3. **محرّر السؤال**: حقول ديناميكية حسب `kind` وفق جدول 6.2. عند تغيير النوع، امسح الحقول
    التي لا تنتمي إليه (خصوصًا `correctIndex` و`choices`) حتى لا ترسل قيمة يرفضها الخادم.
 
-أزرار الحالة: «إرسال للمراجعة» (`review`)، «اعتماد» (`approved`)، و«نشر» لصاحب
-`content_reviewer` فقط.
+أزرار الحالة: «إرسال للمراجعة» (`review`)، «اعتماد» (`approved`)، و«نشر» (`publish`) —
+الكل متاح لأصحاب `isAdmin` فقط.
 
-### 7.6 المستخدمون والأدوار
+### 7.6 المستخدمون وصلاحية المسؤول
 
 * قائمة: `GET /admin/users` مع `total` في العنوان.
-* لكل صف: البريد، الحالة، الأدوار الحالية، تاريخ الإنشاء، وزر «تعديل الأدوار».
-* نافذة التعديل: صناديق اختيار للأدوار، ثم `POST /admin/users` بـ `{ userId, roles }` كاملة.
-* حماية من الخطأ: منع إزالة `admin` الأخير من نفسك دون تأكيد صريح.
+* لكل صف: البريد، الاسم، الحالة، علامة المسؤول، تاريخ الإنشاء، وزر «منح/سحب المسؤول».
+* نافذة التعديل: مفتاح تبديل واحد، ثم `POST /admin/users` بـ `{ userId, isAdmin }`.
+* حماية من الخطأ: منع سحب `isAdmin` من نفسك دون تأكيد صريح.
 
 ---
 
@@ -584,7 +579,7 @@ MediaKind      : avatar image audio
 2. PATCH /admin/content/units/{id}  {state:"published"}        (بعد نشر المستوى)
 3. PATCH /admin/content/lessons/{id}{state:"review"}
 4. PATCH /admin/content/lessons/{id}{state:"approved"}
-5. POST  /admin/content/lessons/{id}/publish                    (content_reviewer)
+5. POST  /admin/content/lessons/{id}/publish                    (isAdmin)
 ```
 
 أي خطوة تُرجع `409`: أعد جلب العنصر واعرض السبب («الوحدة غير منشورة»، «الانتقال غير مسموح»).
@@ -630,7 +625,7 @@ POST /media/confirm  {mediaKey}
 
 يُعتبر التنفيذ مكتملًا فقط عند تحقّق كل بند:
 
-- [ ] تسجيل الدخول بـ `admin/admin` يعمل ويعرض الأدوار القادمة من `/me`.
+- [ ] تسجيل الدخول بـ `admin/admin` يعمل ويعرض `isAdmin` القادم من `/me`.
 - [ ] انتهاء الرمز يُحدَّث صامتًا مرة واحدة ثم يُعيد الطلب، وفشل التحديث يعيد لشاشة الدخول.
 - [ ] شجرة المنهج تجلب المستويات والوحدات والدروس وتعرض الحالات بألوانها.
 - [ ] إنشاء مستوى/وحدة/درس ناجح، و`position` محجوز يعرض `409` مفهومًا.
@@ -645,7 +640,7 @@ POST /media/confirm  {mediaKey}
 - [ ] زر النسخ ينشئ سؤالًا جديدًا بمعرّف مختلف وموضع تالٍ، والأصل لا يتغيّر.
 - [ ] بطاقات النظرة العامة تُقرأ من `/admin/stats/overview` في طلب واحد، وتتغيّر `users.active`
   و`users.new` وطول `series` وحدها عند تغيير `window`.
-- [ ] تعديل أدوار مستخدم يستبدل المجموعة، ويظهر `403` عند محاولته بدور أقل من `admin`.
+- [ ] منح/سحب المسؤول يبدّل العلامة، ويظهر `403 AUTH_ADMIN_REQUIRED` لمن ليس `isAdmin`.
 - [ ] كل طلب يضيف `Authorization`، و`401/403/409/422/429` لها معالجة موحّدة في مكان واحد.
 - [ ] لا يوجد أي طلب إلى مسار غير موجود في القسم 5 (تحقّق من تبويب الشبكة).
 - [ ] `npm run build` (أو ما يعادله) ينجح، ووحدة التحكّم النوعي نظيفة.
@@ -665,8 +660,8 @@ POST /media/confirm  {mediaKey}
 | لا قراءة لشجرة الإدارة في طلب واحد | ثلاث طبقات من الطلبات لكل تحميل | `GET /admin/content/tree?states=` |
 | لا نشر جماعي | نشر 30 درسًا = 30 طلبًا | `POST /admin/content/lessons/publish-bulk` بـ `{ lessonIds }` يعيد نتيجة لكل عنصر |
 | لا بحث/تصفية في المحتوى | تصفّح عشرات الدروس يدويًا | معامل `q` و`state` على قوائم الإدارة |
-| `GET /admin/users` لا يدعم تصفية بالدور أو الحالة | شاشة المستخدمين بلا فرز مفيد | `?role=&status=&q=` |
-| `PATCH ... {state:"published"}` متاح لرتبة أدنى من مسار النشر | تجاوز بوابة المراجعة | إزالة `published` من مسار التحديث أو رفع شرطه إلى `content_reviewer` |
+| `GET /admin/users` لا يدعم تصفية بالحالة | شاشة المستخدمين بلا فرز مفيد | `?status=&q=` |
+| `PATCH ... {state:"published"}` ينشر مباشرة بلا تمرير عبر `review` | تجاوز بوابة المراجعة | إزالة `published` من مسار التحديث أو ربطه بقيد حالة صريح |
 
 **سُدَّت في هذا الإصدار:** إحصاءات النظرة العامة، قراءة سؤال منفرد، نسخ سؤال، إنشاء دفعة
 ذرّية، وتصدير/استيراد حزمة أسئلة. لم يبقَ من فجوات الأسئلة شيء تحتاجه شاشة التحرير، وبطاقات
@@ -699,7 +694,7 @@ POST /media/confirm  {mediaKey}
 | 2 | شجرة المنهج + نماذج المستوى/الوحدة/الدرس | إنشاء وتعديل وحذف وعرض الحالات |
 | 3 | محرّر الأسئلة لكل الأنواع + قواعد 6.2 | إنشاء كل نوع ورفض غير الصالح |
 | 4 | النشر ودورة الحالة | دورة كاملة + رسائل 409 الدقيقة |
-| 5 | المستخدمون والأدوار | قائمة وتعديل أدوار |
+| 5 | المستخدمون وصلاحية المسؤول | قائمة ومنح/سحب المسؤول |
 | 6 | الوسائط والمعاينة | رفع صورة وربطها، ومعاينة `/content/lessons/{id}` |
 | 7 | الصقل: أخطاء موحّدة، RTL، تحميلات، قبول كامل | كل بنود القسم 9 |
 
@@ -720,7 +715,7 @@ TOKEN=$(curl -s -X POST "$BASE/api/v1/auth/dev-login" \
 test -n "$TOKEN" && test "$TOKEN" != "null" || echo "LOGIN FAILED"
 
 # 3) أنا
-curl -s "$BASE/api/v1/me" -H "Authorization: Bearer $TOKEN" | jq '.roles'
+curl -s "$BASE/api/v1/me" -H "Authorization: Bearer $TOKEN" | jq '.isAdmin'
 
 # 4) المستويات
 curl -s "$BASE/api/v1/admin/content/levels" -H "Authorization: Bearer $TOKEN" | jq '.meta'

@@ -171,7 +171,9 @@ filterwarnings = ["error", "ignore::DeprecationWarning:pkg_resources.*"]
 [tool.coverage.run]
 source = ["app"]
 branch = true
-omit = ["app/main.py", "app/workers/main.py", "alembic/*"]
+#: The worker is measured, not omitted: its loop, retry contract and scheduler are the
+#: kind of logic that silently rots. Only the ``__main__`` block inside it is excluded.
+omit = ["app/main.py", "alembic/*"]
 
 [tool.coverage.report]
 show_missing = true

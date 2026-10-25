@@ -111,7 +111,7 @@ async def test_the_development_sign_in_issues_a_session_that_never_expires(
 ) -> None:
     body = await sign_in_as_admin(dev_client)
 
-    assert set(body["user"]["roles"]) >= {"admin"}
+    assert body["user"]["isAdmin"] is True
     assert body["user"]["email"] == "admin@natiqo.dev"
     assert body["tokens"]["expiresIn"] == DEV_SESSION_TTL
     assert body["tokens"]["refreshExpiresIn"] == DEV_SESSION_TTL
@@ -124,7 +124,7 @@ async def test_the_development_sign_in_issues_a_session_that_never_expires(
     )
     assert me.status_code == 200, me.text
     assert me.json()["id"] == body["user"]["id"]
-    assert set(me.json()["roles"]) >= {"admin"}
+    assert me.json()["isAdmin"] is True
 
 
 @pytest.mark.asyncio
@@ -141,7 +141,7 @@ async def test_a_second_sign_in_returns_the_same_admin_account(
     second = await sign_in_as_admin(dev_client)
 
     assert second["user"]["id"] == first["user"]["id"]
-    assert set(second["user"]["roles"]) >= {"admin"}
+    assert second["user"]["isAdmin"] is True
 
 
 @pytest.mark.asyncio

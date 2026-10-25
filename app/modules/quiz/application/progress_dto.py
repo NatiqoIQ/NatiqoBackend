@@ -59,6 +59,8 @@ class LessonProgressView:
     position: int
     state: str
     locked: bool
+    is_completed: bool
+    is_unlocked: bool
     best_score: int
     attempts: int
     xp_earned: int
@@ -108,6 +110,8 @@ class UnlockMapItemView:
     position: int
     state: str
     locked: bool
+    is_completed: bool
+    is_unlocked: bool
     best_score: int
     attempts: int
     xp_earned: int

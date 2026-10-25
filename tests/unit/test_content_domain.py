@@ -361,6 +361,7 @@ class TestQuestionShape:
     def test_a_protocol_relative_video_url_is_refused(self) -> None:
         with pytest.raises(ValueError, match="video_url"):
             Question(**_multiple_choice(video_url="//evil.test/hello.mp4"))
+
     def test_a_protocol_relative_media_url_is_refused(self) -> None:
         """``//host`` keeps the page's scheme but is a different origin, so it is not a
         same-origin path and must be refused like any other off-origin reference."""

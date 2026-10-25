@@ -101,8 +101,10 @@ class CompletedSessionView:
     One shape serves both modes so a client renders a result branch-free where it can:
     ``correctQuestionIds``/``missedQuestionIds`` always describe the sitting, and
     ``passed``/``unlockedUnitId`` carry meaning only for a checkpoint (``None`` for a
-    lesson, where there is no such bar). ``retryAvailable`` is true whenever anything was
-    missed — the sitting is worth another pass — and is mode-independent on purpose.
+    lesson, where there is no such bar). ``retryAvailable`` means "the missed questions can
+    be answered again *in this sitting*", so it is true for a lesson with misses and always
+    false for a checkpoint: a checkpoint seals each question on its first answer, and a
+    learner who wants another go starts a new sitting over a fresh sample.
     """
 
     session: SessionView

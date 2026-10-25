@@ -26,6 +26,7 @@ from collections.abc import Sequence
 
 __all__ = [
     "CHECKPOINT_PASSING_SCORE",
+    "lesson_locked",
     "next_unit_id",
     "unit_locked",
 ]
@@ -73,3 +74,35 @@ def next_unit_id(unit_id: uuid.UUID, ordered_units: Sequence[uuid.UUID]) -> uuid
     if position + 1 >= len(ordered_units):
         return None
     return ordered_units[position + 1]
+
+
+def lesson_locked(
+    lesson_id: uuid.UUID,
+    ordered_lessons_in_unit: Sequence[uuid.UUID],
+    completed_lessons: set[uuid.UUID],
+    *,
+    is_unit_locked: bool,
+) -> bool:
+    """Whether a lesson is shut for this learner.
+
+    If the unit itself is locked, every lesson inside it is locked.
+    Inside an open unit:
+    - If the lesson is already completed, it is open (unlocked) for review and re-taking.
+    - If it is the first published lesson of the unit, it is open.
+    - Otherwise, it opens only once its immediate predecessor lesson in the unit
+      has been completed.
+    - An unknown lesson absent from the order reads as locked.
+    """
+    if is_unit_locked:
+        return True
+    if lesson_id in completed_lessons:
+        return False
+    if not ordered_lessons_in_unit:
+        return True
+    try:
+        position = ordered_lessons_in_unit.index(lesson_id)
+    except ValueError:
+        return True
+    if position == 0:
+        return False
+    return ordered_lessons_in_unit[position - 1] not in completed_lessons

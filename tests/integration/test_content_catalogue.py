@@ -9,7 +9,7 @@ have asserted away, are all in here:
 - ``ORDER BY`` stability across pages.
 
 Visibility is the other theme. Every listing has to hide drafts, and every "not found"
-has to be indistinguishable between "does not exist" and "not published yet" ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â otherwise
+has to be indistinguishable between "does not exist" and "not published yet" — otherwise
 the public catalogue becomes a map of the editorial pipeline.
 """
 
@@ -547,7 +547,6 @@ class TestGetLesson:
 
         assert detail.questions[0].audio_url is None
 
-
     async def test_the_detail_carries_the_video_aid(
         self, service: CatalogueService, session: AsyncSession
     ) -> None:
@@ -573,6 +572,7 @@ class TestGetLesson:
         detail = await service.get_lesson(lesson.id)
 
         assert detail.questions[0].video_url is None
+
     async def test_a_free_text_question_still_exposes_its_choices_shape(
         self, service: CatalogueService, session: AsyncSession
     ) -> None:

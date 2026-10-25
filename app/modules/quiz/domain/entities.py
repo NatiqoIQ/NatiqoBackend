@@ -248,7 +248,9 @@ class UnitProgress:
     def has_passed(self) -> bool:
         return self.passed_at is not None
 
-    def record_attempt(self, *, score_percent: int, passed: bool, at: datetime | None = None) -> None:
+    def record_attempt(
+        self, *, score_percent: int, passed: bool, at: datetime | None = None
+    ) -> None:
         """Fold one finished checkpoint in.
 
         ``best_score`` keeps the maximum, mirroring :class:`LessonProgress`, so the

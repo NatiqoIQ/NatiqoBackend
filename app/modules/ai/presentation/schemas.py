@@ -25,7 +25,7 @@ __all__ = [
     "ConversationResponse",
     "ExplainRequest",
     "ExplanationResponse",
-    "MessageResponse",
+    "TutorMessageResponse",
     "TutorReplyResponse",
     "TutorRequest",
 ]
@@ -80,7 +80,16 @@ class TutorReplyResponse(_AiWire):
     source: str
 
 
-class MessageResponse(_AiWire):
+class TutorMessageResponse(_AiWire):
+    """One stored turn of a tutor thread.
+
+    Named ``TutorMessageResponse`` and not ``MessageResponse`` on purpose: the identity
+    module already owns that name for its one-line acknowledgements, and FastAPI resolves a
+    duplicate class name by prefixing *both* models with their module path — so the shared
+    name would vanish from the OpenAPI document and take the documented client contract
+    with it.
+    """
+
     id: uuid.UUID
     role: str
     content: str
@@ -92,7 +101,7 @@ class ConversationResponse(_AiWire):
 
     id: uuid.UUID
     lesson_id: uuid.UUID | None = None
-    messages: list[MessageResponse] = Field(default_factory=list)
+    messages: list[TutorMessageResponse] = Field(default_factory=list)
 
 
 class AiQuotaResponse(_AiWire):

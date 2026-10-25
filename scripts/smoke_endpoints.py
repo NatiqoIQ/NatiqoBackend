@@ -374,16 +374,15 @@ async def _check_dev_login(ctx: Context) -> tuple[Verdict, str]:
         return _failed(f"the development door answered {response.status_code} {_code(response)}")
     body = _json(response)
     user = body.get("user", {})
-    roles = user.get("roles", [])
-    if "admin" not in roles:
-        return _failed(f"the development account lost its roles: {roles}")
+    if not user.get("isAdmin"):
+        return _failed("the development account is not an admin")
     ctx.dev_session = Session(
         email=str(user.get("email", "")),
         user_id=uuid.UUID(str(user["id"])),
         access_token=body["tokens"]["accessToken"],
         refresh_token=body["tokens"]["refreshToken"],
     )
-    return _ok(f"{ctx.dev_session.email} roles={','.join(roles)}")
+    return _ok(f"{ctx.dev_session.email} is an admin")
 
 
 async def _check_refresh(ctx: Context) -> tuple[Verdict, str]:
@@ -437,12 +436,12 @@ async def _check_me(ctx: Context) -> tuple[Verdict, str]:
     body = _json(response)
     if body.get("email") != ctx.persona.email:
         return _failed(f"wrong account: {body.get('email')} != {ctx.persona.email}")
-    declared = {str(role) for role in ctx.persona.roles}
-    if not declared & set(body.get("roles", [])):
-        return _failed(f"roles {body.get('roles')} carry none of {sorted(declared)}")
+    declared = ctx.persona.is_admin
+    if bool(body.get("isAdmin")) != declared:
+        return _failed(f"isAdmin {body.get('isAdmin')} != {declared}")
     if not body.get("profile"):
         return _empty("the account has no profile row")
-    return _ok(f"{body['email']} roles={','.join(body.get('roles', []))} profile+settings present")
+    return _ok(f"{body['email']} isAdmin={body.get('isAdmin')} profile+settings present")
 
 
 async def _check_patch_me(ctx: Context) -> tuple[Verdict, str]:
@@ -1187,17 +1186,17 @@ async def _check_admin_users(ctx: Context) -> tuple[Verdict, str]:
     return _ok(f"{body.get('total', len(items))} accounts ({len(suspended)} not active)")
 
 
-async def _check_admin_user_roles(ctx: Context) -> tuple[Verdict, str]:
+async def _check_admin_user_admin(ctx: Context) -> tuple[Verdict, str]:
     session = await ctx.disposable()
     response = await ctx.post(
-        "/api/v1/admin/users", json={"userId": str(session.user_id), "roles": ["user"]}
+        "/api/v1/admin/users", json={"userId": str(session.user_id), "isAdmin": True}
     )
     if response.status_code != 200:
-        return _failed(f"replacing roles answered {response.status_code} {_code(response)}")
-    roles = _json(response).get("roles")
-    if roles != ["user"]:
-        return _failed(f"the roles came back as {roles}")
-    return _ok("the throwaway account's roles were replaced (and it is removed afterwards)")
+        return _failed(f"granting admin answered {response.status_code} {_code(response)}")
+    is_admin = _json(response).get("isAdmin")
+    if is_admin is not True:
+        return _failed(f"the admin flag came back as {is_admin}")
+    return _ok("the throwaway account was promoted (and it is removed afterwards)")
 
 
 async def _check_close_account(ctx: Context) -> tuple[Verdict, str]:
@@ -1350,7 +1349,7 @@ _ROUTES: tuple[tuple[str, str, str, Check], ...] = (
     ),
     ("DELETE", "/api/v1/admin/content/units/{unit_id}", "delete a unit", _check_admin_unit_delete),
     ("GET", "/api/v1/admin/users", "list accounts", _check_admin_users),
-    ("POST", "/api/v1/admin/users", "replace roles", _check_admin_user_roles),
+    ("POST", "/api/v1/admin/users", "grant admin", _check_admin_user_admin),
     ("DELETE", "/api/v1/me", "close the throwaway account", _check_close_account),
 )
 

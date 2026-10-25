@@ -175,7 +175,9 @@ def _coverage_pass(pool: Sequence[QuestionStat]) -> list[QuestionStat]:
     return list(best_by_lesson.values())
 
 
-def _interleave(previously_missed: Sequence[QuestionStat], rest: Sequence[QuestionStat]) -> list[QuestionStat]:
+def _interleave(
+    previously_missed: Sequence[QuestionStat], rest: Sequence[QuestionStat]
+) -> list[QuestionStat]:
     """Alternate the two groups so misses are spread through the sitting.
 
     Starts with a missed question: the sample's whole point is the gaps, so they should be

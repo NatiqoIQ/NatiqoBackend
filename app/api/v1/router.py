@@ -59,10 +59,10 @@ api_router.include_router(ai_router, prefix="/ai", tags=["ai"])
 #: its own full paths, the same way the users router does.
 api_router.include_router(gamification_router, tags=["gamification"])
 
-#: The admin surface. Role-gated (``content_editor`` to author, ``content_reviewer`` to
-#: publish, ``admin`` to moderate accounts) and mounted under its own ``/admin`` prefix so the
-#: whole staff surface is one namespace. It declares its own ``/content/...`` and ``/users``
-#: paths beneath that prefix, and writes an audit row for every mutation.
+#: The admin surface. Gated by the single ``isAdmin`` flag, and mounted under its own
+#: ``/admin`` prefix so the whole staff surface is one namespace. It declares its own
+#: ``/content/...`` and ``/users`` paths beneath that prefix, and writes an audit row for
+#: every mutation.
 api_router.include_router(admin_router, prefix="/admin", tags=["admin"])
 
 #: The media surface. Authenticated and mounted under its own ``/media`` prefix: presign
@@ -73,9 +73,10 @@ api_router.include_router(admin_router, prefix="/admin", tags=["admin"])
 api_router.include_router(media_router, prefix="/media", tags=["media"])
 
 #: The development sign-in deliberately stays *off* ``api_router``: ``create_app``
-#: mounts it only when ``DEV_LOGIN_ENABLED`` is set (on by default in every
-#: environment), so setting the flag false keeps the route out of the router and out
-#: of the OpenAPI document entirely — absent, not merely refused at request time.
+#: mounts it only when ``DEV_LOGIN_ENABLED`` is set (off unless a local ``.env`` turns
+#: it on, and refused outright in production), so the default deployment keeps the route
+#: out of the router and out of the OpenAPI document entirely — absent, not merely
+#: refused at request time.
 
 # Later modules follow the same shape:
 #   api_router.include_router(lessons.router, prefix="/lessons", tags=["lessons"])

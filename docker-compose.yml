@@ -40,6 +40,11 @@ services:
     restart: unless-stopped
     env_file:
       - .env
+    environment:
+      # Overrides .env on purpose. A memory queue here would accept every job and
+      # deliver it to nobody, because the worker is a different process — and the only
+      # symptom would be background work that silently never runs.
+      QUEUE_ENABLED: "true"
     depends_on:
       db:
         condition: service_healthy
@@ -51,6 +56,26 @@ services:
       # Named volume, not a bind mount: it inherits the image directory's
       # ownership (uid 10001) on first use, so the non-root app user can write.
       - media_data:/app/media_local
+
+  worker:
+    # The same image, a different process: it never opens a port, it only dequeues.
+    # Waiting for `app` to be healthy also means waiting for `alembic upgrade head`,
+    # which the API runs on boot — a worker must not start against a schema that is
+    # still migrating.
+    build: .
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      QUEUE_ENABLED: "true"
+    command: ["python", "-m", "app.workers.main"]
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      app:
+        condition: service_healthy
 
 volumes:
   pgdata:

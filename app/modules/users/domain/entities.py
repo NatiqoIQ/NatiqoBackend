@@ -25,7 +25,6 @@ from app.core.types import (
     EnglishVariant,
     Locale,
     UserId,
-    UserRole,
     UserStatus,
 )
 
@@ -105,7 +104,7 @@ class User:
     id: UserId
     email: str
     status: UserStatus = UserStatus.ACTIVE
-    roles: tuple[UserRole, ...] = (UserRole.USER,)
+    is_admin: bool = False
     email_verified_at: datetime | None = None
     deleted_at: datetime | None = None
     created_at: datetime = field(default_factory=utc_now)
@@ -146,9 +145,6 @@ class User:
 
     def is_authenticatable(self) -> bool:
         return self.status in (UserStatus.ACTIVE, UserStatus.PENDING_VERIFICATION)
-
-    def has_role(self, minimum: UserRole) -> bool:
-        return any(role.at_least(minimum) for role in self.roles)
 
 
 @dataclass(slots=True)

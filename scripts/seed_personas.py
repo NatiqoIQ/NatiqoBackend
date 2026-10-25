@@ -31,7 +31,6 @@ from app.core.types import (
     ContentLanguage,
     EnglishVariant,
     Locale,
-    UserRole,
     UserStatus,
 )
 from app.modules.users.domain.entities import NotificationPreferences
@@ -164,7 +163,7 @@ class SeedPersona:
     email: str
     display_name: str
     status: UserStatus = UserStatus.ACTIVE
-    roles: tuple[UserRole, ...] = (UserRole.USER,)
+    is_admin: bool = False
     email_verified: bool = True
     native_language: ContentLanguage = ContentLanguage.AR
     english_variant: EnglishVariant = EnglishVariant.BRITISH
@@ -226,7 +225,7 @@ PERSONAS: tuple[SeedPersona, ...] = (
         key="admin",
         email="admin@natiqo.app",
         display_name="Ali Al-Hashemi",
-        roles=(UserRole.ADMIN,),
+        is_admin=True,
         current_level=CEFRLevel.B2,
         # The admin is the account a reviewer signs in with, so it is the one that has to
         # have something on every screen. Staff also work the course from the beginning

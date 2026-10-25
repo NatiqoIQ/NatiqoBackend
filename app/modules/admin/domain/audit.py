@@ -63,7 +63,7 @@ class AuditAction(StrEnum):
     QUESTION_UPDATE = "content.question.update"
     QUESTION_DELETE = "content.question.delete"
 
-    USER_ROLES_UPDATE = "user.roles.update"
+    USER_ADMIN_UPDATE = "user.is_admin.update"
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,7 +73,7 @@ class AuditEntry:
     ``changes`` is a small, JSON-serialisable snapshot of what the write carried — not a
     full before/after diff, which would double the table for a completeness nobody reads.
     It holds the fields an investigator would need to reconstruct intent: the new state,
-    the moved position, the assigned roles.
+    the moved position, the granted admin flag.
     """
 
     actor_id: UserId | None

@@ -94,7 +94,6 @@ def _user_id(session: AsyncSession) -> UserId:
         id=uuid.uuid4(),
         email=f"{uuid.uuid4().hex}@example.com",
         status="active",
-        roles=["user"],
     )
     session.add(row)
     return UserId(row.id)

@@ -49,10 +49,11 @@ from datetime import UTC, date, datetime, time, timedelta
 
 from app.core.config import Settings
 from app.core.time import ensure_aware, get_timezone, local_date, streak_runs, utc_now
-from app.core.types import ContentId, UserId
+from app.core.types import ContentId, QuestionKind, UserId
 from app.core.uow import UnitOfWorkProtocol
 from app.modules.ai.domain.conversation import Conversation, Message, MessageRole
 from app.modules.content.domain.entities import Lesson, LessonPlacement, Question
+from app.modules.content.domain.policy import MATCH_ARROW as _MATCH_ARROW
 from app.modules.gamification.domain.catalog import ACHIEVEMENTS
 from app.modules.gamification.domain.entities import LeagueTier, UserAchievement, UserStats
 from app.modules.gamification.domain.policy import (
@@ -985,29 +986,146 @@ def _gradeable(question: Question) -> GradeableQuestion:
 
 
 def _submitted(question: Question, *, correct: bool) -> SubmittedAnswer:
-    """What the learner typed or tapped, given whether they were meant to get it right."""
-    if question.choices:
+    """What the learner typed, tapped or arranged, given whether they meant to be right.
+
+    One branch per kind, because a submission is *shaped* by its kind and a mis-shaped one is
+    a validation error rather than a wrong answer: a single choice for a single-option
+    question, a set for a multi-select, typed text for the free-text kinds, the items in
+    sequence for an ordering question, and the pairs the learner built for a matching one.
+    The seeder speaks the engine's vocabulary so the grader can refuse it — a fake that
+    always looked acceptable would hide the very content bug this module exists to catch.
+
+    Where the key lives differs by kind, and that is the whole reason the old
+    choices-or-text shortcut was wrong: only a choice question keeps it in ``correct_index``,
+    a multi-select and a matching question keep theirs in ``accepted_answers``, and an
+    ordering question's key *is* its ``choices`` in authored order.
+    """
+    if question.kind in (QuestionKind.MULTIPLE_CHOICE, QuestionKind.TRUE_FALSE):
         index = _right_index(question) if correct else _wrong_index(question)
         return SubmittedAnswer(choice=question.choices[index])
-    if correct:
-        return SubmittedAnswer(text=question.accepted_answers[0])
-    return SubmittedAnswer(text=_WRONG_TEXT)
+    if question.kind is QuestionKind.MULTI_SELECT:
+        return SubmittedAnswer(choices=_selections(question, correct=correct))
+    if question.kind in (QuestionKind.FILL_BLANK, QuestionKind.WORD_BANK):
+        if correct:
+            return SubmittedAnswer(text=_typed_key(question))
+        return SubmittedAnswer(text=_WRONG_TEXT)
+    if question.kind is QuestionKind.ORDERING:
+        return SubmittedAnswer(order=_arrangement(question, correct=correct))
+    return SubmittedAnswer(matching=_matches(question, correct=correct))
 
 
 def _given_answer(question: Question, *, correct: bool) -> dict[str, str]:
-    """The same submission in the shape ``quiz_answers.given_answer`` stores."""
+    """The same submission in the shape ``quiz_answers.given_answer`` stores.
+
+    Mirrors ``QuizService._given_answer``: one key per submission field, joined with the
+    separator the engine uses, so the stored record and the verdict it was marked against
+    read the same way.
+    """
     answer = _submitted(question, correct=correct)
     if answer.choice is not None:
         return {"choice": answer.choice}
+    if answer.choices:
+        return {"choices": "; ".join(answer.choices)}
+    if answer.order:
+        return {"order": " → ".join(answer.order)}
+    if answer.matching:
+        return {"pairs": "; ".join(answer.matching)}
     return {"text": answer.text or ""}
+
+
+def _typed_key(question: Question) -> str:
+    """The first accepted spelling of a free-text answer."""
+    if not question.accepted_answers:
+        raise _unkeyed(question)
+    return question.accepted_answers[0]
+
+
+def _selections(question: Question, *, correct: bool) -> tuple[str, ...]:
+    """A multi-select submission: the whole key, or a set that cannot be the key.
+
+    A wrong answer is built from the options the key does not name, so it is wrong by set
+    equality rather than by luck. When every option is correct there is no distractor to
+    send, and the honest wrong answer is an unfinished one — the key minus an option — which
+    is a real thing a learner does on that screen.
+    """
+    key = tuple(question.accepted_answers)
+    if not key:
+        raise _unkeyed(question)
+    if correct:
+        return key
+    folded = {answer.strip().lower() for answer in key}
+    distractors = tuple(
+        choice for choice in question.choices if choice.strip().lower() not in folded
+    )
+    if distractors:
+        return distractors
+    if len(key) > 1:
+        return key[:-1]
+    raise ValueError(
+        f"Question {question.id!r} of kind {question.kind!r} has a single correct option, so "
+        "no answer can be wrong on it. Publish a question with a distractor or a second "
+        "correct option."
+    )
+
+
+def _arrangement(question: Question, *, correct: bool) -> tuple[str, ...]:
+    """An ordering submission: the authored sequence, or it with two neighbours swapped.
+
+    The key is ``choices`` in the order they were authored, and grading is element-wise, so
+    swapping any adjacent pair is wrong for certain while still sending every item exactly
+    once — which is the validity rule the grader enforces before it judges anything.
+    """
+    key = tuple(question.choices)
+    if len(key) < 2:
+        raise ValueError(
+            f"Question {question.id!r} of kind {question.kind!r} has {len(key)} items, so "
+            "there is no order to get wrong. Publish at least two items."
+        )
+    if correct:
+        return key
+    return (key[1], key[0], *key[2:])
+
+
+def _matches(question: Question, *, correct: bool) -> tuple[str, ...]:
+    """A matching submission: the authored pairs, or one pair pointed at another option.
+
+    The verdict is set equality, so a wrong answer has to differ as a *set* and not merely
+    in order. Rotating the pairs would look wrong but would be identical when two prompts
+    share an option, so the wrong answer keeps every real pair but the first, and points
+    that one prompt at a different option from the bank — a genuinely unfinished pairing the
+    grader accepts as a submission before marking it wrong.
+    """
+    pairs = tuple(question.accepted_answers)
+    if not pairs:
+        raise _unkeyed(question)
+    if correct:
+        return pairs
+    left, arrow, right = pairs[0].partition(_MATCH_ARROW)
+    if not arrow:
+        raise ValueError(
+            f"Question {question.id!r} stores {pairs[0]!r} as a matching pair, which has no "
+            f"{_MATCH_ARROW!r} in it. Publish the pair as 'left => right'."
+        )
+    taken = right.strip().lower()
+    for choice in question.choices:
+        if choice.strip().lower() != taken:
+            return (f"{left.strip()} {_MATCH_ARROW} {choice.strip()}", *pairs[1:])
+    raise ValueError(
+        f"Question {question.id!r} of kind {question.kind!r} offers no option other than the "
+        "one its first prompt answers, so no pairing can be wrong on it."
+    )
+
+
+def _unkeyed(question: Question) -> ValueError:
+    return ValueError(
+        f"Question {question.id!r} of kind {question.kind!r} has no answer key, so it "
+        "cannot be practised. Publish a keyed question or leave it out of the lesson."
+    )
 
 
 def _right_index(question: Question) -> int:
     if question.correct_index is None:
-        raise ValueError(
-            f"Question {question.id!r} of kind {question.kind!r} has no answer key, so it "
-            "cannot be practised. Publish a keyed question or leave it out of the lesson."
-        )
+        raise _unkeyed(question)
     return question.correct_index
 
 

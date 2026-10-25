@@ -75,7 +75,6 @@ def _user_row(session: AsyncSession) -> UserModel:
         id=uuid.uuid4(),
         email=f"{uuid.uuid4().hex}@example.com",
         status="active",
-        roles=["user"],
     )
     session.add(row)
     return row
@@ -245,6 +244,8 @@ class TestUnlockMap:
 
         assert item.state == "available"
         assert item.locked is False
+        assert item.is_completed is False
+        assert item.is_unlocked is True
         assert item.best_score == 0
         assert item.completed_at is None
 
@@ -274,7 +275,32 @@ class TestUnlockMap:
         (item,) = await service.unlock_map(UserId(user.id))
 
         assert item.state == "completed"
+        assert item.locked is False
+        assert item.is_completed is True
+        assert item.is_unlocked is True
         assert item.best_score == 100
+
+    async def test_subsequent_lessons_in_unit_are_locked_until_predecessors_completed(
+        self, service: ProgressService, quiz: QuizService, session: AsyncSession
+    ) -> None:
+        user = _user_row(session)
+        lessons = _unit_with_lessons(session, code="A1", lessons=[(1, "L1"), (2, "L2"), (3, "L3")])
+        questions_l1 = _questions(session, lessons[0])
+        _questions(session, lessons[1])
+        _questions(session, lessons[2])
+        await session.flush()
+
+        items = await service.unlock_map(UserId(user.id))
+        assert [i.is_unlocked for i in items] == [True, False, False]
+        assert [i.locked for i in items] == [False, True, True]
+        assert [i.is_completed for i in items] == [False, False, False]
+
+        await _attempt(quiz, UserId(user.id), lessons[0], questions_l1)
+
+        items = await service.unlock_map(UserId(user.id))
+        assert [i.is_unlocked for i in items] == [True, True, False]
+        assert [i.locked for i in items] == [False, False, True]
+        assert [i.is_completed for i in items] == [True, False, False]
 
     async def test_a_lesson_under_a_draft_unit_is_excluded(
         self, service: ProgressService, session: AsyncSession
@@ -326,6 +352,8 @@ class TestLessonProgress:
         assert view.title == "Greetings"
         assert view.state == "available"
         assert view.locked is False
+        assert view.is_completed is False
+        assert view.is_unlocked is True
         assert (view.best_score, view.attempts, view.xp_earned) == (0, 0, 0)
 
     async def test_a_completed_lesson_reports_its_record(

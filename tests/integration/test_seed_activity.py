@@ -122,6 +122,30 @@ async def _counts(session: AsyncSession) -> dict[str, int]:
     return {model.__tablename__: await _count(session, model) for model in _ACTIVITY_MODELS}
 
 
+def _submission(stored: dict[str, str]) -> SubmittedAnswer:
+    """Rebuild the learner's submission from the row the seeder stored.
+
+    One branch per stored field — the five the engine accepts — and every one of them is
+    reconstructed literally, with the same separators the engine writes. This is the point
+    of the test: it reads what was *written* rather than asking the seeder for the answer
+    again, so a seeder that stops speaking the engine's vocabulary fails here.
+
+    The kinds differ in where their key lives, which is why the shapes differ at all: a
+    choice stores the option text, a multi-select the set it ticked, a free-text item what
+    was typed, an ordering question the items in the order it arranged them, and a matching
+    one the pairs it built.
+    """
+    if "choice" in stored:
+        return SubmittedAnswer(choice=stored["choice"])
+    if "choices" in stored:
+        return SubmittedAnswer(choices=tuple(stored["choices"].split("; ")))
+    if "order" in stored:
+        return SubmittedAnswer(order=tuple(stored["order"].split(" \u2192 ")))
+    if "pairs" in stored:
+        return SubmittedAnswer(matching=tuple(stored["pairs"].split("; ")))
+    return SubmittedAnswer(text=stored["text"])
+
+
 # ================================================================ the history itself
 @pytest.mark.asyncio
 async def test_the_admin_can_be_shown_every_screen(catalogue, uow, settings, verify) -> None:
@@ -254,11 +278,7 @@ async def test_every_stored_answer_is_the_verdict_the_app_would_give(
 
     for answer in answers:
         question = questions[answer.question_id]
-        submission = (
-            SubmittedAnswer(choice=answer.given_answer["choice"])
-            if "choice" in answer.given_answer
-            else SubmittedAnswer(text=answer.given_answer["text"])
-        )
+        submission = _submission(answer.given_answer)
         graded = grade_answer(
             GradeableQuestion(
                 kind=QuestionKind(question.kind),
@@ -385,7 +405,7 @@ async def test_adopting_a_legacy_admin_backfills_its_history(
             id=legacy_id,
             email=ADMIN_EMAIL,
             status="active",
-            roles=["admin"],
+            is_admin=True,
         )
     )
     await verify.commit()

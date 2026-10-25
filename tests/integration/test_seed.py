@@ -29,7 +29,7 @@ from app.core.database import create_all, dispose_engine, get_session_factory
 from app.core.errors import AppError
 from app.core.registry import import_all_models
 from app.core.time import utc_now
-from app.core.types import CEFRLevel, UserId, UserRole, UserStatus
+from app.core.types import CEFRLevel, UserId, UserStatus
 from app.core.uow_sqlalchemy import SqlAlchemyUnitOfWork
 from app.modules.ai.infrastructure.models import AiUsageRecord
 from app.modules.users.domain.policy import normalise_email
@@ -143,15 +143,15 @@ async def test_seeds_every_persona(uow, settings, verify) -> None:
 
 
 @pytest.mark.asyncio
-async def test_admin_keeps_its_roles_and_a_verified_email(uow, settings, verify) -> None:
+async def test_admin_keeps_its_admin_flag_and_a_verified_email(uow, settings, verify) -> None:
     await run_seed(uow, settings)
 
     admin = await verify.scalar(select(UserModel).where(UserModel.email == ADMIN_EMAIL))
     assert admin is not None
     assert UserStatus(admin.status) is UserStatus.ACTIVE
-    # Roles are stored as their string values; the admin persona must actually be an
-    # admin, or every "log in as the admin" instruction in the README is a dead end.
-    assert set(admin.roles) >= {str(UserRole.ADMIN)}
+    # The admin persona must actually be an admin, or every "log in as the admin"
+    # instruction in the README is a dead end.
+    assert admin.is_admin is True
     assert admin.email_verified_at is not None
 
 
@@ -339,7 +339,6 @@ async def test_foreign_account_is_left_untouched(uow, settings, verify) -> None:
             id=stranger_id,
             email=ADMIN_EMAIL,
             status=UserStatus.ACTIVE.value,
-            roles=[str(UserRole.USER)],
         )
     )
     await verify.commit()
@@ -390,7 +389,6 @@ async def test_skipped_persona_is_the_only_one_not_created(uow, settings, verify
             id=stranger_id,
             email=ADMIN_EMAIL,
             status=UserStatus.ACTIVE.value,
-            roles=[str(UserRole.USER)],
         )
     )
     await verify.commit()
@@ -445,7 +443,6 @@ async def test_an_account_missing_its_profile_and_settings_is_completed(
             id=user_id,
             email=LEARNER_EMAIL,
             status=UserStatus.PENDING_VERIFICATION.value,
-            roles=[str(UserRole.USER)],
         )
     )
     await verify.commit()
@@ -494,7 +491,6 @@ async def _providerless_account(verify: AsyncSession, *, subject: str | None = N
             id=user_id,
             email=ADMIN_EMAIL,
             status=UserStatus.ACTIVE.value,
-            roles=[str(UserRole.USER)],
         )
     )
     await verify.commit()
@@ -992,7 +988,6 @@ async def test_a_tokenless_device_row_is_not_written_twice(uow, settings, verify
             id=user_id,
             email=OMAR_EMAIL,
             status=UserStatus.ACTIVE.value,
-            roles=[str(UserRole.USER)],
         )
     )
     await verify.commit()

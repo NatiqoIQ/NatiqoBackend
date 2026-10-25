@@ -22,7 +22,14 @@ uv run alembic upgrade head               # create the schema (PostgreSQL only)
 uv run python -m scripts.seed --dry-run   # preview the demo accounts
 uv run python -m scripts.seed             # load the demo accounts
 uv run uvicorn app.main:app --reload --port 8100   # http://127.0.0.1:8100/docs
+uv run python -m app.workers.main               # optional: consume queued jobs
 ```
+
+The worker is the consumer half of the queue: it dequeues jobs and runs the handler
+registered for each name (`app/workers/handlers.py`). It needs a *shared* queue — set
+`REDIS_URL` and `QUEUE_ENABLED=true` — because the in-memory adapters live inside one
+process, so a job the API enqueues would never reach a separately started worker. In
+`docker-compose.yml` both processes get `QUEUE_ENABLED=true` explicitly for that reason.
 
 **SQLite (zero external services).** Set `DATABASE_URL=sqlite+aiosqlite:///./local.db` and
 `REDIS_URL=` (empty selects the in-memory cache/queue adapters), then create the schema

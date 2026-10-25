@@ -43,7 +43,8 @@ It complements, and never repeats:
 ```
 
 **What the backend gives you today — 31 operations.** (Plus `POST /api/v1/auth/dev-login`,
-mounted only when `DEV_LOGIN_ENABLED` is true, which it is by default.)
+mounted only when `DEV_LOGIN_ENABLED` is true, which is off by default and refused in
+production: a local `.env` opts in.)
 
 ```
 Auth & account                       Learning loop
@@ -452,7 +453,7 @@ Legend: **LIVE** = endpoint exists today · **PHASE n** = unblocked by roadmap p
 | Devices | `GET/DELETE /me/devices` | shows last-seen; revoking a device revokes its sessions |
 | Close account | `DELETE /me` | destructive: confirm dialog + re-auth; no grace period exists server-side (idempotent `204`) |
 | Sign out | `POST /auth/logout` | `allDevices: false` default; clears local tokens regardless |
-| Dev sign-in (debug builds only) | `POST /auth/dev-login` | `admin`/`admin`; mounted by default in every env, 10-year tokens — a QA backdoor, never shown to learners |
+| Dev sign-in (debug builds only) | `POST /auth/dev-login` | `admin`/`admin`; off by default, refused in production, 10-year tokens — a QA backdoor, never shown to learners |
 
 Advisory fields on sign-in (`displayName`, `nativeLanguage`, `englishVariant`,
 `timezone`, `locale`) apply **only when the account is created**; they never overwrite
@@ -747,8 +748,8 @@ for speaking/pronunciation answers later; do not stream audio through the API se
 
 ### 6.12 Not for the phone app
 
-- **Admin content authoring** (`/admin/content/*`) — web only, role-gated
-  (`content_editor`, `admin`). Do not build it into the learner app.
+- **Admin content authoring** (`/admin/content/*`) — web only, gated by `isAdmin`. Do not
+  build it into the learner app.
 - `GET /me/export` (roadmap 0.9) — not built yet; when it lands, a "download my data" row
   in Settings that triggers a share sheet is enough.
 

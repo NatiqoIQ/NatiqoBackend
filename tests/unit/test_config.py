@@ -81,31 +81,33 @@ class TestCorsOrigins:
 
 
 class TestDevLogin:
-    """The development sign-in is available in every environment, production included.
+    """The development sign-in is a development affordance, and only that.
 
-    The flag defaults to on, and no environment refuses to boot because of it; the
-    only way it disappears is by explicitly setting ``DEV_LOGIN_ENABLED=false``.
+    Its credentials are fixed strings committed to the repository, so the honest default is
+    off and a production boot refuses to start while the door is open. A local ``.env``
+    opts in explicitly, which is the only place the backdoor is ever appropriate.
     """
 
-    def test_on_by_default(self) -> None:
-        """Read the shipped default off the model: the test env forces the flag off."""
-        assert Settings.model_fields["dev_login_enabled"].default is True
+    def test_off_by_default(self) -> None:
+        """Read the shipped default off the model: the test env forces the flag off too."""
+        assert Settings.model_fields["dev_login_enabled"].default is False
 
-    def test_production_does_not_flag_the_default(self) -> None:
-        settings = build(app_env="production")
-        assert not any(
-            "DEV_LOGIN_ENABLED" in problem for problem in settings.validate_environment()
-        )
-
-    def test_production_accepts_the_flag_explicitly(self) -> None:
+    def test_production_refuses_to_boot_with_it_on(self) -> None:
         settings = build(app_env="production", dev_login_enabled=True)
+        assert any("DEV_LOGIN_ENABLED" in problem for problem in settings.validate_environment())
+
+    def test_production_boots_with_it_off(self) -> None:
+        settings = build(app_env="production", dev_login_enabled=False)
         assert not any(
             "DEV_LOGIN_ENABLED" in problem for problem in settings.validate_environment()
         )
 
-    def test_can_still_be_switched_off(self) -> None:
-        settings = build(app_env="production", dev_login_enabled=False)
-        assert settings.dev_login_enabled is False
+    def test_development_can_opt_in(self) -> None:
+        settings = build(dev_login_enabled=True)
+        assert settings.dev_login_enabled is True
+        assert not any(
+            "DEV_LOGIN_ENABLED" in problem for problem in settings.validate_environment()
+        )
 
 
 class TestDevLoginCors:

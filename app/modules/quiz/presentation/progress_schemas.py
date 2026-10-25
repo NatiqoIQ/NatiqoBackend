@@ -76,6 +76,8 @@ class UnlockMapItemResponse(_ProgressWire):
     position: int
     state: str
     locked: bool
+    is_completed: bool
+    is_unlocked: bool
     best_score: int = Field(ge=0, le=100)
     attempts: int = Field(ge=0)
     xp_earned: int = Field(ge=0)

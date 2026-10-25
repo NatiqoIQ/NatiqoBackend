@@ -80,7 +80,6 @@ def _user_row(session: AsyncSession) -> UserModel:
         id=uuid.uuid4(),
         email=f"{uuid.uuid4().hex}@example.com",
         status="active",
-        roles=["user"],
     )
     session.add(row)
     return row

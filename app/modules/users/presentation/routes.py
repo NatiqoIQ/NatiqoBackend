@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import secrets
 import uuid
-from collections.abc import Awaitable, Callable
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Request, Response, status
@@ -27,7 +26,6 @@ from app.api.deps import (
     get_identity_verifiers,
 )
 from app.core.errors import ErrorCode, NotFoundError, UnauthorizedError, ValidationFailed
-from app.core.types import UserRole
 from app.modules.users.application.auth_service import AuthService
 from app.modules.users.application.dto import (
     AuthResult,
@@ -99,7 +97,7 @@ def _me_response(view: MeView) -> MeResponse:
         id=str(view.id),
         email=view.email,
         status=view.status,
-        roles=list(view.roles),
+        is_admin=view.is_admin,
         email_verified=view.email_verified,
         created_at=view.created_at,
         profile=UserProfileResponse(
@@ -221,8 +219,8 @@ class _DevVerifier:
     Same trick as the seeder's: sign in through the real use case so account creation,
     the identity row and the refresh chain all travel the production code path, with
     no provider round-trip. The router that exposes it is mounted only when
-    ``DEV_LOGIN_ENABLED`` is set (on by default in every environment), so clearing the
-    flag keeps the route out of the app entirely.
+    ``DEV_LOGIN_ENABLED`` is set — off by default, and refused in production — so the
+    backdoor is absent from the app unless a local ``.env`` asks for it.
     """
 
     provider = IdentityProvider.GOOGLE
@@ -309,20 +307,19 @@ async def dev_login(
     )
     result = await service.login_with_identity(command)
 
-    required = {UserRole.ADMIN}
-    if not required <= {UserRole(role) for role in result.user.roles}:
-        # First sight of this account: it was created with the default role, so the
-        # tokens minted a line ago carry no admin claims. Grant the roles, revoke that
-        # throwaway session, and sign in once more — the pair handed to the client is
-        # then minted from the account its own responses describe. Later sign-ins take
-        # this branch never and cost one query fewer.
+    if not result.user.is_admin:
+        # First sight of this account: it was created without the flag, so the tokens
+        # minted a line ago belong to an account that cannot reach the admin surface yet.
+        # Grant it, revoke that throwaway session, and sign in once more — the pair handed
+        # to the client is then minted from the account its own responses describe. Later
+        # sign-ins take this branch never and cost one query fewer.
         user = await uow.users.get(result.user.id)
         if user is None:  # pragma: no cover - sign-in above just loaded it
             raise UnauthorizedError(
                 "This sign-in is no longer linked to an account.",
                 code=ErrorCode.AUTH_IDENTITY_INVALID,
             )
-        user.roles = (UserRole.ADMIN,)
+        user.is_admin = True
         await uow.users.update(user)
         await uow.commit()
         await service.logout(LogoutCommand(refresh_token=result.tokens.refresh_token))
@@ -452,18 +449,14 @@ async def current_user(
 CurrentUser = Annotated[User, Depends(current_user)]
 
 
-def require_role(minimum: UserRole) -> Callable[..., Awaitable[User]]:
-    """Build a dependency enforcing a minimum role.
+async def require_admin(user: CurrentUser, service: AuthServiceDep) -> User:
+    """Dependency enforcing admin access.
 
-    Role checks read the live account, not the ``roles`` claim in the access token.
-    A token minted before a demotion stays valid for up to its full TTL otherwise, and
-    revoking a role is supposed to take effect immediately.
+    The check reads the live account, not a claim in the access token. A token minted
+    before a revocation stays valid for up to its full TTL otherwise, and taking the
+    flag away is supposed to take effect immediately.
     """
-
-    async def _dependency(user: CurrentUser, service: AuthServiceDep) -> User:
-        return await service.require_role(user, minimum)
-
-    return _dependency
+    return await service.require_admin(user)
 
 
 async def _authenticate(
@@ -481,6 +474,6 @@ __all__ = [
     "CurrentUser",
     "current_user",
     "dev_router",
-    "require_role",
+    "require_admin",
     "router",
 ]

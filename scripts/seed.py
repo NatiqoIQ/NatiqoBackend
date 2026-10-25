@@ -634,7 +634,7 @@ async def _write_account(
         raise SeedRefused(f"{persona.key}: account {user_id} disappeared mid-seed")
 
     user.status = persona.status
-    user.roles = persona.roles
+    user.is_admin = persona.is_admin
     if persona.email_verified and user.email_verified_at is None:
         user.verify_email()
     await uow.users.update(user)

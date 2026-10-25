@@ -10,9 +10,9 @@ follow the same rule: clearing an ``image_url``, ``audio_url`` or ``video_url`` 
 edit, so PATCH must distinguish absence from ``null``.
 
 ``QuestionAdminResponse`` is the one response on this API that *does* carry an answer key.
-That is not a leak: this router is role-gated at ``content_editor`` or above, and the person
-fixing a mis-keyed question is exactly who needs to see the key. It is kept separate from the
-public ``content`` schemas so the two field lists can never be confused.
+That is not a leak: this router is admin-gated, and the person fixing a mis-keyed question is
+exactly who needs to see the key. It is kept separate from the public ``content`` schemas so
+the two field lists can never be confused.
 """
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ __all__ = [
     "AdminUserListResponse",
     "AdminUserResponse",
     "LessonCreateRequest",
-    "LessonDetailResponse",
+    "LessonDetailAdminResponse",
     "LessonResponse",
     "LessonUpdateRequest",
     "LevelCreateRequest",
@@ -48,10 +48,10 @@ __all__ = [
     "QuestionListResponse",
     "QuestionReorderRequest",
     "QuestionUpdateRequest",
+    "SetAdminRequest",
     "UnitCreateRequest",
     "UnitResponse",
     "UnitUpdateRequest",
-    "UserRolesRequest",
 ]
 
 
@@ -285,21 +285,29 @@ class QuestionReorderRequest(_AdminWire):
     question_ids: list[uuid.UUID] = Field(min_length=1)
 
 
-class LessonDetailResponse(LessonResponse):
+class LessonDetailAdminResponse(LessonResponse):
+    """The admin view of one lesson: every question, answer key included.
+
+    Named rather than plain ``LessonDetailResponse`` because the learner-facing module
+    declares that name too. Two same-named models make FastAPI prefix both with their
+    module path, so neither appears under the name a client or a document means.
+    """
+
     questions: list[QuestionAdminResponse] = Field(default_factory=list)
 
 
 # ----------------------------------------------------------------------- users
-class UserRolesRequest(_AdminWire):
+class SetAdminRequest(_AdminWire):
     user_id: uuid.UUID
-    roles: list[str] = Field(min_length=1)
+    is_admin: bool
 
 
 class AdminUserResponse(_AdminWire):
     id: uuid.UUID
     email: str
+    name: str
     status: str
-    roles: list[str]
+    is_admin: bool
     created_at: datetime
 
 

@@ -95,30 +95,6 @@ class Locale(StrEnum):
     EN = "en"
 
 
-class UserRole(StrEnum):
-    """Authorization roles. Ordered from least to most privileged."""
-
-    USER = "user"
-    CONTENT_EDITOR = "content_editor"
-    CONTENT_REVIEWER = "content_reviewer"
-    ADMIN = "admin"
-
-    @property
-    def rank(self) -> int:
-        return _ROLE_RANK[self]
-
-    def at_least(self, other: UserRole) -> bool:
-        return self.rank >= other.rank
-
-
-_ROLE_RANK: dict[UserRole, int] = {
-    UserRole.USER: 0,
-    UserRole.CONTENT_EDITOR: 1,
-    UserRole.CONTENT_REVIEWER: 2,
-    UserRole.ADMIN: 3,
-}
-
-
 class UserStatus(StrEnum):
     ACTIVE = "active"
     PENDING_VERIFICATION = "pending_verification"

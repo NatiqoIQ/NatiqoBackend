@@ -717,14 +717,15 @@ class TestAuthenticate:
             await service.authenticate(signed_in.tokens.access_token)
         assert caught.value.code == ErrorCode.USER_DELETED
 
-    async def test_role_check_refuses_an_insufficient_role(self, service, google):
-        from app.core.types import UserRole
-
+    async def test_admin_check_gates_the_admin_surface(self, service, google):
         signed_in = await sign_in(service, google)
         user = await service.authenticate(signed_in.tokens.access_token)
 
-        # A plain account satisfies its own role but not an elevated one.
-        assert await service.require_role(user, UserRole.USER) is user
+        # A plain account is refused...
         with pytest.raises(ForbiddenError) as caught:
-            await service.require_role(user, UserRole.ADMIN)
-        assert caught.value.code == ErrorCode.AUTH_INSUFFICIENT_ROLE
+            await service.require_admin(user)
+        assert caught.value.code == ErrorCode.AUTH_ADMIN_REQUIRED
+
+        # ...and the live flag, not a token claim, is what admits it.
+        user.is_admin = True
+        assert await service.require_admin(user) is user

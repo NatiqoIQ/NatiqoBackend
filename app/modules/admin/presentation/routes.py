@@ -4,10 +4,9 @@ Mounted under ``/api/v1/admin`` and role-gated, which is the defining difference
 public ``/content`` surface. Every route here answers one of three questions the public
 catalogue deliberately cannot: *what does the draft look like*, *change it*, and *who did*.
 
-**Two roles, by consequence.** Reading and writing content needs ``content_editor``;
-publishing needs ``content_reviewer``, because publishing is the one editorial move that
-changes what learners see and the review step exists to keep it a deliberate act. Account
-moderation needs ``admin``. The role check reads the live account, not the token claim, so a
+**One gate, ``is_admin``.** Authoring, publishing and account moderation are all
+administrator work; the review step that supposed a second role is gone, so a single flag
+answers for the whole surface. The check reads the live account, not the token claim, so a
 demotion takes effect on the next request rather than at token expiry.
 
 **The audit row is written in the same transaction as the change.** Each write delegates to a
@@ -33,7 +32,6 @@ from app.api.deps import (
     AdminUserServiceDep,
 )
 from app.core.responses import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, Page, build_page
-from app.core.types import UserRole
 from app.modules.admin.application.dto import (
     MISSING,
     LessonCreateCommand,
@@ -43,9 +41,9 @@ from app.modules.admin.application.dto import (
     QuestionCreateCommand,
     QuestionDuplicateCommand,
     QuestionUpdateCommand,
+    SetAdminCommand,
     UnitCreateCommand,
     UnitUpdateCommand,
-    UserRolesCommand,
 )
 from app.modules.admin.application.stats_service import (
     DEFAULT_WINDOW_DAYS,
@@ -57,7 +55,7 @@ from app.modules.admin.presentation.schemas import (
     AdminUserListResponse,
     AdminUserResponse,
     LessonCreateRequest,
-    LessonDetailResponse,
+    LessonDetailAdminResponse,
     LessonResponse,
     LessonUpdateRequest,
     LevelCreateRequest,
@@ -75,6 +73,7 @@ from app.modules.admin.presentation.schemas import (
     QuestionListResponse,
     QuestionReorderRequest,
     QuestionUpdateRequest,
+    SetAdminRequest,
     StatsAiResponse,
     StatsContentResponse,
     StatsGamificationResponse,
@@ -86,10 +85,9 @@ from app.modules.admin.presentation.schemas import (
     UnitCreateRequest,
     UnitResponse,
     UnitUpdateRequest,
-    UserRolesRequest,
 )
 from app.modules.users.domain.entities import User
-from app.modules.users.presentation.routes import require_role
+from app.modules.users.presentation.routes import require_admin
 
 router = APIRouter()
 
@@ -97,11 +95,9 @@ Limit = Annotated[int, Query(ge=1, le=MAX_PAGE_SIZE)]
 Cursor = Annotated[str | None, Query(description="Opaque. Pass back meta.nextCursor verbatim.")]
 
 #: Authoring the curriculum — read or write.
-ContentEditorDep = Annotated[User, Depends(require_role(UserRole.CONTENT_EDITOR))]
-#: Publishing, the move that reaches learners.
-ContentReviewerDep = Annotated[User, Depends(require_role(UserRole.CONTENT_REVIEWER))]
-#: Account moderation.
-AdminDep = Annotated[User, Depends(require_role(UserRole.ADMIN))]
+#: One gate for every route here: the live account must carry the admin flag. Authoring,
+#: publishing and account moderation are the same privilege now — there is no ladder to climb.
+AdminDep = Annotated[User, Depends(require_admin)]
 
 #: Ids in the path are plain UUIDs; a non-UUID is a 422 from the URL grammar, which is the
 #: honest answer before any lookup happens.
@@ -115,7 +111,7 @@ _LevelId = Annotated[uuid.UUID, Path(description="The level's id.")]
     summary="List levels, drafts included",
 )
 async def list_levels(
-    _editor: ContentEditorDep,
+    _admin: AdminDep,
     service: AdminContentServiceDep,
     _limit_guard: AdminRateLimitDep,
     limit: Limit = DEFAULT_PAGE_SIZE,
@@ -143,13 +139,13 @@ async def list_levels(
 )
 async def create_level(
     payload: LevelCreateRequest,
-    editor: ContentEditorDep,
+    admin: AdminDep,
     service: AdminContentServiceDep,
     _limit_guard: AdminRateLimitDep,
 ) -> LevelResponse:
     """Create a level in ``draft``. Publishing is a separate, reviewer-gated move."""
     view = await service.create_level(
-        editor.id,
+        admin.id,
         LevelCreateCommand(
             code=payload.code,
             title=payload.title,
@@ -167,7 +163,7 @@ async def create_level(
 )
 async def get_level(
     level_id: _LevelId,
-    _editor: ContentEditorDep,
+    _admin: AdminDep,
     service: AdminContentServiceDep,
     _limit_guard: AdminRateLimitDep,
 ) -> LevelResponse:
@@ -182,12 +178,12 @@ async def get_level(
 async def update_level(
     level_id: _LevelId,
     payload: LevelUpdateRequest,
-    editor: ContentEditorDep,
+    admin: AdminDep,
     service: AdminContentServiceDep,
     _limit_guard: AdminRateLimitDep,
 ) -> LevelResponse:
     """PATCH: only the fields present in the body are touched."""
-    view = await service.update_level(editor.id, level_id, _level_update(payload))
+    view = await service.update_level(admin.id, level_id, _level_update(payload))
     return LevelResponse.model_validate(view)
 
 
@@ -198,12 +194,12 @@ async def update_level(
 )
 async def delete_level(
     level_id: _LevelId,
-    editor: ContentEditorDep,
+    admin: AdminDep,
     service: AdminContentServiceDep,
     _limit_guard: AdminRateLimitDep,
 ) -> Response:
     """Deletion cascades down the tree at the database level."""
-    await service.delete_level(editor.id, level_id)
+    await service.delete_level(admin.id, level_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -215,7 +211,7 @@ async def delete_level(
 )
 async def list_units(
     level_id: _LevelId,
-    _editor: ContentEditorDep,
+    _admin: AdminDep,
     service: AdminContentServiceDep,
     _limit_guard: AdminRateLimitDep,
     limit: Limit = DEFAULT_PAGE_SIZE,
@@ -239,12 +235,12 @@ async def list_units(
 async def create_unit(
     level_id: _LevelId,
     payload: UnitCreateRequest,
-    editor: ContentEditorDep,
+    admin: AdminDep,
     service: AdminContentServiceDep,
     _limit_guard: AdminRateLimitDep,
 ) -> UnitResponse:
     view = await service.create_unit(
-        editor.id,
+        admin.id,
         level_id,
         UnitCreateCommand(
             title=payload.title,
@@ -262,7 +258,7 @@ async def create_unit(
 )
 async def get_unit(
     unit_id: uuid.UUID,
-    _editor: ContentEditorDep,
+    _admin: AdminDep,
     service: AdminContentServiceDep,
     _limit_guard: AdminRateLimitDep,
 ) -> UnitResponse:
@@ -277,11 +273,11 @@ async def get_unit(
 async def update_unit(
     unit_id: uuid.UUID,
     payload: UnitUpdateRequest,
-    editor: ContentEditorDep,
+    admin: AdminDep,
     service: AdminContentServiceDep,
     _limit_guard: AdminRateLimitDep,
 ) -> UnitResponse:
-    view = await service.update_unit(editor.id, unit_id, _unit_update(payload))
+    view = await service.update_unit(admin.id, unit_id, _unit_update(payload))
     return UnitResponse.model_validate(view)
 
 
@@ -292,11 +288,11 @@ async def update_unit(
 )
 async def delete_unit(
     unit_id: uuid.UUID,
-    editor: ContentEditorDep,
+    admin: AdminDep,
     service: AdminContentServiceDep,
     _limit_guard: AdminRateLimitDep,
 ) -> Response:
-    await service.delete_unit(editor.id, unit_id)
+    await service.delete_unit(admin.id, unit_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -308,7 +304,7 @@ async def delete_unit(
 )
 async def list_lessons(
     unit_id: uuid.UUID,
-    _editor: ContentEditorDep,
+    _admin: AdminDep,
     service: AdminContentServiceDep,
     _limit_guard: AdminRateLimitDep,
     limit: Limit = DEFAULT_PAGE_SIZE,
@@ -332,12 +328,12 @@ async def list_lessons(
 async def create_lesson(
     unit_id: uuid.UUID,
     payload: LessonCreateRequest,
-    editor: ContentEditorDep,
+    admin: AdminDep,
     service: AdminContentServiceDep,
     _limit_guard: AdminRateLimitDep,
 ) -> LessonResponse:
     view = await service.create_lesson(
-        editor.id,
+        admin.id,
         unit_id,
         LessonCreateCommand(
             title=payload.title,
@@ -351,17 +347,17 @@ async def create_lesson(
 
 @router.get(
     "/content/lessons/{lesson_id}",
-    response_model=LessonDetailResponse,
+    response_model=LessonDetailAdminResponse,
     summary="Read a lesson with its questions",
 )
 async def get_lesson(
     lesson_id: uuid.UUID,
-    _editor: ContentEditorDep,
+    _admin: AdminDep,
     service: AdminContentServiceDep,
     _limit_guard: AdminRateLimitDep,
-) -> LessonDetailResponse:
+) -> LessonDetailAdminResponse:
     """The editorial view of a lesson: every question, answer key included."""
-    return LessonDetailResponse.model_validate(await service.get_lesson(lesson_id))
+    return LessonDetailAdminResponse.model_validate(await service.get_lesson(lesson_id))
 
 
 @router.patch(
@@ -372,11 +368,11 @@ async def get_lesson(
 async def update_lesson(
     lesson_id: uuid.UUID,
     payload: LessonUpdateRequest,
-    editor: ContentEditorDep,
+    admin: AdminDep,
     service: AdminContentServiceDep,
     _limit_guard: AdminRateLimitDep,
 ) -> LessonResponse:
-    view = await service.update_lesson(editor.id, lesson_id, _lesson_update(payload))
+    view = await service.update_lesson(admin.id, lesson_id, _lesson_update(payload))
     return LessonResponse.model_validate(view)
 
 
@@ -387,11 +383,11 @@ async def update_lesson(
 )
 async def delete_lesson(
     lesson_id: uuid.UUID,
-    editor: ContentEditorDep,
+    admin: AdminDep,
     service: AdminContentServiceDep,
     _limit_guard: AdminRateLimitDep,
 ) -> Response:
-    await service.delete_lesson(editor.id, lesson_id)
+    await service.delete_lesson(admin.id, lesson_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -402,17 +398,17 @@ async def delete_lesson(
 )
 async def publish_lesson(
     lesson_id: uuid.UUID,
-    editor: ContentReviewerDep,
+    admin: AdminDep,
     service: AdminContentServiceDep,
     _limit_guard: AdminRateLimitDep,
 ) -> LessonResponse:
-    """Move a lesson to ``published``, gated at ``content_reviewer``.
+    """Move a lesson to ``published``, gated behind ``isAdmin``.
 
     Refused as a 409 unless the lesson is ``approved`` and its unit is already published:
     the parent-published rule is enforced by the aggregate, so no endpoint can publish a
     lesson into a draft unit.
     """
-    view = await service.publish_lesson(editor.id, lesson_id)
+    view = await service.publish_lesson(admin.id, lesson_id)
     return LessonResponse.model_validate(view)
 
 
@@ -426,13 +422,13 @@ async def publish_lesson(
 async def create_question(
     lesson_id: uuid.UUID,
     payload: QuestionCreateRequest,
-    editor: ContentEditorDep,
+    admin: AdminDep,
     service: AdminContentServiceDep,
     _limit_guard: AdminRateLimitDep,
 ) -> QuestionAdminResponse:
     """A question that cannot be answered as written is a 422, with every problem listed."""
     view = await service.create_question(
-        editor.id,
+        admin.id,
         lesson_id,
         QuestionCreateCommand(
             kind=payload.kind,
@@ -460,7 +456,7 @@ async def create_question(
 async def reorder_questions(
     lesson_id: uuid.UUID,
     payload: QuestionReorderRequest,
-    editor: ContentEditorDep,
+    admin: AdminDep,
     service: AdminContentServiceDep,
     _limit_guard: AdminRateLimitDep,
 ) -> QuestionListResponse:
@@ -469,7 +465,7 @@ async def reorder_questions(
     The body must list every question in the lesson exactly once; a partial list is a 422
     rather than a silent reshuffle of the rest.
     """
-    views = await service.reorder_questions(editor.id, lesson_id, list(payload.question_ids))
+    views = await service.reorder_questions(admin.id, lesson_id, list(payload.question_ids))
     items = [QuestionAdminResponse.model_validate(view) for view in views]
     return QuestionListResponse(items=items, total=len(items))
 
@@ -482,11 +478,11 @@ async def reorder_questions(
 async def update_question(
     question_id: uuid.UUID,
     payload: QuestionUpdateRequest,
-    editor: ContentEditorDep,
+    admin: AdminDep,
     service: AdminContentServiceDep,
     _limit_guard: AdminRateLimitDep,
 ) -> QuestionAdminResponse:
-    view = await service.update_question(editor.id, question_id, _question_update(payload))
+    view = await service.update_question(admin.id, question_id, _question_update(payload))
     return QuestionAdminResponse.model_validate(view)
 
 
@@ -497,11 +493,11 @@ async def update_question(
 )
 async def delete_question(
     question_id: uuid.UUID,
-    editor: ContentEditorDep,
+    admin: AdminDep,
     service: AdminContentServiceDep,
     _limit_guard: AdminRateLimitDep,
 ) -> Response:
-    await service.delete_question(editor.id, question_id)
+    await service.delete_question(admin.id, question_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -512,7 +508,7 @@ async def delete_question(
 )
 async def get_question(
     question_id: uuid.UUID,
-    _editor: ContentEditorDep,
+    _admin: AdminDep,
     service: AdminContentServiceDep,
     _limit_guard: AdminRateLimitDep,
 ) -> QuestionAdminResponse:
@@ -533,7 +529,7 @@ async def get_question(
 async def duplicate_question(
     question_id: uuid.UUID,
     payload: QuestionDuplicateRequest,
-    editor: ContentEditorDep,
+    admin: AdminDep,
     service: AdminContentServiceDep,
     _limit_guard: AdminRateLimitDep,
 ) -> QuestionAdminResponse:
@@ -543,7 +539,7 @@ async def duplicate_question(
     usual reason to duplicate one.
     """
     view = await service.duplicate_question(
-        editor.id,
+        admin.id,
         question_id,
         QuestionDuplicateCommand(lesson_id=payload.lesson_id, position=payload.position),
     )
@@ -559,7 +555,7 @@ async def bulk_create_questions(
     lesson_id: uuid.UUID,
     payload: QuestionBulkRequest,
     response: Response,
-    editor: ContentEditorDep,
+    admin: AdminDep,
     service: AdminContentServiceDep,
     _limit_guard: AdminRateLimitDep,
 ) -> QuestionBulkResponse:
@@ -573,7 +569,7 @@ async def bulk_create_questions(
     "written" from "would be written" without reading the body.
     """
     view = await service.create_questions(
-        editor.id,
+        admin.id,
         lesson_id,
         [_question_command(item) for item in payload.questions],
         dry_run=payload.dry_run,
@@ -589,7 +585,7 @@ async def bulk_create_questions(
 )
 async def export_questions(
     lesson_id: uuid.UUID,
-    _editor: ContentEditorDep,
+    _admin: AdminDep,
     service: AdminContentServiceDep,
     _limit_guard: AdminRateLimitDep,
 ) -> QuestionExportResponse:
@@ -617,7 +613,7 @@ async def import_questions(
     lesson_id: uuid.UUID,
     payload: QuestionImportRequest,
     response: Response,
-    editor: ContentEditorDep,
+    admin: AdminDep,
     service: AdminContentServiceDep,
     _limit_guard: AdminRateLimitDep,
 ) -> QuestionBulkResponse:
@@ -629,7 +625,7 @@ async def import_questions(
     copies rather than a silent edit of the first.
     """
     view = await service.import_questions(
-        editor.id,
+        admin.id,
         lesson_id,
         [_question_command(item) for item in payload.questions],
         version=payload.version,
@@ -665,21 +661,21 @@ async def list_users(
 @router.post(
     "/users",
     response_model=AdminUserResponse,
-    summary="Replace an account's roles",
+    summary="Grant or revoke an account's admin flag",
 )
-async def replace_user_roles(
-    payload: UserRolesRequest,
+async def set_user_admin(
+    payload: SetAdminRequest,
     admin: AdminDep,
     service: AdminUserServiceDep,
     _limit_guard: AdminRateLimitDep,
 ) -> AdminUserResponse:
-    """Set an account's roles wholesale — a replace, so revocation is one call.
+    """Set an account's admin flag — one call in either direction, so revocation is easy.
 
     The actor is read from the live account, so the audit row names who really made the
     change rather than whoever a stale token claims to be.
     """
-    view = await service.replace_roles(
-        admin.id, payload.user_id, UserRolesCommand(roles=tuple(payload.roles))
+    view = await service.set_admin(
+        admin.id, payload.user_id, SetAdminCommand(is_admin=payload.is_admin)
     )
     return AdminUserResponse.model_validate(view)
 

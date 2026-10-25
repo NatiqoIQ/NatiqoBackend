@@ -72,8 +72,8 @@ class DevLoginRequest(WireModel):
 
     The credential check is the only one in the service: everywhere else the provider
     owns the password and the server never sees one. That is exactly why this route is
-    flag-guarded (``DEV_LOGIN_ENABLED``, on by default in every environment) rather
-    than always present.
+    flag-guarded (``DEV_LOGIN_ENABLED``, off by default and refused in production)
+    rather than always present.
     """
 
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
@@ -137,7 +137,7 @@ class MeResponse(WireModel):
     id: str
     email: str
     status: str
-    roles: list[str]
+    is_admin: bool
     email_verified: bool
     created_at: datetime
     profile: UserProfileResponse

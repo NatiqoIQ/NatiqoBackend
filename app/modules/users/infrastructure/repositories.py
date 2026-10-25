@@ -11,7 +11,7 @@ import uuid
 from datetime import datetime
 from typing import Any, cast
 
-from sqlalchemy import and_, func, or_, select, update
+from sqlalchemy import and_, delete, func, or_, select, update
 from sqlalchemy.engine import CursorResult, Result
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -50,13 +50,13 @@ def _rows_affected(result: Result[Any]) -> int:
 
 
 def _to_user(model: UserModel) -> User:
-    from app.core.types import UserRole, UserStatus
+    from app.core.types import UserStatus
 
     return User(
         id=UserId(model.id),
         email=model.email,
         status=UserStatus(model.status),
-        roles=tuple(UserRole(role) for role in (model.roles or ["user"])),
+        is_admin=bool(model.is_admin),
         email_verified_at=ensure_aware(model.email_verified_at)
         if model.email_verified_at
         else None,
@@ -168,7 +168,7 @@ class SqlAlchemyUserRepository:
                 id=user.id,
                 email=user.email,
                 status=user.status.value,
-                roles=[role.value for role in user.roles],
+                is_admin=user.is_admin,
                 email_verified_at=user.email_verified_at,
                 created_at=user.created_at,
                 updated_at=user.updated_at,
@@ -186,7 +186,7 @@ class SqlAlchemyUserRepository:
             .where(UserModel.id == user.id, UserModel.email == user.email)
             .values(
                 status=user.status.value,
-                roles=[role.value for role in user.roles],
+                is_admin=user.is_admin,
                 email_verified_at=user.email_verified_at,
                 # Listed explicitly because this method enumerates every mutable column: a
                 # new entity field that is not added here is silently dropped on write, and
@@ -222,6 +222,15 @@ class SqlAlchemyUserRepository:
         stmt = select(UserProfileModel).where(UserProfileModel.user_id == user_id)
         model = (await self._session.execute(stmt)).scalar_one_or_none()
         return _to_profile(model) if model else None
+
+    async def get_display_names(self, user_ids: list[UserId]) -> dict[UserId, str]:
+        if not user_ids:
+            return {}
+        stmt = select(UserProfileModel.user_id, UserProfileModel.display_name).where(
+            UserProfileModel.user_id.in_(user_ids)
+        )
+        rows = (await self._session.execute(stmt)).all()
+        return {row.user_id: row.display_name for row in rows}
 
     async def save_profile(self, profile: UserProfile) -> None:
         stmt = select(UserProfileModel).where(UserProfileModel.user_id == profile.user_id)
@@ -358,6 +367,17 @@ class SqlAlchemyRefreshTokenRepository:
                 RefreshTokenModel.revoked_at.is_(None),
             )
             .values(revoked_at=at or utc_now())
+        )
+        return _rows_affected(result)
+
+    async def purge_expired(self, *, before: datetime | None = None) -> int:
+        """Delete expired rows — see :meth:`RefreshTokenRepositoryPort.purge_expired`.
+
+        Only ``expires_at`` is read, which is why the model indexes that column alone:
+        the job walks an index and deletes, and never scans the table to decide.
+        """
+        result = await self._session.execute(
+            delete(RefreshTokenModel).where(RefreshTokenModel.expires_at < (before or utc_now()))
         )
         return _rows_affected(result)
 

@@ -134,8 +134,9 @@ class CompletedSessionResponse(WireModel):
 
     ``passed`` and ``unlockedUnitId`` are meaningful only for a checkpoint sitting and
     come back ``null`` for a lesson. The question id lists describe either mode, and
-    ``retryAvailable`` is true whenever anything was missed, which is the client's cue
-    to offer another pass.
+    ``retryAvailable`` is the client's cue to offer another pass at the missed questions in
+    this same sitting: true for a lesson with misses, false for a checkpoint, which is
+    re-sat from the start instead.
     """
 
     session: SessionResponse

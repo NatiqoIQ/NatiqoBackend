@@ -42,7 +42,7 @@ from app.core.config import get_settings
 from app.core.database import create_all, dispose_engine
 from app.core.errors import ErrorCode
 from app.core.registry import import_all_models
-from app.core.types import ContentState, QuestionKind, SkillKind, UserRole, UserStatus
+from app.core.types import ContentState, QuestionKind, SkillKind, UserStatus
 from app.main import app
 from app.modules.admin.infrastructure.models import AuditLogModel
 from app.modules.ai.infrastructure.models import AiUsageRecord
@@ -170,8 +170,8 @@ class FakeVerifier:
     """A provider that trusts exactly the tokens a test hands it.
 
     The real adapters verify a signature against Google's or Apple's published keys and
-    are covered by their own tests. What this file is about is the HTTP surface Ã¢â‚¬â€ status
-    codes, serialization, auth wiring Ã¢â‚¬â€ and none of that is improved by a network call.
+    are covered by their own tests. What this file is about is the HTTP surface — status
+    codes, serialization, auth wiring — and none of that is improved by a network call.
     """
 
     def __init__(self, provider: IdentityProvider) -> None:
@@ -250,7 +250,7 @@ async def sign_in(
     """Sign in and return the ``user`` and ``tokens`` blocks.
 
     The first sign-in for an identity creates the account, so this is also how a test
-    gets a learner Ã¢â‚¬â€ there is no separate registration step to fake.
+    gets a learner — there is no separate registration step to fake.
     """
     chosen = verifier or GOOGLE
     # Comfortably over the schema's minimum length, so a test that means to exercise
@@ -300,6 +300,10 @@ async def test_health_and_readiness_report_success(client: AsyncClient) -> None:
     report = ready.json()["data"]
     # A deep check that silently skipped its dependencies would report healthy here.
     assert report["checks"], "readiness returned no dependency checks"
+    # Named, not merely counted: the queue probe was added because the worker is a
+    # separate process, and a worker nobody can see going down is a worker nobody
+    # notices is down.
+    assert {check["name"] for check in report["checks"]} >= {"database", "cache", "queue"}
 
 
 # ================================================================== sign in
@@ -314,8 +318,8 @@ async def test_google_sign_in_creates_the_account_and_issues_a_session(
     assert user["status"] == "active"
     # The provider vouched for the address, so the account records it as confirmed.
     assert user["emailVerified"] is True
-    # Sign-in grants the baseline role; anything beyond that is an operator act.
-    assert user["roles"] == ["user"]
+    # Sign-in creates a plain account; becoming an admin is an operator act.
+    assert user["isAdmin"] is False
     assert user["profile"]["displayName"] == PROBE_NAME
     assert user["profile"]["currentLevel"], "placement level should be defaulted"
 
@@ -742,8 +746,8 @@ async def test_an_unverified_provider_address_still_works(client: AsyncClient) -
 async def test_deleting_the_account_closes_it_and_kills_the_session(client: AsyncClient) -> None:
     """The endpoint's whole job.
 
-    Same honest limit as the password change above Ã¢â‚¬â€ the access token in flight expires on
-    its own Ã¢â‚¬â€ but the renewable credential dies here, and every later authenticated request
+    Same honest limit as the password change above — the access token in flight expires on
+    its own — but the renewable credential dies here, and every later authenticated request
     is refused because the account behind it is closed.
     """
     created = await sign_in(client)
@@ -806,7 +810,7 @@ async def test_a_pending_verification_status_is_not_a_gate(
 
     Refusing them would lock out every account created before the status existed, which is
     the opposite of what "the address flag is a nudge, not a gate" means. The status stays
-    truthful Ã¢â‚¬â€ it is what ``/me`` reports Ã¢â‚¬â€ and the account keeps working.
+    truthful — it is what ``/me`` reports — and the account keeps working.
     """
     created = await sign_in(client)
     # Written through the ORM rather than raw SQL: SQLite stores this UUID as 32 hex
@@ -906,7 +910,7 @@ async def test_non_document_responses_keep_the_strict_policy(
 async def test_an_explicit_csp_set_further_in_still_wins() -> None:
     """``setdefault`` semantics: a handler that sets its own policy keeps it.
 
-    This is the invariant that lets the docs branch exist at all Ã¢â‚¬â€ if this broke, the
+    This is the invariant that lets the docs branch exist at all — if this broke, the
     middleware would overwrite a deliberately narrower policy instead of deferring to
     it, so a handler could never tighten the policy below the default.
 
@@ -952,7 +956,7 @@ async def test_an_explicit_csp_set_further_in_still_wins() -> None:
 
 
 async def test_security_headers_are_present_on_docs_as_well(client: AsyncClient) -> None:
-    """The docs page is still hardened Ã¢â‚¬â€ only the CSP source list is widened."""
+    """The docs page is still hardened — only the CSP source list is widened."""
     headers = (await client.get("/docs")).headers
 
     assert headers["x-content-type-options"] == "nosniff"
@@ -976,6 +980,10 @@ PUBLIC_QUESTION_FIELDS = {
     "points",
     "imageUrl",
     "audioUrl",
+    # A clip that teaches the item — a signed sentence, a lip position — is an aid in the
+    # same family as the image and the audio, and it is carried for exactly the same reason:
+    # it says what is being asked without saying what the answer is.
+    "videoUrl",
     # The items a matching question asks the learner to pair up. Public like a multiple
     # choice's options, and for the same reason: it says what is being asked and nothing about
     # what the answer is. The bank they are paired against is the half a shift in order could
@@ -988,7 +996,7 @@ PUBLIC_QUESTION_FIELDS = {
 #: Both cases matter, and the snake_case half is the one this file got wrong at first: the
 #: ORM and the read models name these fields ``correct_index`` and ``accepted_answers``,
 #: while everything a client receives is camelCase. Checking only the snake_case names
-#: therefore asserts the absence of a key that could never appear Ã¢â‚¬â€ so a real leak through a
+#: therefore asserts the absence of a key that could never appear — so a real leak through a
 #: response schema, which is where a leaked field would be declared, would have passed.
 #: ``explanation`` is spelled the same on both sides of the boundary, so it appears once.
 ANSWER_KEY_FIELDS = (
@@ -1001,7 +1009,7 @@ ANSWER_KEY_FIELDS = (
 
 #: The admin schemas that are *meant* to carry the answer key: the editor's read model and
 #: the two write bodies that author it. They are served only to a caller holding
-#: ``content_editor``, so they are exempt from the public-schema check below. Naming them
+#: ``isAdmin``, so they are exempt from the public-schema check below. Naming them
 #: explicitly keeps the exemption a deliberate act rather than a blanket weakening.
 ADMIN_ANSWER_KEY_SCHEMAS = frozenset(
     {
@@ -1029,8 +1037,8 @@ SEEDED_ACCEPTED_ANSWER = "pleased to meet you"
 def _answer_key_keys(payload: Any) -> list[str]:
     """Every answer-key key in a decoded payload, at any depth.
 
-    Recursive on purpose. The leak worth fearing is a nested one Ã¢â‚¬â€ a question inside a page's
-    ``items``, a question inside a session's ``questions`` Ã¢â‚¬â€ and a check that reads only the
+    Recursive on purpose. The leak worth fearing is a nested one — a question inside a page's
+    ``items``, a question inside a session's ``questions`` — and a check that reads only the
     top level is exactly the check a future envelope defeats.
     """
     found: list[str] = []
@@ -1059,7 +1067,7 @@ async def content_db(client: AsyncClient) -> AsyncIterator[AsyncSession]:
 
     The commits here are load-bearing. The engine backs ``:memory:`` SQLite with a single
     shared connection, so rows this session has flushed but not committed are visible to
-    the next request Ã¢â‚¬â€ and then destroyed by that request's rollback, because the unit of
+    the next request — and then destroyed by that request's rollback, because the unit of
     work and this session are competing for the same transaction. Without the commit, the
     first assertion sees the row and the second one does not, which reads as a flaky
     pagination bug rather than as a fixture bug.
@@ -1182,7 +1190,7 @@ async def test_a_draft_level_is_absent_from_the_tree(
 async def test_the_tree_nests_units_and_lessons_with_their_counts(
     client: AsyncClient, content_db: AsyncSession
 ) -> None:
-    """One response carries the whole hierarchy: level Ã¢â€ â€™ units Ã¢â€ â€™ lessons, each counted."""
+    """One response carries the whole hierarchy: level → units → lessons, each counted."""
     await seed_catalogue(content_db)
 
     body = (await client.get("/api/v1/content/tree")).json()
@@ -1243,7 +1251,7 @@ async def test_the_lesson_detail_carries_the_question_image_aid(
 async def test_a_question_without_an_image_serialises_a_null(
     client: AsyncClient, content_db: AsyncSession
 ) -> None:
-    """The field is always present Ã¢â‚¬â€ ``null`` when there is no aid Ã¢â‚¬â€ so a client relies
+    """The field is always present — ``null`` when there is no aid — so a client relies
     on one response shape rather than probing for a missing key."""
     ids = await seed_catalogue(content_db)
 
@@ -1385,7 +1393,7 @@ async def test_a_matching_question_shows_its_prompts_and_hides_its_bank(
 
     The prompts are, for the same reason a multiple choice shows its options: knowing that
     ``Dog`` is to be paired with something says nothing about what. The bank is the half a
-    shift in order could give away Ã¢â‚¬â€ the order it is stored in is the order of the pairs Ã¢â‚¬â€ and
+    shift in order could give away — the order it is stored in is the order of the pairs — and
     this is a shared, cacheable read with no per-learner seed to shuffle against, so it waits
     for the session. Both halves are asserted here so neither drifts into the other's slot.
     """
@@ -1523,7 +1531,7 @@ async def test_a_request_body_is_accepted_in_either_spelling(client: AsyncClient
     This is what makes the rename deployable: the server and the mobile app ship
     independently, so for at least one release window a client on the old build and a server
     on the new one must both function. Once that window closes the snake_case half of this
-    test can be deleted Ã¢â‚¬â€ but deleting it is a decision, and not doing so is not.
+    test can be deleted — but deleting it is a decision, and not doing so is not.
     """
     body = {
         "display_name": PROBE_NAME,
@@ -1619,7 +1627,7 @@ async def test_a_miss_is_not_cacheable(client: AsyncClient) -> None:
     """A 404 here means "not published", not "never will be".
 
     Caching it for the freshness window would let an editor publish a lesson and have
-    learners keep the miss Ã¢â‚¬â€ the content exists, the phone simply refuses to ask again.
+    learners keep the miss — the content exists, the phone simply refuses to ask again.
     """
     response = await client.get(f"/api/v1/content/lessons/{uuid.uuid4()}")
     assert response.status_code == 404
@@ -1708,7 +1716,7 @@ async def test_a_cross_origin_client_can_read_the_headers_the_api_relies_on(
     """A browser is denied headers it has not been granted, so the grant is part of the API.
 
     Without ``ETag`` on this list a web build cannot store a validator, cannot send
-    ``If-None-Match``, and therefore never revalidates Ã¢â‚¬â€ revalidation would work in
+    ``If-None-Match``, and therefore never revalidates — revalidation would work in
     production for native clients and silently not for the web and webview builds, which is
     the kind of gap that only surfaces as a support ticket.
     """
@@ -1767,7 +1775,7 @@ async def test_a_malformed_id_and_an_absent_one_are_distinguishable(client: Asyn
 
     The asymmetry is deliberate. A malformed code is passed through to the catalogue and
     answered exactly like an unknown one, so a client cannot tell a typo from an unpublished
-    lesson by probing Ã¢â‚¬â€ but a *malformed UUID* never reaches the catalogue, because it cannot
+    lesson by probing — but a *malformed UUID* never reaches the catalogue, because it cannot
     be a row id at all, and saying so saves the client a pointless retry.
     """
     malformed = await client.get("/api/v1/content/lessons/not-a-uuid")
@@ -1784,7 +1792,7 @@ def test_the_schema_describes_the_error_envelope_we_actually_send() -> None:
 
     FastAPI injects a ``HTTPValidationError`` body for any route with a body or path
     parameters *unless* the operation already declares ``"422"``, ``"4XX"`` or
-    ``"default"`` Ã¢â‚¬â€ and it tests for those as **strings**. An int key in our response map
+    ``"default"`` — and it tests for those as **strings**. An int key in our response map
     leaves the test unsatisfied, the stock shape gets published, and a client generated
     from ``/openapi.json`` deserialises ``detail``/``loc`` fields that no response has ever
     contained. This pins the published schema to the bytes on the wire.
@@ -1827,7 +1835,7 @@ async def test_the_schema_and_the_wire_agree_on_a_validation_error(client: Async
 
 # ==================================================================== quiz engine
 # The attempt engine's HTTP surface: the status codes, the auth gate, and the one
-# contract that matters most Ã¢â‚¬â€ an answer key never reaches a client that has not
+# contract that matters most — an answer key never reaches a client that has not
 # answered. The use cases themselves are exercised in ``tests/integration``.
 
 
@@ -1910,7 +1918,7 @@ async def test_a_correct_retry_earns_half_and_replaces_the_answer(
 ) -> None:
     """A missed question may be answered again, and only the score changes.
 
-    The seeded question is worth one point, so half rounds down to nothing Ã¢â‚¬â€ the documented
+    The seeded question is worth one point, so half rounds down to nothing — the documented
     consequence of the halving rule, and the sharpest form of "the first try is the one that
     pays". Just as important is that the retry lands on the *same* answer: ``answeredCount``
     stays at one, so a session cannot be inflated by trying again.
@@ -2087,7 +2095,7 @@ async def test_an_ordering_answer_is_graded_over_the_wire(
     """The ordering contract end to end: a sequence in, a verdict and the key out.
 
     Pins the one new request field (``answer.order``) at the wire layer, and the invariant
-    that the served sequence is a de-arrangement of the answer Ã¢â‚¬â€ never the answer itself.
+    that the served sequence is a de-arrangement of the answer — never the answer itself.
     """
     headers, lesson_id = await _quiz_context(client, content_db)
     authored = ["Hello!", "How are you?", "I am fine.", "Goodbye!"]
@@ -2130,10 +2138,7 @@ async def test_an_ordering_answer_is_graded_over_the_wire(
     result = response.json()["result"]
     assert result["isCorrect"] is True
     assert result["pointsAwarded"] == 2
-    assert (
-        result["correctAnswer"]["order"]
-        == "Hello! Ã¢â€ â€™ How are you? Ã¢â€ â€™ I am fine. Ã¢â€ â€™ Goodbye!"
-    )
+    assert result["correctAnswer"]["order"] == "Hello! → How are you? → I am fine. → Goodbye!"
 
 
 #: A matching question's pairs, as a wrong answer and as the key. Declared once so the tests
@@ -2163,8 +2168,8 @@ async def test_a_matching_answer_is_graded_over_the_wire(
 ) -> None:
     """The matching contract end to end: a set of pairs in, a verdict and the key out.
 
-    Pins the two new surface fields Ã¢â‚¬â€ ``prompts`` on the served question and
-    ``answer.matching`` on the request Ã¢â‚¬â€ and the invariant that keeps the pairing server-side:
+    Pins the two new surface fields — ``prompts`` on the served question and
+    ``answer.matching`` on the request — and the invariant that keeps the pairing server-side:
     the bank is reordered so that no option stands opposite the prompt it answers, which is
     the arrangement the authored order would produce.
     """
@@ -2200,10 +2205,7 @@ async def test_a_matching_answer_is_graded_over_the_wire(
     result = response.json()["result"]
     assert result["isCorrect"] is True
     assert result["pointsAwarded"] == 2
-    assert (
-        result["correctAnswer"]["pairs"]
-        == "Monday Ã¢â€¡â€™ 1; Tuesday Ã¢â€¡â€™ 2; Wednesday Ã¢â€¡â€™ 3"
-    )
+    assert result["correctAnswer"]["pairs"] == "Monday ⇒ 1; Tuesday ⇒ 2; Wednesday ⇒ 3"
 
 
 async def test_a_wrong_matching_pairing_is_wrong_and_a_retry_is_worth_half(
@@ -2211,8 +2213,8 @@ async def test_a_wrong_matching_pairing_is_wrong_and_a_retry_is_worth_half(
 ) -> None:
     """Every prompt is answered with a real option; the pairings are simply wrong.
 
-    That is an answer, not a malformed request Ã¢â‚¬â€ the distinction the grading rule exists to
-    make Ã¢â‚¬â€ and the retry that follows it is the one place the halved-points rule can be seen
+    That is an answer, not a malformed request — the distinction the grading rule exists to
+    make — and the retry that follows it is the one place the halved-points rule can be seen
     over the wire for this kind.
     """
     headers, lesson_id = await _quiz_context(client, content_db)
@@ -2323,7 +2325,7 @@ async def test_a_mis_ordered_ordering_answer_is_rejected_over_the_wire(
 
 # =========================================== the answer key never crosses the wire before
 # The invariant this section exists for: until a learner has committed to an answer, no
-# endpoint may hand out ``correctIndex``, ``acceptedAnswers`` or ``explanation`` Ã¢â‚¬â€ for any
+# endpoint may hand out ``correctIndex``, ``acceptedAnswers`` or ``explanation`` — for any
 # question, through any route, at any nesting depth. It is stated once here and checked
 # against the whole surface a client can read, rather than one route at a time, because the
 # question being asked is "is there *any* way to read the answer key early?" and only the
@@ -2331,8 +2333,8 @@ async def test_a_mis_ordered_ordering_answer_is_rejected_over_the_wire(
 #
 # Three things make the check evidence rather than aspiration:
 #
-# * the sweeps walk every read available before an answer Ã¢â‚¬â€ the public catalogue, the session
-#   a client opens, and the session it re-opens Ã¢â‚¬â€ scanning each decoded payload recursively;
+# * the sweeps walk every read available before an answer — the public catalogue, the session
+#   a client opens, and the session it re-opens — scanning each decoded payload recursively;
 # * the fixture is asserted to carry a real answer key, so "found nothing" cannot mean
 #   "there was nothing to find";
 # * the *values* are searched for as well as the keys, because the rationale is a sentence,
@@ -2368,7 +2370,7 @@ async def test_the_seed_really_carries_an_answer_key(content_db: AsyncSession) -
 
     "Nothing leaked" is only evidence if there was a key to leak. A renamed column or an
     emptied seeder would leave every assertion in this section green and worthless, so the
-    fixture's own answer key Ã¢â‚¬â€ an index, a rationale and an accepted phrase Ã¢â‚¬â€ is asserted
+    fixture's own answer key — an index, a rationale and an accepted phrase — is asserted
     first.
     """
     ids = await _seed_catalogue_with_a_key(content_db)
@@ -2412,7 +2414,7 @@ async def test_no_session_read_before_an_answer_carries_the_answer_key(
     """The two authenticated reads a client makes before answering: open, then re-open.
 
     A session serves the same questions the catalogue does through a different projection,
-    so it is checked separately Ã¢â‚¬â€ they are two places that can each leak on their own, and
+    so it is checked separately — they are two places that can each leak on their own, and
     the session payload is the one a client holds while the answer is still open.
     """
     headers, lesson_id = await _quiz_context(client, content_db)
@@ -2442,7 +2444,7 @@ def test_the_published_schema_declares_no_pre_attempt_answer_key_field() -> None
     that never belong on the wire are checked across every schema in the document.
 
     ``QuestionAdminResponse`` and the two admin question bodies are the deliberate
-    exception: they are served only behind the ``content_editor`` role gate, and the person
+    exception: they are served only behind the ``isAdmin`` gate, and the person
     fixing a mis-keyed question is exactly who needs the key. Every learner-facing schema must
     still declare neither field, so the allowlist names the exception rather than weakening
     the check.
@@ -2463,7 +2465,7 @@ def test_the_published_schema_declares_no_pre_attempt_answer_key_field() -> None
 
 # ==================================================================== progress
 # The read-only progress surface: the auth gate, the wire shape, and the property that
-# ties it to the attempt engine Ã¢â‚¬â€ every figure is restated from a session the learner
+# ties it to the attempt engine — every figure is restated from a session the learner
 # actually finished. The use cases are exercised in ``tests/integration``; what is pinned
 # here is the HTTP contract a mobile client is generated from.
 
@@ -2576,9 +2578,11 @@ async def test_the_unlock_map_lists_the_published_curriculum_in_order(
         "Lesson 2",
     ]
     assert all(item["state"] == "available" for item in body["items"])
-    # The sequential rule: the first unit is open, everything after it is shut until
-    # its predecessor's checkpoint is passed.
-    assert [item["locked"] for item in body["items"]] == [False, False, True, True]
+    # The sequential rule: the first unit and first lesson are open, subsequent lessons
+    # are locked until predecessor lessons are completed, and subsequent units until checkpoint.
+    assert [item["locked"] for item in body["items"]] == [False, True, True, True]
+    assert [item["isUnlocked"] for item in body["items"]] == [True, False, False, False]
+    assert [item["isCompleted"] for item in body["items"]] == [False, False, False, False]
 
 
 @pytest.mark.asyncio
@@ -2594,6 +2598,8 @@ async def test_a_lesson_with_no_record_reads_available_in_the_unlock_map(
     assert first["title"] == "Lesson 1"
     assert first["state"] == "available"
     assert first["locked"] is False
+    assert first["isUnlocked"] is True
+    assert first["isCompleted"] is False
     assert (first["bestScore"], first["attempts"], first["xpEarned"]) == (0, 0, 0)
     assert first["completedAt"] is None
 
@@ -2724,6 +2730,23 @@ async def test_a_locked_units_lesson_cannot_be_started(
 
 
 @pytest.mark.asyncio
+async def test_a_locked_lesson_cannot_be_started_before_previous_lesson_is_completed(
+    client: AsyncClient, content_db: AsyncSession
+) -> None:
+    """The sequential lesson lock: lesson 2 is refused while lesson 1 is uncompleted."""
+    headers, ids = await _learner_with_catalogue(client, content_db)
+
+    response = await client.post(
+        "/api/v1/quiz/sessions",
+        json={"mode": "lesson", "lessonId": str(ids["A1-lesson-2"])},
+        headers=headers,
+    )
+
+    assert response.status_code == 403, response.text
+    assert error_code(response) == "LESSON_LOCKED"
+
+
+@pytest.mark.asyncio
 async def test_a_checkpoint_is_refused_until_the_lessons_are_done(
     client: AsyncClient, content_db: AsyncSession
 ) -> None:
@@ -2783,7 +2806,16 @@ async def test_passing_a_checkpoint_unlocks_the_next_unit(
 
     unlocks = (await client.get("/api/v1/progress/unlocks", headers=headers)).json()
     a2 = [item for item in unlocks["items"] if item["levelCode"] == "A2"]
-    assert all(item["locked"] is False for item in a2)
+    assert [item["locked"] for item in a2] == [False, True]
+    assert [item["isUnlocked"] for item in a2] == [True, False]
+
+    # A checkpoint is a gate, not practice: it adds a completion to the feed but no XP, so
+    # the learner's total is still exactly the two points the two lessons paid.
+    progress = (await client.get("/api/v1/progress", headers=headers)).json()
+    assert progress["totalXp"] == 2
+    checkpoint_row = next(row for row in progress["xp"]["items"] if row["lessonId"] is None)
+    assert checkpoint_row["unitId"] == str(ids["A1-unit"])
+    assert checkpoint_row["xpAwarded"] == 0
 
 
 @pytest.mark.asyncio
@@ -2798,13 +2830,77 @@ async def test_failing_a_checkpoint_leaves_the_next_unit_shut(
 
     assert result["passed"] is False
     assert result["unlockedUnitId"] is None
-    assert result["retryAvailable"] is True
+    # A checkpoint seals its questions, so there is no in-sitting retry to offer: the
+    # learner re-sits the gate from the start, and only the new sitting is re-answerable.
+    assert result["retryAvailable"] is False
     assert result["correctQuestionIds"] == []
     assert len(result["missedQuestionIds"]) == result["session"]["totalCount"]
 
     units = (await client.get("/api/v1/progress/units", headers=headers)).json()["items"]
     assert (units[0]["passed"], units[0]["attempts"]) == (False, 1)
     assert units[1]["locked"] is True, "a failed checkpoint must not open the next unit"
+
+
+@pytest.mark.asyncio
+async def test_a_checkpoint_seals_each_question_on_its_first_answer(
+    client: AsyncClient, content_db: AsyncSession
+) -> None:
+    """A graded gate cannot be revised: the second answer is refused, right or wrong.
+
+    The seal is what makes the 80% bar mean something. If a missed question could be
+    re-answered in the same sitting, the score the gate reads would be the result of
+    unlimited attempts rather than of one.
+    """
+    headers, ids = await _learner_with_catalogue(client, content_db)
+    await _pass_the_first_unit(client, headers, ids)
+    started = await client.post(
+        "/api/v1/quiz/sessions",
+        json={"mode": "checkpoint", "unitId": str(ids["A1-unit"])},
+        headers=headers,
+    )
+    assert started.status_code == 201, started.text
+    session_id = started.json()["session"]["id"]
+    question = started.json()["questions"][0]
+    answer = {"op": "answer", "questionId": question["id"], "answer": {"choice": "Goodbye"}}
+
+    graded = await client.post(f"/api/v1/quiz/sessions/{session_id}", json=answer, headers=headers)
+    assert graded.status_code == 200, graded.text
+    assert graded.json()["result"]["isCorrect"] is False
+
+    refused = await client.post(f"/api/v1/quiz/sessions/{session_id}", json=answer, headers=headers)
+    assert refused.status_code == 409, refused.text
+    assert error_code(refused) == "QUESTION_ALREADY_ANSWERED"
+
+
+@pytest.mark.asyncio
+async def test_replaying_a_finished_lesson_awards_no_xp(
+    client: AsyncClient, content_db: AsyncSession
+) -> None:
+    """XP is for the first completion; a replay is recorded but pays nothing.
+
+    Without this the ledger that backs the leaderboard could be farmed by looping a lesson
+    the learner has already finished — the attempt count would climb while nothing new was
+    learned.
+    """
+    headers, ids = await _learner_with_catalogue(client, content_db)
+    await _complete_a_lesson(client, headers, ids["A1-lesson-1"])
+
+    await _complete_a_lesson(client, headers, ids["A1-lesson-1"])
+
+    progress = (await client.get("/api/v1/progress", headers=headers)).json()
+    assert progress["totalXp"] == 1, "the replay must not add a second point"
+
+    unlocks = (await client.get("/api/v1/progress/unlocks", headers=headers)).json()
+    first = next(item for item in unlocks["items"] if item["lessonId"] == str(ids["A1-lesson-1"]))
+    assert first["attempts"] == 2, "a replay is still an attempt worth recording"
+    assert first["xpEarned"] == 1
+    assert first["bestScore"] == 100
+
+    # The second sitting is in the feed with nothing attached, so a learner can see the
+    # replay happened without the total moving.
+    feed = progress["xp"]["items"]
+    assert len(feed) == 2
+    assert sum(event["xpAwarded"] for event in feed) == 1
 
 
 @pytest.mark.asyncio
@@ -2960,7 +3056,7 @@ async def test_progress_is_scoped_to_the_caller(
 
 # ====================================================================== review
 # The spaced-repetition HTTP surface: the auth gate, the wire shape, and the two contracts
-# worth pinning at the boundary Ã¢â‚¬â€ the queue serves the answer-free question a live session
+# worth pinning at the boundary — the queue serves the answer-free question a live session
 # does, and answering returns the verdict plus the SM-2 schedule it derived. The use cases
 # are exercised in ``tests/integration``; this is the HTTP contract a client is generated
 # from.
@@ -3209,7 +3305,7 @@ async def test_completing_a_lesson_seeds_a_review_card(
 ) -> None:
     """The property that ties review to the engine: a correct answer schedules the question.
 
-    The card lands due tomorrow, so it is counted ahead rather than as due today Ã¢â‚¬â€ which
+    The card lands due tomorrow, so it is counted ahead rather than as due today — which
     only holds if the due date came off the scheduler.
     """
     headers, ids = await _learner_with_catalogue(client, content_db)
@@ -3287,7 +3383,7 @@ async def test_the_ai_surface_needs_a_token(client: AsyncClient, method: str, pa
 async def test_explaining_an_answer_grades_on_the_server(
     client: AsyncClient, content_db: AsyncSession
 ) -> None:
-    """``/ai/explain`` returns the verdict, the key and the rationale Ã¢â‚¬â€ after the answer.
+    """``/ai/explain`` returns the verdict, the key and the rationale — after the answer.
 
     With AI off the rationale is the authored CMS text, and ``source`` says ``authored``
     rather than passing a fallback off as model output. That provenance flag is the part a
@@ -3478,15 +3574,15 @@ async def test_the_quota_reports_the_daily_allowance(client: AsyncClient) -> Non
 # ============================================================== admin / CMS (Phase 8)
 # The authoring surface. Where the public ``/content`` prefix only ever shows published
 # rows, ``/admin`` shows the whole editorial pipeline and is the only place it can be
-# changed. Two properties are pinned here that a service-level test cannot see: the role
-# gate is on the HTTP boundary (a wrong role is a 403 envelope), and every mutation leaves
-# an audit row in the same transaction Ã¢â‚¬â€ the "who changed this" half of the double
+# changed. Two properties are pinned here that a service-level test cannot see: the admin
+# gate is on the HTTP boundary (a plain account is a 403 envelope), and every mutation
+# leaves an audit row in the same transaction — the "who changed this" half of the double
 # protection the module docstrings describe.
 #
-# A token's role claim is never trusted: ``require_role`` reads the live account. That is
-# what lets these tests promote a just-signed-in learner by writing the roles column and
-# then reuse the same access token, which is exactly the demotion-takes-effect-immediately
-# behaviour the check exists to provide.
+# A token's admin claim is never trusted: ``require_admin`` reads the live account. That is
+# what lets these tests promote a just-signed-in learner by writing the flag and then reuse
+# the same access token, which is exactly the demotion-takes-effect-immediately behaviour
+# the check exists to provide.
 
 QUESTION_BODY: dict[str, Any] = {
     "kind": "multiple_choice",
@@ -3499,24 +3595,23 @@ QUESTION_BODY: dict[str, Any] = {
 }
 
 
-async def _grant_roles(
+async def _grant_admin(
     client: AsyncClient,
     content_db: AsyncSession,
-    roles: tuple[UserRole, ...],
     *,
     token: str | None = None,
     **identity: Any,
 ) -> dict[str, str]:
-    """Sign in, write the roles column directly, and return auth headers.
+    """Sign in, set the admin flag directly, and return auth headers.
 
-    The database write is the point: ``require_role`` reads the live account, so promoting
-    a learner here is enough for the token already in hand to carry the new authority Ã¢â‚¬â€
+    The database write is the point: ``require_admin`` reads the live account, so promoting
+    a learner here is enough for the token already in hand to carry the new authority —
     no re-login, and no reliance on a stale claim.
     """
     account = await sign_in(client, token=token, **identity)
     row = await content_db.get(UserModel, uuid.UUID(account["user"]["id"]))
     assert row is not None, "the account the API just created is not in the database"
-    row.roles = [role.value for role in roles]
+    row.is_admin = True
     await content_db.commit()
     content_db.expunge_all()
     return auth_headers(account["tokens"]["accessToken"])
@@ -3547,7 +3642,7 @@ async def _approve_and_publish(client: AsyncClient, headers: dict[str, str], pat
     """Walk an aggregate through ``review`` and ``approved`` to ``published``.
 
     The lifecycle forbids skipping a step, so a test that wants a published parent has to
-    take each one Ã¢â‚¬â€ which doubles as cover for the state machine over HTTP.
+    take each one — which doubles as cover for the state machine over HTTP.
     """
     for state in ("review", "approved", "published"):
         response = await client.patch(path, json={"state": state}, headers=headers)
@@ -3588,7 +3683,7 @@ async def test_admin_authors_a_level_and_the_trail_records_it(
     client: AsyncClient, content_db: AsyncSession
 ) -> None:
     """Create, read back, and confirm the write left an audit row naming the actor."""
-    headers = await _grant_roles(client, content_db, (UserRole.CONTENT_EDITOR,))
+    headers = await _grant_admin(client, content_db)
 
     created = await _create_level(client, headers)
     assert created["code"] == "A1"
@@ -3611,7 +3706,7 @@ async def test_admin_updates_a_level_field_by_field_and_deletes_it(
     client: AsyncClient, content_db: AsyncSession
 ) -> None:
     """PATCH touches only the fields sent; DELETE removes the row and audits both moves."""
-    headers = await _grant_roles(client, content_db, (UserRole.CONTENT_EDITOR,))
+    headers = await _grant_admin(client, content_db)
     level = await _create_level(client, headers)
 
     patched = await client.patch(
@@ -3641,7 +3736,7 @@ async def test_admin_updates_a_level_field_by_field_and_deletes_it(
 async def test_admin_manages_units_under_a_level(
     client: AsyncClient, content_db: AsyncSession
 ) -> None:
-    headers = await _grant_roles(client, content_db, (UserRole.CONTENT_EDITOR,))
+    headers = await _grant_admin(client, content_db)
     level = await _create_level(client, headers)
 
     created = await client.post(
@@ -3677,7 +3772,7 @@ async def test_admin_manages_lessons_including_the_answer_key_view(
     client: AsyncClient, content_db: AsyncSession
 ) -> None:
     """The editor's lesson read carries the answer key; the public one never does."""
-    headers = await _grant_roles(client, content_db, (UserRole.CONTENT_EDITOR,))
+    headers = await _grant_admin(client, content_db)
     level = await _create_level(client, headers)
     unit = (
         await client.post(
@@ -3729,9 +3824,7 @@ async def test_admin_publishes_a_lesson_only_once_its_unit_is_published(
     client: AsyncClient, content_db: AsyncSession
 ) -> None:
     """The dedicated publish endpoint, and the parent rule it cannot be used to skip."""
-    headers = await _grant_roles(
-        client, content_db, (UserRole.CONTENT_EDITOR, UserRole.CONTENT_REVIEWER)
-    )
+    headers = await _grant_admin(client, content_db)
     ids = await _published_lesson(client, headers)
 
     published = await client.post(
@@ -3753,9 +3846,7 @@ async def test_admin_cannot_publish_a_lesson_into_a_draft_unit(
     client: AsyncClient, content_db: AsyncSession
 ) -> None:
     """The aggregate refuses it, so the endpoint answers 409 rather than leaking a draft."""
-    headers = await _grant_roles(
-        client, content_db, (UserRole.CONTENT_EDITOR, UserRole.CONTENT_REVIEWER)
-    )
+    headers = await _grant_admin(client, content_db)
     level = await _create_level(client, headers)
     unit = (
         await client.post(
@@ -3788,7 +3879,7 @@ async def test_admin_cannot_publish_a_lesson_into_a_draft_unit(
 async def test_admin_manages_questions_and_reorders_them(
     client: AsyncClient, content_db: AsyncSession
 ) -> None:
-    headers = await _grant_roles(client, content_db, (UserRole.CONTENT_EDITOR,))
+    headers = await _grant_admin(client, content_db)
     ids = await _published_lesson(client, headers)
 
     first = await client.post(
@@ -3825,9 +3916,39 @@ async def test_admin_manages_questions_and_reorders_them(
     assert patched.status_code == 200, patched.text
     assert patched.json()["prompt"] == "Which one greets someone?"
 
-    removed = await client.delete(f"/api/v1/admin/content/questions/{first_id}", headers=headers)
-    assert removed.status_code == 204, removed.text
+    # A question inside a lesson whose parents are published is live content: a learner may
+    # be answering it right now, and the answer trail is keyed to it. Deleting it would
+    # rewrite history, so the hard delete is refused and archiving is the way out.
+    refused = await client.delete(f"/api/v1/admin/content/questions/{first_id}", headers=headers)
+    assert refused.status_code == 409, refused.text
+    assert error_code(refused) == "CONTENT_NOT_EDITABLE"
     assert "content.lesson.reorder_questions" in await _audit_actions(content_db)
+
+    # A draft lesson is the one place a hard delete is still safe, so prove it still works.
+    draft_level = await _create_level(client, headers, code="A2")
+    draft_unit = (
+        await client.post(
+            f"/api/v1/admin/content/levels/{draft_level['id']}/units",
+            json={"title": "Introductions"},
+            headers=headers,
+        )
+    ).json()
+    draft_lesson = (
+        await client.post(
+            f"/api/v1/admin/content/units/{draft_unit['id']}/lessons",
+            json={"title": "Saying goodbye", "summary": "Farewells.", "estimated_minutes": 5},
+            headers=headers,
+        )
+    ).json()
+    draft_question = await client.post(
+        f"/api/v1/admin/content/lessons/{draft_lesson['id']}/questions",
+        json=QUESTION_BODY,
+        headers=headers,
+    )
+    removed = await client.delete(
+        f"/api/v1/admin/content/questions/{draft_question.json()['id']}", headers=headers
+    )
+    assert removed.status_code == 204, removed.text
 
 
 @pytest.mark.asyncio
@@ -3835,7 +3956,7 @@ async def test_admin_rejects_a_partial_reorder(
     client: AsyncClient, content_db: AsyncSession
 ) -> None:
     """A list that omits a question would silently drop it, so it is a 422."""
-    headers = await _grant_roles(client, content_db, (UserRole.CONTENT_EDITOR,))
+    headers = await _grant_admin(client, content_db)
     ids = await _published_lesson(client, headers)
     created = await client.post(
         f"/api/v1/admin/content/lessons/{ids['lesson']}/questions",
@@ -3857,11 +3978,11 @@ async def test_admin_rejects_a_partial_reorder(
 
 
 @pytest.mark.asyncio
-async def test_admin_lists_accounts_and_replaces_roles(
+async def test_admin_lists_accounts_and_sets_the_admin_flag(
     client: AsyncClient, content_db: AsyncSession
 ) -> None:
-    """The account surface: a paged list with a total, and a wholesale role replace."""
-    headers = await _grant_roles(client, content_db, (UserRole.ADMIN,))
+    """The account surface: a paged list with a total, and a grant/revoke of the flag."""
+    headers = await _grant_admin(client, content_db)
     target = await sign_in(
         client, token="target-id-token-probe", email="target@natiqo.app", subject="target"
     )
@@ -3874,71 +3995,52 @@ async def test_admin_lists_accounts_and_replaces_roles(
     assert target_id in [user["id"] for user in page["items"]]
     assert page["hasMore"] is False
 
-    replaced = await client.post(
+    granted = await client.post(
         "/api/v1/admin/users",
-        json={"user_id": target_id, "roles": ["user", "content_editor"]},
+        json={"userId": target_id, "isAdmin": True},
         headers=headers,
     )
-    assert replaced.status_code == 200, replaced.text
-    assert set(replaced.json()["roles"]) == {"user", "content_editor"}
+    assert granted.status_code == 200, granted.text
+    assert granted.json()["isAdmin"] is True
 
-    unknown_role = await client.post(
+    revoked = await client.post(
         "/api/v1/admin/users",
-        json={"user_id": target_id, "roles": ["wizard"]},
+        json={"userId": target_id, "isAdmin": False},
         headers=headers,
     )
-    assert unknown_role.status_code == 422, unknown_role.text
+    assert revoked.status_code == 200, revoked.text
+    assert revoked.json()["isAdmin"] is False
 
     unknown_user = await client.post(
         "/api/v1/admin/users",
-        json={"user_id": str(uuid.uuid4()), "roles": ["user"]},
+        json={"userId": str(uuid.uuid4()), "isAdmin": True},
         headers=headers,
     )
     assert unknown_user.status_code == 404, unknown_user.text
     assert error_code(unknown_user) == "USER_NOT_FOUND"
 
-    assert "user.roles.update" in await _audit_actions(content_db)
+    assert "user.is_admin.update" in await _audit_actions(content_db)
 
 
 @pytest.mark.asyncio
-async def test_the_admin_surface_requires_the_matching_role(client: AsyncClient) -> None:
-    """Each prefix answers to its own minimum role, enforced at the boundary."""
+async def test_the_admin_surface_requires_an_admin_account(client: AsyncClient) -> None:
+    """The whole ``/admin`` prefix answers only to the admin flag, enforced at the boundary."""
     learner = await sign_in(client)
     learner_headers = auth_headers(learner["tokens"]["accessToken"])
 
     refused_read = await client.get("/api/v1/admin/content/levels", headers=learner_headers)
     assert refused_read.status_code == 403, refused_read.text
-    assert error_code(refused_read) == "AUTH_INSUFFICIENT_ROLE"
+    assert error_code(refused_read) == "AUTH_ADMIN_REQUIRED"
 
     refused_users = await client.get("/api/v1/admin/users", headers=learner_headers)
     assert refused_users.status_code == 403, refused_users.text
-
-
-async def test_an_editor_without_the_reviewer_role_cannot_publish(
-    client: AsyncClient, content_db: AsyncSession
-) -> None:
-    """Publishing is the one move split off from editing, so the split is asserted."""
-    headers = await _grant_roles(
-        client,
-        content_db,
-        (UserRole.CONTENT_EDITOR,),
-        token="editor-only-id-token-probe",
-        email="editor-only@natiqo.app",
-        subject="editor-only",
-    )
-
-    response = await client.post(
-        f"/api/v1/admin/content/lessons/{uuid.uuid4()}/publish", headers=headers
-    )
-    assert response.status_code == 403, response.text
-    assert error_code(response) == "AUTH_INSUFFICIENT_ROLE"
 
 
 @pytest.mark.asyncio
 async def test_admin_refuses_a_duplicate_level_code_or_a_taken_position(
     client: AsyncClient, content_db: AsyncSession
 ) -> None:
-    headers = await _grant_roles(client, content_db, (UserRole.CONTENT_EDITOR,))
+    headers = await _grant_admin(client, content_db)
     await _create_level(client, headers, code="A1")
 
     duplicate = await client.post(
@@ -3962,7 +4064,7 @@ async def test_admin_refuses_a_question_that_cannot_be_answered(
     client: AsyncClient, content_db: AsyncSession
 ) -> None:
     """A multiple-choice item with no correct index is not answerable, so it is a 422."""
-    headers = await _grant_roles(client, content_db, (UserRole.CONTENT_EDITOR,))
+    headers = await _grant_admin(client, content_db)
     ids = await _published_lesson(client, headers)
 
     response = await client.post(
@@ -3978,7 +4080,7 @@ async def test_admin_reads_an_unknown_content_id_as_not_found(
     client: AsyncClient, content_db: AsyncSession
 ) -> None:
     """An id that was never issued is a 404 for an editor, the same answer a learner gets."""
-    headers = await _grant_roles(client, content_db, (UserRole.CONTENT_EDITOR,))
+    headers = await _grant_admin(client, content_db)
     response = await client.get(f"/api/v1/admin/content/levels/{uuid.uuid4()}", headers=headers)
     assert response.status_code == 404, response.text
     assert error_code(response) == "LEVEL_NOT_FOUND"
@@ -4027,7 +4129,7 @@ async def test_admin_reads_one_question_by_id(
     client: AsyncClient, content_db: AsyncSession
 ) -> None:
     """The editor's projection, reachable without pulling its whole lesson."""
-    headers = await _grant_roles(client, content_db, (UserRole.CONTENT_EDITOR,))
+    headers = await _grant_admin(client, content_db)
     ids = await _published_lesson(client, headers)
     created = await _add_question(client, headers, ids["lesson"])
 
@@ -4046,7 +4148,7 @@ async def test_admin_duplicates_a_question_beside_it_and_into_another_lesson(
     client: AsyncClient, content_db: AsyncSession
 ) -> None:
     """A copy is an independent row: new id, its own slot, the original untouched."""
-    headers = await _grant_roles(client, content_db, (UserRole.CONTENT_EDITOR,))
+    headers = await _grant_admin(client, content_db)
     ids = await _published_lesson(client, headers)
     source = await _add_question(client, headers, ids["lesson"])
 
@@ -4092,7 +4194,7 @@ async def test_admin_bulk_creates_questions_or_writes_nothing(
     client: AsyncClient, content_db: AsyncSession
 ) -> None:
     """All-or-nothing, and the failure names every item that was wrong."""
-    headers = await _grant_roles(client, content_db, (UserRole.CONTENT_EDITOR,))
+    headers = await _grant_admin(client, content_db)
     ids = await _published_lesson(client, headers)
 
     accepted = await client.post(
@@ -4136,7 +4238,7 @@ async def test_a_bulk_dry_run_validates_without_writing(
     client: AsyncClient, content_db: AsyncSession
 ) -> None:
     """An import preview must not leave a lesson behind when it only meant to check."""
-    headers = await _grant_roles(client, content_db, (UserRole.CONTENT_EDITOR,))
+    headers = await _grant_admin(client, content_db)
     ids = await _published_lesson(client, headers)
 
     preview = await client.post(
@@ -4157,7 +4259,7 @@ async def test_admin_exports_a_lesson_and_imports_it_elsewhere(
     client: AsyncClient, content_db: AsyncSession
 ) -> None:
     """The round trip: a package rebuilds the same questions, keys included."""
-    headers = await _grant_roles(client, content_db, (UserRole.CONTENT_EDITOR,))
+    headers = await _grant_admin(client, content_db)
     ids = await _published_lesson(client, headers)
     await _add_question(client, headers, ids["lesson"])
     await _add_question(client, headers, ids["lesson"], MULTI_SELECT_BODY)
@@ -4218,7 +4320,7 @@ async def _record_learning(
     """One finished sitting: a completed session, a right and a wrong answer, a lesson.
 
     Written directly rather than driven through ``/quiz`` because the overview is about
-    *counting what exists*, not about the engine that produced it Ã¢â‚¬â€ and the engine already
+    *counting what exists*, not about the engine that produced it — and the engine already
     has its own suite.
     """
     now = datetime.now(UTC)
@@ -4282,7 +4384,7 @@ async def test_admin_overview_aggregates_every_card_of_the_home_screen(
     client: AsyncClient, content_db: AsyncSession
 ) -> None:
     """One read answers the whole screen, and every figure is a counted one."""
-    headers = await _grant_roles(client, content_db, (UserRole.ADMIN,))
+    headers = await _grant_admin(client, content_db)
     learner = await sign_in(
         client,
         token="stats-learner-token",
@@ -4454,16 +4556,22 @@ async def test_admin_overview_aggregates_every_card_of_the_home_screen(
 async def test_the_overview_is_admin_only_and_bounded(
     client: AsyncClient, content_db: AsyncSession
 ) -> None:
-    """Account data is not a content editor's to read, and the window has sane limits."""
-    editor = await _grant_roles(client, content_db, (UserRole.CONTENT_EDITOR,))
-    refused = await client.get("/api/v1/admin/stats/overview", headers=editor)
+    """Account data is not a learner's to read, and the window has sane limits."""
+    learner = await sign_in(
+        client,
+        token="stats-learner-token",
+        email="stats-learner@natiqo.app",
+        subject="stats-learner",
+    )
+    refused = await client.get(
+        "/api/v1/admin/stats/overview", headers=auth_headers(learner["tokens"]["accessToken"])
+    )
     assert refused.status_code == 403, refused.text
-    assert error_code(refused) == "AUTH_INSUFFICIENT_ROLE"
+    assert error_code(refused) == "AUTH_ADMIN_REQUIRED"
 
-    admin = await _grant_roles(
+    admin = await _grant_admin(
         client,
         content_db,
-        (UserRole.ADMIN,),
         token="stats-admin-two-token",
         email="stats-admin-two@natiqo.app",
         subject="stats-admin-two",

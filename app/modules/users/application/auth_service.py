@@ -41,7 +41,7 @@ from app.core.security import (
     hash_token,
 )
 from app.core.time import is_valid_timezone, utc_now
-from app.core.types import UserId, UserRole, UserStatus, new_id
+from app.core.types import UserId, UserStatus, new_id
 from app.core.uow import UnitOfWorkProtocol
 from app.modules.users.application.dto import (
     AuthResult,
@@ -382,12 +382,12 @@ class AuthService:
         self._assert_authenticatable(user)
         return user
 
-    async def require_role(self, user: User, minimum: UserRole) -> User:
-        if not user.has_role(minimum):
+    async def require_admin(self, user: User) -> User:
+        """Gate for the admin surface. Reads the live account, never a token claim."""
+        if not user.is_admin:
             raise ForbiddenError(
                 "You do not have permission to perform this action.",
-                code=ErrorCode.AUTH_INSUFFICIENT_ROLE,
-                details={"required_role": str(minimum)},
+                code=ErrorCode.AUTH_ADMIN_REQUIRED,
             )
         return user
 
@@ -547,7 +547,6 @@ class AuthService:
         # values, so this changes nothing about production behaviour.
         access_token, _ = create_access_token(
             user.id,
-            roles=tuple(str(role) for role in user.roles),
             ttl_seconds=self._settings.access_token_ttl_seconds,
         )
         refresh_token, claims = create_refresh_token(

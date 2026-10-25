@@ -315,8 +315,8 @@ user_achievements(
 **streamification حساب الإنجازات**: تحقّق شرط عند كل نقطة إنجاز (quiz complete, review
 complete, streak change). موظّف (event bus) لا request، وإلا كل إجابة تفحص 40 صفاً.
 
-**`PREMIUM_REQUIRED`** — تطبيقه على `POST /streak/freeze` أول استخدام لـ
-`AUTH_INSUFFICIENT_ROLE`/role gate. يعطي رابط الشراء.
+**`PREMIUM_REQUIRED`** — تطبيقه على `POST /streak/freeze` أول استخدام لبوابة صلاحية
+(`AUTH_ADMIN_REQUIRED`). يعطي رابط الشراء.
 
 ---
 
@@ -490,9 +490,9 @@ Faster على شبكة الجوال.
 | `POST` `GET` `PATCH` `DELETE` | `/api/v1/admin/content/questions` | |
 | `POST` | `/api/v1/admin/content/lessons/{id}/publish` | `INVALID_STATE_TRANSITION` |
 | `POST` | `/api/v1/admin/content/lessons/{id}/questions/reorder` | bulk |
-| `GET` `POST` | `/api/v1/admin/users` | دور `admin` |
+| `GET` `POST` | `/api/v1/admin/users` | `isAdmin` |
 
-**حماية مزدوجة:** `AUTH_INSUFFICIENT_ROLE` (403) + **كل كتابة في `audit_log`**.
+**حماية مزدوجة:** `AUTH_ADMIN_REQUIRED` (403) + **كل كتابة في `audit_log`**.
 من يقدر ينشر درساً يجب أن يُسجَّل ذلك.
 
 ### state machine — موجودة
@@ -532,9 +532,9 @@ draft → published → archived
 
 | القرار | الخيارات | توصيتي |
 | --- | --- | --- |
-| **1. هل الدفع مدعوم؟** | Stripe / لا | لا تبنِ. اعمل premium بـgems وحدود |
-| **2. قواعد الـUnlock** | A تسلسلي / B prerequisite / C level | A ثم B |
-| **3. scoring** | first-try full / always full | first-try full |
+| **1. هل الدفع مدعوم؟** | Stripe / لا | ✅ **قُرِّر (2026-10-19): لا Stripe.** premium بحدود وgems — يُعاد استخدام `ai/quota` والقلوب الموجودة، ولا تبعيات جديدة |
+| **2. قواعد الـUnlock** | A تسلسلي / B prerequisite / C level | ✅ **مقرَّر ومنفَّذ:** A — تسلسل عام في `quiz/domain/unlock.py`، و`CHECKPOINT_PASSING_SCORE = 80` ثابت لا إعداد |
+| **3. scoring** | first-try full / always full | ✅ **مقرَّر ومنفَّذ:** first-try full في `quiz/domain/policy.py` |
 | **4.Placement test** | موجود / ابدأ A1 | ابدأ A1. A2 واحد يكفي |
 | **5. Social** | صديق / leaderboard | ليس في error codes — قرار منتج |
 | **6. حذف حساب** | soft / hard | soft + anonymize (يلزم للـGDPR) |

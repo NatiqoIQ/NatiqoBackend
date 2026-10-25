@@ -38,7 +38,7 @@ from app.core.events import EventBus, LessonCompleted
 from app.core.time import ensure_aware, utc_now
 from app.core.types import ContentId, QuestionKind, UserId, new_id
 from app.core.uow import UnitOfWorkProtocol
-from app.modules.content.domain.entities import Question
+from app.modules.content.domain.entities import Lesson, Question
 from app.modules.content.domain.policy import (
     matching_answer_positions,
     pre_attempt_prompts,
@@ -81,6 +81,7 @@ from app.modules.quiz.domain.selection import (
 )
 from app.modules.quiz.domain.unlock import (
     CHECKPOINT_PASSING_SCORE,
+    lesson_locked,
     next_unit_id,
     unit_locked,
 )
@@ -156,6 +157,7 @@ class QuizService:
                 code=ErrorCode.LESSON_NOT_FOUND,
             )
         await self._assert_unit_open(user_id, lesson.unit_id)
+        await self._assert_lesson_unlocked(user_id, lesson)
 
         questions = await self._uow.questions.list_for_lessons([lesson.id])
         if not questions:
@@ -234,10 +236,17 @@ class QuizService:
         ``correctAnswer`` and ``explanation`` are produced only here, after the learner has
         committed — that ordering is the contract, not a nicety.
 
-        A question that was answered **wrongly** may be answered again, which is how the
-        halved-points rule is reached: the retry is graded by ``domain.policy`` as a second
-        attempt, so a correct retry is worth half. A question already answered *correctly*
-        is closed, so a learner cannot re-open one for another go.
+        A question that was answered **wrongly** may be answered again in a *lesson* sitting,
+        which is how the halved-points rule is reached: the retry is graded by
+        ``domain.policy`` as a second attempt, so a correct retry is worth half. A question
+        already answered *correctly* is closed, so a learner cannot re-open one for another
+        go.
+
+        A **checkpoint** seals every question on first answer, right or wrong. Retries exist
+        to help a learner learn; inside a graded gate they would only be a way to fish for the
+        pass, because the score the bar reads is the sitting's final one. The gate is
+        re-sittable from the start instead — a fresh session draws a fresh sample — so
+        refusing the in-session retry costs the learner nothing they are entitled to.
         """
         session = await self._require_owned(user_id, session_id)
         await self._expire_if_due(session)
@@ -249,9 +258,9 @@ class QuizService:
                 code=ErrorCode.QUESTION_NOT_IN_SESSION,
             )
         prior = await self._uow.quiz_answers.get(session.id, question_id)
-        if prior is not None and prior.is_correct:
+        if prior is not None and (prior.is_correct or session.mode is SessionMode.CHECKPOINT):
             raise ConflictError(
-                "That question has already been answered correctly.",
+                _already_answered_message(prior.is_correct),
                 code=ErrorCode.QUESTION_ALREADY_ANSWERED,
             )
 
@@ -338,27 +347,34 @@ class QuizService:
         # than earning a number only one of those roll-ups would see. A checkpoint is a
         # gate: its reward is the unlock, and (with the gamification phase) an explicit
         # passing bonus announced as its own event.
+        #
+        # A replay of an already-complete lesson earns nothing either. XP is a claim about
+        # learning that happened for the first time, and the ledger backs a leaderboard, so a
+        # loop over a finished lesson must not be a way to mint it.
         is_checkpoint = session.mode is SessionMode.CHECKPOINT
-        session.complete(xp_awarded=0 if is_checkpoint else xp_awarded)
+        is_retry = False
+        if not is_checkpoint and session.lesson_id is not None:
+            is_retry = await self._lesson_already_complete(user_id, session.lesson_id)
+        granted_xp = 0 if (is_checkpoint or is_retry) else xp_awarded
+        session.complete(xp_awarded=granted_xp)
         await self._uow.quiz_sessions.save(session)
 
         passed: bool | None = None
         unlocked_unit_id: uuid.UUID | None = None
-        is_retry = False
         if is_checkpoint and session.unit_id is not None:
             passed, unlocked_unit_id = await self._record_unit_progress(
                 user_id, session.unit_id, score_percent=score_percent
             )
         else:
-            is_retry = await self._record_progress(
-                user_id, session.lesson_id, score_percent=score_percent, xp=xp_awarded
+            await self._record_progress(
+                user_id, session.lesson_id, score_percent=score_percent, xp=granted_xp
             )
         await self._publish_completion(
             user_id,
             session,
             score_percent=score_percent,
             correct_count=correct_count,
-            xp_awarded=xp_awarded,
+            xp_awarded=granted_xp,
             is_retry=is_retry,
         )
         await self._uow.commit()
@@ -377,7 +393,10 @@ class QuizService:
             missed_question_ids=tuple(
                 answer.question_id for answer in answers if not answer.is_correct
             ),
-            retry_available=any(not answer.is_correct for answer in answers),
+            # A retry means "answer the missed ones again in this sitting", which only a
+            # lesson offers. A checkpoint is re-sat as a whole, from a fresh sample, so the
+            # client is never invited to send an answer the engine will refuse.
+            retry_available=not is_checkpoint and any(not answer.is_correct for answer in answers),
         )
 
     # ============================================================== abandon
@@ -413,6 +432,37 @@ class QuizService:
         if unit_locked(unit_id, [item.unit.id for item in ordered], passed_units):
             raise ForbiddenError(
                 "Pass the previous unit's checkpoint to unlock this unit.",
+                code=ErrorCode.LESSON_LOCKED,
+            )
+
+    async def _assert_lesson_unlocked(self, user_id: UserId, lesson: Lesson) -> None:
+        """Refuse a sitting in a lesson the sequential-unlock rule has not reached.
+
+        A lesson is open if it is already completed (allowing review/re-attempt),
+        or if it is the first lesson of an open unit, or if its immediate predecessor
+        in the unit has been completed.
+        """
+        progress = await self._uow.lesson_progress.get(user_id, lesson.id)
+        if progress is not None and progress.state is ProgressState.COMPLETED:
+            return
+
+        all_placements = await self._uow.lessons.list_published_ordered()
+        unit_lessons = [p.lesson.id for p in all_placements if p.lesson.unit_id == lesson.unit_id]
+        if not unit_lessons:
+            return
+
+        progress_rows = await self._uow.lesson_progress.list_for_user(user_id)
+        completed_lessons = {
+            r.lesson_id for r in progress_rows if r.state is ProgressState.COMPLETED
+        }
+        if lesson_locked(
+            lesson.id,
+            unit_lessons,
+            completed_lessons,
+            is_unit_locked=False,
+        ):
+            raise ForbiddenError(
+                "Complete the previous lesson to unlock this lesson.",
                 code=ErrorCode.LESSON_LOCKED,
             )
 
@@ -485,9 +535,7 @@ class QuizService:
                 code=ErrorCode.LESSON_NOT_AVAILABLE,
             )
 
-        selected_ids = select_checkpoint_questions(
-            await self._checkpoint_stats(user_id, questions)
-        )
+        selected_ids = select_checkpoint_questions(await self._checkpoint_stats(user_id, questions))
         by_id = {question.id: question for question in questions}
         # The coverage pass guarantees a question exists for every lesson *that has one*;
         # a published lesson with no questions cannot be represented and the sample still
@@ -550,8 +598,7 @@ class QuizService:
                     was_wrong=facts.ever_wrong if facts is not None else False,
                     card_lapses=card.lapses if card is not None else 0,
                     card_due=card is not None and ensure_aware(card.due_at) <= now,
-                    card_easy=card is not None
-                    and card_is_easy(card.ease_factor, card.lapses),
+                    card_easy=card is not None and card_is_easy(card.ease_factor, card.lapses),
                 )
             )
         return stats
@@ -595,9 +642,7 @@ class QuizService:
                 [ContentId(question_id) for question_id in session.question_ids]
             )
         else:
-            questions = await self._uow.questions.list_for_lessons(
-                [ContentId(session.lesson_id)]
-            )
+            questions = await self._uow.questions.list_for_lessons([ContentId(session.lesson_id)])
         by_id = {question.id: question for question in questions}
         wanted = (ContentId(question_id) for question_id in session.question_ids)
         return [by_id[question_id] for question_id in wanted if question_id in by_id]
@@ -611,6 +656,11 @@ class QuizService:
         progress.start()
         await self._uow.lesson_progress.save(progress)
 
+    async def _lesson_already_complete(self, user_id: UserId, lesson_id: uuid.UUID) -> bool:
+        """Whether the learner had already finished this lesson before the current sitting."""
+        progress = await self._uow.lesson_progress.get(user_id, lesson_id)
+        return progress is not None and progress.state is ProgressState.COMPLETED
+
     async def _record_progress(
         self,
         user_id: UserId,
@@ -618,23 +668,21 @@ class QuizService:
         *,
         score_percent: int,
         xp: int,
-    ) -> bool:
-        """Fold the completion into the learner's progress row, returning ``is_retry``.
+    ) -> None:
+        """Fold the completion into the learner's progress row.
 
-        ``is_retry`` is true when the lesson was already complete before this sitting — the
-        learner replaying a lesson they have finished. It only matters for the event, but the
-        fact is known here (where the prior state is read) and nowhere else, so it is
-        returned rather than re-derived by the caller.
+        ``xp`` is what the caller has already decided the sitting earned — nothing for a
+        replay — so this method never has to know why. ``best_score`` still keeps the
+        maximum and ``attempts`` still counts every pass, because a replay is worth
+        recording even when it pays nothing.
         """
         if lesson_id is None:  # pragma: no cover - checkpoint completions take the other branch
-            return False
+            return
         progress = await self._uow.lesson_progress.get(user_id, lesson_id)
         if progress is None:
             progress = LessonProgress(id=new_id(), user_id=user_id, lesson_id=lesson_id)
-        is_retry = progress.state is ProgressState.COMPLETED
         progress.record_completion(score_percent=score_percent, xp=xp)
         await self._uow.lesson_progress.save(progress)
-        return is_retry
 
     async def _record_unit_progress(
         self,
@@ -722,6 +770,20 @@ class QuizService:
 
 
 # ------------------------------------------------------------------ helpers
+def _already_answered_message(was_correct: bool) -> str:
+    """Why a second answer to this question was refused.
+
+    Two reasons reach the same code, and the message is the only place they are told apart:
+    a question already answered *correctly* in a lesson is closed for good, and any question
+    in a checkpoint is sealed on its first answer. The checkpoint wording never mentions the
+    verdict, because telling a learner "you were wrong, try again" is exactly the hint the
+    seal exists to withhold.
+    """
+    if was_correct:
+        return "That question has already been answered correctly."
+    return "That question is already sealed for this checkpoint sitting."
+
+
 def _require_answerable(session: QuizSession) -> None:
     """Refuse a sitting that can no longer be answered.
 

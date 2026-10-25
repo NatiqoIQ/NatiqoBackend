@@ -6,10 +6,22 @@
 # tree is `reset --hard` to origin/main). The production .env lives there as an
 # untracked file and survives every deploy.
 
+# A push to main no longer deploys by itself. The workflow is triggered by the
+# *completion* of CI on main, and the job below runs only when that conclusion is
+# `success` — so a commit that fails lint, types, tests or coverage cannot reach the
+# production server. `workflow_run` fires for failures too, hence the explicit guard:
+# without it a red CI run would still start a deploy.
+#
+# One thing a workflow file cannot express: `main` should also require the
+# `CI / quality` status check in GitHub's branch protection, so a red commit cannot be
+# merged in the first place. That is repository configuration, not code.
+
 name: Deploy to production
 
 on:
-  push:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
     branches: [main]
   workflow_dispatch:
 
@@ -20,6 +32,11 @@ concurrency:
 jobs:
   deploy:
     runs-on: [self-hosted, linux, x64, natiqo]
+    #: A manual run is a deliberate act by a maintainer, so it is allowed through. An
+    #: automatic run must prove the tests behind it passed.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
     steps:
       - name: Pull latest code
         env:

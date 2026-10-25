@@ -15,8 +15,8 @@ an answer's correctness never appears here, and the answer key never leaves the 
 models in ``schemas.py``.
 
 ``CurrentUser`` is imported from the users module because authentication is cross-cutting
-and there is no shared auth module; it resolves the caller from the access token and its
-roles from the live account. This mirrors the one existing cross-module read in the
+and there is no shared auth module; it resolves the caller from the access token and the
+live account behind it. This mirrors the one existing cross-module read in the
 codebase (``ai`` reaching into ``users`` for a profile timezone).
 """
 

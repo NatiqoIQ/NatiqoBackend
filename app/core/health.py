@@ -95,6 +95,29 @@ async def cache_check(ping: Any) -> CheckResult:
     )
 
 
+async def queue_check(ping: Any) -> CheckResult:
+    """Whether the job queue answers.
+
+    A queue that is down does not stop the API from serving a lesson, an answer or a
+    progress read — all of those are synchronous. What stops is background work: the
+    nightly cleanup, and later notification delivery. So this check degrades the report
+    rather than marking the instance unhealthy: pulling the only API out of the load
+    balancer because Redis blinked would turn a stalled cron into a total outage.
+    """
+    started = time.perf_counter()
+    try:
+        ok = await ping()
+    except Exception as exc:  # noqa: BLE001 — a probe reports, never raises
+        return CheckResult(
+            name="queue", status=HealthStatus.UNHEALTHY, latency_ms=0.0, detail=str(exc)[:200]
+        )
+    return CheckResult(
+        name="queue",
+        status=HealthStatus.HEALTHY if ok else HealthStatus.UNHEALTHY,
+        latency_ms=(time.perf_counter() - started) * 1000,
+    )
+
+
 async def build_health_report(*, deep: bool) -> HealthReport:
     from app.core.config import get_settings
 
@@ -107,13 +130,18 @@ async def build_health_report(*, deep: bool) -> HealthReport:
         )
 
     checks = [await database_check()]
-    from app.api.deps import get_cache
+    from app.api.deps import get_cache, get_queue
 
     cache = get_cache()
     checks.append(await cache_check(cache.ping))
+    checks.append(await queue_check(get_queue().ping))
 
-    if any(c.status is HealthStatus.UNHEALTHY for c in checks):
+    unhealthy = [c for c in checks if c.status is HealthStatus.UNHEALTHY]
+    if any(c.name != "queue" for c in unhealthy):
         status = HealthStatus.UNHEALTHY
+    elif unhealthy:
+        # Only the queue: background work is stalled, the request path is not.
+        status = HealthStatus.DEGRADED
     elif any(c.name == "cache" for c in checks) and not settings.uses_redis:
         # Running on the in-memory adapter: functional, but not production-grade.
         status = HealthStatus.DEGRADED

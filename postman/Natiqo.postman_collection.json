@@ -418,7 +418,7 @@
                   "const b = pm.response.json();",
                   "pm.test('the session belongs to the minted account', () => pm.expect(b.email).to.eql(pm.environment.get('email')));",
                   "pm.test('account is active', () => pm.expect(b.status).to.eql('active'));",
-                  "pm.test('baseline role only', () => pm.expect(b.roles).to.eql(['user']));",
+                  "pm.test('baseline account is not an admin', () => pm.expect(b.isAdmin).to.eql(false));",
                   "pm.test('emailVerified reflects the provider', () => pm.expect(b.emailVerified).to.be.a('boolean'));",
                   "pm.test('currentLevel is set by placement, not the client', () => pm.expect(b.profile.currentLevel).to.be.a('string'));",
                   "pm.test('no token leaks into the profile', () => pm.expect(pm.response.text()).to.not.include('eyJ'));"

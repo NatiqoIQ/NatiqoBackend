@@ -186,8 +186,8 @@ class TestMigratedConstraints:
 
         user_id = str(uuid.uuid4())
         connection.execute(
-            "insert into users (id, email, status, roles, created_at, updated_at)"
-            " values (?, ?, 'active', '[]', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+            "insert into users (id, email, status, is_admin, created_at, updated_at)"
+            " values (?, ?, 'active', 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
             (user_id, f"{user_id}@example.com"),
         )
         connection.commit()
@@ -235,8 +235,8 @@ class TestMigratedConstraints:
         user_id = str(uuid.uuid4())
         with pytest.raises(sqlite3.IntegrityError):
             migrated.execute(
-                "insert into users (id, email, status, roles, created_at, updated_at)"
-                " values (?, ?, 'zombie', '[]', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+                "insert into users (id, email, status, is_admin, created_at, updated_at)"
+                " values (?, ?, 'zombie', 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
                 (user_id, f"{user_id}@example.com"),
             )
             migrated.commit()
@@ -477,6 +477,8 @@ class TestCheckpointBackfill:
         import uuid
 
         user_id = str(uuid.uuid4())
+        # Seeded at the revision below, where accounts still carry a role list; the
+        # roles-to-is_admin migration runs later in the upgrade and has to cope with it.
         connection.execute(
             "insert into users (id, email, status, roles, created_at, updated_at)"
             " values (?, ?, 'active', '[]', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
@@ -534,7 +536,7 @@ class TestCheckpointBackfill:
         )
 
     @pytest.fixture
-    def seeded_then_upgraded(self, alembic_config: Config) -> sqlite3.Connection:
+    def seeded_then_upgraded(self, alembic_config: Config) -> Iterator[sqlite3.Connection]:
         command.upgrade(alembic_config, "f6c35e9b1a84")
         connection = sqlite3.connect(_db_path(alembic_config))
         connection.execute("PRAGMA foreign_keys=ON")

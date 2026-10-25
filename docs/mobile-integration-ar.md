@@ -180,7 +180,7 @@ const api  = '$base/api/v1';
     "id": "bdb4f270-...",
     "email": "ali@example.com",
     "status": "active",
-    "roles": ["user"],
+    "isAdmin": false,
     "emailVerified": true,            // يعكسه المزوّد — Google يؤكده دائماً
     "createdAt": "2026-10-02T21:20:18.664792Z",
     "profile": {

@@ -39,7 +39,7 @@ class ErrorCode(StrEnum):
     AUTH_REFRESH_INVALID = "AUTH_REFRESH_INVALID"
     AUTH_REFRESH_REUSED = "AUTH_REFRESH_REUSED"
     AUTH_FORBIDDEN = "AUTH_FORBIDDEN"
-    AUTH_INSUFFICIENT_ROLE = "AUTH_INSUFFICIENT_ROLE"
+    AUTH_ADMIN_REQUIRED = "AUTH_ADMIN_REQUIRED"
     AUTH_LOGIN_ATTEMPTS_EXCEEDED = "AUTH_LOGIN_ATTEMPTS_EXCEEDED"
     #: The Google/Apple ID token failed signature, issuer, audience or expiry checks.
     AUTH_IDENTITY_INVALID = "AUTH_IDENTITY_INVALID"
@@ -62,6 +62,9 @@ class ErrorCode(StrEnum):
     LESSON_LOCKED = "LESSON_LOCKED"
     LESSON_ALREADY_COMPLETED = "LESSON_ALREADY_COMPLETED"
     CONTENT_NOT_PUBLISHED = "CONTENT_NOT_PUBLISHED"
+    #: A hard delete was asked of content that is no longer a draft. Archiving is the
+    #: supported way to retire content, because learner history points at its ids.
+    CONTENT_NOT_EDITABLE = "CONTENT_NOT_EDITABLE"
     INVALID_STATE_TRANSITION = "INVALID_STATE_TRANSITION"
 
     # ------------------------------------------------------ vocab / grammar

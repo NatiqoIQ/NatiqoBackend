@@ -17,7 +17,7 @@ be the same input, and one of the two behaviours would be wrong.
 from __future__ import annotations
 
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from typing import TypeGuard
 
@@ -193,8 +193,9 @@ class QuestionBulkResult:
 class AdminUserView:
     id: uuid.UUID
     email: str
+    name: str
     status: str
-    roles: tuple[str, ...]
+    is_admin: bool
     created_at: datetime
 
 
@@ -303,5 +304,7 @@ class QuestionUpdateCommand:
 
 
 @dataclass(frozen=True, slots=True)
-class UserRolesCommand:
-    roles: tuple[str, ...] = field(default_factory=tuple)
+class SetAdminCommand:
+    """Grant or revoke the admin flag. A boolean, not a set: there is nothing else to set."""
+
+    is_admin: bool

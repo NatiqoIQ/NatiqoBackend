@@ -39,7 +39,7 @@ from app.modules.quiz.application.progress_dto import (
     XpEventView,
 )
 from app.modules.quiz.domain.entities import LessonProgress, ProgressState, QuizSession
-from app.modules.quiz.domain.unlock import unit_locked
+from app.modules.quiz.domain.unlock import lesson_locked, unit_locked
 
 __all__ = ["ProgressService"]
 
@@ -90,8 +90,8 @@ class ProgressService:
         exposing the editor's draft tree. A learner who has never touched the lesson still
         gets a view, with the zeroed record.
 
-        ``locked`` is the sequential-unlock rule applied to the lesson's unit: a lesson is
-        open exactly when its unit is.
+        ``locked`` is the sequential-unlock rule: a lesson is open when its unit is open and
+        its predecessor lesson has been completed.
         """
         placement = await self._uow.lessons.get_published_placement(ContentId(lesson_id))
         if placement is None:
@@ -101,10 +101,23 @@ class ProgressService:
             )
         row = await self._uow.lesson_progress.get(user_id, lesson_id)
         ordered_units, passed_units = await self._unlock_inputs(user_id)
+        all_placements = await self._uow.lessons.list_published_ordered()
+        unit_lessons = [
+            p.lesson.id for p in all_placements if p.lesson.unit_id == placement.lesson.unit_id
+        ]
+        rows = await self._uow.lesson_progress.list_for_user(user_id)
+        completed_lessons = {r.lesson_id for r in rows if r.state is ProgressState.COMPLETED}
+        is_u_locked = unit_locked(placement.lesson.unit_id, ordered_units, passed_units)
+        l_locked = lesson_locked(
+            placement.lesson.id,
+            unit_lessons,
+            completed_lessons,
+            is_unit_locked=is_u_locked,
+        )
         return _lesson_view(
             placement,
             row,
-            locked=unit_locked(placement.lesson.unit_id, ordered_units, passed_units),
+            locked=l_locked,
         )
 
     # ============================================================= unlock map
@@ -116,21 +129,38 @@ class ProgressService:
         zero record rather than being omitted, so the client can render the road ahead
         without a second query.
 
-        ``locked`` is the sequential-unlock rule applied per *unit*: every lesson of a
-        shut unit is locked, and a unit opens when its predecessor's checkpoint is passed.
+        ``locked`` is the sequential-unlock rule: every lesson of a shut unit is locked,
+        and inside an open unit a lesson opens once its predecessor lesson is completed.
         """
         placements = await self._uow.lessons.list_published_ordered()
         rows = await self._uow.lesson_progress.list_for_user(user_id)
         by_lesson = {row.lesson_id: row for row in rows}
+        completed_lessons = {row.lesson_id for row in rows if row.state is ProgressState.COMPLETED}
         ordered_units, passed_units = await self._unlock_inputs(user_id)
-        return [
-            _map_item(
-                placement,
-                by_lesson.get(placement.lesson.id),
-                locked=unit_locked(placement.lesson.unit_id, ordered_units, passed_units),
+
+        lessons_by_unit: dict[uuid.UUID, list[uuid.UUID]] = {}
+        for placement in placements:
+            lessons_by_unit.setdefault(placement.lesson.unit_id, []).append(placement.lesson.id)
+
+        items: list[UnlockMapItemView] = []
+        for placement in placements:
+            unit_id = placement.lesson.unit_id
+            is_u_locked = unit_locked(unit_id, ordered_units, passed_units)
+            unit_lessons = lessons_by_unit.get(unit_id, [])
+            l_locked = lesson_locked(
+                placement.lesson.id,
+                unit_lessons,
+                completed_lessons,
+                is_unit_locked=is_u_locked,
             )
-            for placement in placements
-        ]
+            items.append(
+                _map_item(
+                    placement,
+                    by_lesson.get(placement.lesson.id),
+                    locked=l_locked,
+                )
+            )
+        return items
 
     # ============================================================ unit list
     async def units(self, user_id: UserId) -> list[UnitProgressItemView]:
@@ -261,6 +291,7 @@ def _lesson_view(
     placement: LessonPlacement, row: LessonProgress | None, *, locked: bool
 ) -> LessonProgressView:
     lesson = placement.lesson
+    is_completed = row is not None and row.state is ProgressState.COMPLETED
     return LessonProgressView(
         lesson_id=lesson.id,
         unit_id=lesson.unit_id,
@@ -269,6 +300,8 @@ def _lesson_view(
         position=lesson.position,
         state=row.state.value if row is not None else "available",
         locked=locked,
+        is_completed=is_completed,
+        is_unlocked=not locked,
         best_score=row.best_score if row is not None else 0,
         attempts=row.attempts if row is not None else 0,
         xp_earned=row.xp_earned if row is not None else 0,
@@ -280,6 +313,7 @@ def _map_item(
     placement: LessonPlacement, row: LessonProgress | None, *, locked: bool
 ) -> UnlockMapItemView:
     lesson = placement.lesson
+    is_completed = row is not None and row.state is ProgressState.COMPLETED
     return UnlockMapItemView(
         lesson_id=lesson.id,
         unit_id=lesson.unit_id,
@@ -288,6 +322,8 @@ def _map_item(
         position=lesson.position,
         state=row.state.value if row is not None else "available",
         locked=locked,
+        is_completed=is_completed,
+        is_unlocked=not locked,
         best_score=row.best_score if row is not None else 0,
         attempts=row.attempts if row is not None else 0,
         xp_earned=row.xp_earned if row is not None else 0,
