@@ -44,6 +44,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -176,6 +177,13 @@ class LessonProgressModel(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     best_score: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=0)
     attempts: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=0)
     xp_earned: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    #: Number of new words learned in this lesson. The ``server_default`` mirrors the
+    #: migration that added the column: an ``ALTER TABLE ... ADD COLUMN NOT NULL`` needs
+    #: a database-side default for existing rows, and declaring it here too keeps
+    #: ``alembic check`` from reading the two as different schemas.
+    words_learned: Mapped[int] = mapped_column(
+        SmallInteger, nullable=False, default=0, server_default=text("0")
+    )
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     #: Ordering metadata only — see the module docstring.
@@ -187,6 +195,7 @@ class LessonProgressModel(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         CheckConstraint(f"state IN ({PROGRESS_STATES_SQL})", name="valid_state"),
         CheckConstraint("best_score BETWEEN 0 AND 100", name="score_in_range"),
         CheckConstraint("attempts >= 0", name="non_negative_attempts"),
+        CheckConstraint("words_learned >= 0", name="non_negative_words_learned"),
         Index("ix_lesson_progress_user_state", "user_id", "state"),
         # "Hardest lessons" groups by lesson, which the per-learner index cannot serve.
         Index("ix_lesson_progress_lesson", "lesson_id"),

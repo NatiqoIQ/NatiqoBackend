@@ -42,7 +42,7 @@ It complements, and never repeats:
                      PostgreSQL     Redis    S3 / /media
 ```
 
-**What the backend gives you today — 31 operations.** (Plus `POST /api/v1/auth/dev-login`,
+**What the backend gives you today — 34 operations.** (Plus `POST /api/v1/auth/dev-login`,
 mounted only when `DEV_LOGIN_ENABLED` is true, which is off by default and refused in
 production: a local `.env` opts in.)
 
@@ -612,16 +612,16 @@ zero.
 `GET /progress` → the summary fields plus the first page of XP history in one call, so the
 dashboard is a single request. Summary fields: `totalXp`, `lessonsCompleted`,
 `lessonsInProgress`, `lessonsStarted`, `correctCount`, `answeredCount`, `accuracyPercent`,
-`currentStreakDays`, `longestStreakDays`, `lastActivityAt`. The streak is measured in the
+`wordsLearned`, `currentStreakDays`, `longestStreakDays`, `lastActivityAt`. The streak is measured in the
 learner's own timezone (profile `timezone`, `Asia/Baghdad` by default), not UTC. The `xp`
 page is the paginated XP feed, **newest first**, one row per *completed* session:
 `sessionId`, `lessonId`, `xpAwarded`, `correctCount`, `totalCount`, `scorePercent`,
-`completedAt`. An abandoned sitting earned nothing and never appears. Cursor is opaque and
+`completedAt`, `wordsLearned`. An abandoned sitting earned nothing and never appears. Cursor is opaque and
 ordered by `(completedAt, id)` — echo `meta.nextCursor` back verbatim as `?cursor=`, and
 page the feed by re-calling `/progress?limit=&cursor=` and reading `xp`.
 
 `GET /progress/unlocks` → `{ items: [{ lessonId, unitId, levelCode, title, position, state,
-locked, bestScore, attempts, xpEarned, completedAt }], total }`: every *published* lesson in
+locked, bestScore, attempts, xpEarned, wordsLearned, completedAt }], total }`: every *published* lesson in
 curriculum order (level → unit → lesson position). Whole-map, not paginated — the published
 catalogue is the bound. **`locked` is present but always `false` today**: no gating rule is
 in force yet, so nothing blocks starting a lesson. A lesson the learner has never touched

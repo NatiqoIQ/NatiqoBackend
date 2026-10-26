@@ -235,3 +235,35 @@ class UserDeviceModel(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         Index("ix_device_user_active", "user_id", "revoked_at"),
         UniqueConstraint("user_id", "push_token", name="uq_device_user_push_token"),
     )
+
+
+class UserDailyChallengeModel(Base, UUIDPrimaryKeyMixin, TimestampMixin):
+    """One learner's daily challenge record.
+
+    One row per learner per day, tracking their progress against the daily challenge.
+    The challenge resets each calendar day in the learner's timezone.
+    """
+    __tablename__ = "user_daily_challenges"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False, unique=True
+    )
+    #: Date of the challenge in the learner's local timezone (YYYY-MM-DD).
+    challenge_date: Mapped[str] = mapped_column(String(10), nullable=False)
+    #: Number of lessons completed today.
+    lessons_completed_today: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=0)
+    #: Number of new words learned today.
+    words_learned_today: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=0)
+    #: Whether the daily challenge has been claimed today.
+    claimed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+    #: Ordering metadata only — see the module docstring. Never navigated.
+    user: Mapped[UserModel] = relationship(lazy="raise_on_sql")
+
+    __table_args__ = (
+        # A learner can have at most one row per day.
+        UniqueConstraint("user_id", "challenge_date", name="uq_user_daily_challenge_day"),
+        Index("ix_user_daily_challenge_user", "user_id"),
+        # Enable efficient "who claimed today" queries.
+        Index("ix_user_daily_challenge_date", "challenge_date"),
+    )

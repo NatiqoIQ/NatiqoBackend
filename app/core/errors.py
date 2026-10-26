@@ -98,6 +98,14 @@ class ErrorCode(StrEnum):
     ALREADY_CLAIMED = "ALREADY_CLAIMED"
     NO_FREEZES_AVAILABLE = "NO_FREEZES_AVAILABLE"
 
+    # ------------------------------------------------------- daily challenge
+    #: ``POST /me/daily-challenge/claim`` was called for a day whose reward was
+    #: already taken. A distinct code from ``ALREADY_CLAIMED`` because the two are
+    #: different states to a client: an achievement claim is retryable once the list
+    #: is refreshed, a daily challenge only becomes claimable again after midnight in
+    #: the learner's own timezone.
+    DAILY_CHALLENGE_ALREADY_CLAIMED = "DAILY_CHALLENGE_ALREADY_CLAIMED"
+
     # --------------------------------------------------------------- economy
     SUBSCRIPTION_NOT_FOUND = "SUBSCRIPTION_NOT_FOUND"
     PLAN_NOT_FOUND = "PLAN_NOT_FOUND"

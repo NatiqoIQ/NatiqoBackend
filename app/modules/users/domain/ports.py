@@ -16,6 +16,7 @@ from app.modules.users.domain.entities import (
     ExternalIdentity,
     RefreshSession,
     User,
+    UserDailyChallenge,
     UserDevice,
     UserProfile,
     UserSettings,
@@ -67,6 +68,42 @@ class UserRepositoryPort(Protocol):
     async def get_settings(self, user_id: UserId) -> UserSettings | None: ...
 
     async def save_settings(self, settings: UserSettings) -> None: ...
+
+    # ------------------------------------------------------- daily challenge
+    async def get_daily_challenge(
+        self, user_id: UserId, *, challenge_date: str
+    ) -> UserDailyChallenge | None:
+        """The learner's challenge row for one calendar day, or ``None``.
+
+        Absence means "no activity recorded for that day yet" — it is not an error,
+        because a learner who opens the app and does nothing has no row to read.
+        """
+        ...
+
+    async def upsert_daily_challenge(
+        self,
+        user_id: UserId,
+        *,
+        challenge_date: str,
+        lessons_completed_today: int = 0,
+        words_learned_today: int = 0,
+    ) -> UserDailyChallenge:
+        """Add this sitting's counts to the day's totals, creating the day if needed.
+
+        The counters are **increments** rather than replacements: a client reports what
+        one sitting was worth, and that must not erase what an earlier sitting recorded.
+        """
+        ...
+
+    async def claim_daily_challenge(
+        self, user_id: UserId, *, challenge_date: str
+    ) -> bool:
+        """Take one day's reward; ``False`` means it was already claimed.
+
+        The guard lives in the statement's predicate, so two simultaneous claims cannot
+        both report success.
+        """
+        ...
 
 
 @runtime_checkable

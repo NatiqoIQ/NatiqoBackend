@@ -140,6 +140,10 @@ class MeResponse(WireModel):
     is_admin: bool
     email_verified: bool
     created_at: datetime
+    #: Whole days since the account was created. The app's "days using Natiqo" figure,
+    #: derived server-side from ``created_at`` so every device agrees on it and the
+    #: client never has to trust its own clock.
+    days_since_signup: int
     profile: UserProfileResponse
     settings: UserSettingsResponse
 
@@ -198,6 +202,38 @@ class UpdateMeRequest(WireModel):
     daily_goal_new_words: Annotated[int, Field(ge=1, le=200)] | None = None
 
 
+#: PATCH /me/daily-challenge body
+class UpdateDailyChallengePayload(WireModel):
+    """Update daily challenge progress.
+
+    Increment lessons completed and/or words learned for today. Both fields are optional:
+    sending only one updates just that counter; the other stays as-is.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    lessons_completed_today: Annotated[int, Field(ge=0)] | None = None
+    words_learned_today: Annotated[int, Field(ge=0)] | None = None
+
+
+# GET/PATCH/POST /me/daily-challenge response
+class DailyChallengeResponse(WireModel):
+    """One calendar day's challenge record for the signed-in learner.
+
+    Serialised like every other wire model (camelCase) rather than as the domain
+    dataclass, whose snake_case field names would be the one place in the API that
+    contradicted the naming contract the Flutter client generates types from.
+
+    ``challengeDate`` is the learner's own calendar date (from their profile timezone),
+    so it can legitimately be a day behind the server's UTC date near midnight.
+    """
+
+    challenge_date: str
+    lessons_completed_today: int
+    words_learned_today: int
+    claimed: bool
+
+
 # The error envelope is not declared here. It is owned by
 # ``app.core.responses.ErrorResponse`` (``{"error": {"code", "message",
 # "details", "request_id"}}``), is what the exception handlers actually emit, and is
@@ -206,6 +242,7 @@ class UpdateMeRequest(WireModel):
 
 __all__ = [
     "AuthResponse",
+    "DailyChallengeResponse",
     "DevicePayload",
     "DeviceResponse",
     "LogoutRequest",
@@ -216,6 +253,7 @@ __all__ = [
     "RefreshRequest",
     "SocialLoginRequest",
     "TokenPairResponse",
+    "UpdateDailyChallengePayload",
     "UpdateMeRequest",
     "UserProfileResponse",
     "UserSettingsResponse",

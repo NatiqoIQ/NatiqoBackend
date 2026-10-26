@@ -25,7 +25,15 @@ from app.api.deps import (
     client_ip,
     get_identity_verifiers,
 )
-from app.core.errors import ErrorCode, NotFoundError, UnauthorizedError, ValidationFailed
+from app.core.errors import (
+    ConflictError,
+    ErrorCode,
+    NotFoundError,
+    UnauthorizedError,
+    ValidationFailed,
+)
+from app.core.time import local_date, utc_now
+from app.core.uow_sqlalchemy import SqlAlchemyUnitOfWork
 from app.modules.users.application.auth_service import AuthService
 from app.modules.users.application.dto import (
     AuthResult,
@@ -38,10 +46,11 @@ from app.modules.users.application.dto import (
     UpdateProfileCommand,
     UpdateSettingsCommand,
 )
-from app.modules.users.domain.entities import User
+from app.modules.users.domain.entities import User, UserDailyChallenge
 from app.modules.users.domain.identity import IdentityProvider, VerifiedIdentity
 from app.modules.users.presentation.schemas import (
     AuthResponse,
+    DailyChallengeResponse,
     DevicePayload,
     DeviceResponse,
     DevLoginRequest,
@@ -52,6 +61,7 @@ from app.modules.users.presentation.schemas import (
     RefreshRequest,
     SocialLoginRequest,
     TokenPairResponse,
+    UpdateDailyChallengePayload,
     UpdateMeRequest,
     UserProfileResponse,
     UserSettingsResponse,
@@ -100,6 +110,7 @@ def _me_response(view: MeView) -> MeResponse:
         is_admin=view.is_admin,
         email_verified=view.email_verified,
         created_at=view.created_at,
+        days_since_signup=view.days_since_signup,
         profile=UserProfileResponse(
             display_name=view.profile.display_name,
             avatar_key=view.profile.avatar_key,
@@ -397,6 +408,129 @@ async def delete_me(
     return Response(status_code=204)
 
 
+# ================================================================== daily challenges
+def _challenge_response(daily: UserDailyChallenge) -> DailyChallengeResponse:
+    return DailyChallengeResponse(
+        challenge_date=daily.challenge_date,
+        lessons_completed_today=daily.lessons_completed_today,
+        words_learned_today=daily.words_learned_today,
+        claimed=daily.claimed,
+    )
+
+
+async def _today_challenge(uow: SqlAlchemyUnitOfWork, user: User) -> UserDailyChallenge:
+    """Today's challenge row in the learner's own timezone, created on first sight.
+
+    The calendar date comes from the profile timezone rather than UTC, so a learner in
+    Asia/Baghdad whose evening sits past UTC midnight is still counting against the day
+    they are actually living in. The row is created here rather than left to the client
+    to POST, so ``GET`` can never answer "you have no challenge today" for a learner who
+    simply has not done anything yet.
+    """
+    profile = await uow.users.get_profile(user.id)
+    today = local_date(utc_now(), profile.timezone if profile else None).isoformat()
+    daily = await uow.users.get_daily_challenge(user.id, challenge_date=today)
+    if daily is None:
+        daily = await uow.users.upsert_daily_challenge(user.id, challenge_date=today)
+    return daily
+
+
+@router.get(
+    "/me/daily-challenge",
+    response_model=DailyChallengeResponse,
+    summary="Get today's daily challenge progress",
+)
+async def get_daily_challenge(
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)],
+    service: AuthServiceDep,
+    uow: UowDep,
+) -> DailyChallengeResponse:
+    """Get the learner's daily challenge progress for their current day.
+
+    Returns how many lessons were completed and how many words were learned today, and
+    whether today's reward has been claimed.
+    """
+    user = await _authenticate(credentials, service)
+    return _challenge_response(await _today_challenge(uow, user))
+
+
+@router.patch(
+    "/me/daily-challenge",
+    response_model=DailyChallengeResponse,
+    summary="Add to today's daily challenge progress",
+)
+async def update_daily_challenge(
+    payload: UpdateDailyChallengePayload,
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)],
+    service: AuthServiceDep,
+    uow: UowDep,
+) -> DailyChallengeResponse:
+    """Add one sitting's counts to today's challenge.
+
+    Both counters are optional **increments** — ``{"wordsLearnedToday": 4}`` adds four
+    words to today's total without touching the lessons counter. This is what makes a
+    lesson-completion screen report its own worth without knowing what came before it.
+    """
+    user = await _authenticate(credentials, service)
+    daily = await _today_challenge(uow, user)
+    updated = await uow.users.upsert_daily_challenge(
+        user.id,
+        challenge_date=daily.challenge_date,
+        lessons_completed_today=payload.lessons_completed_today or 0,
+        words_learned_today=payload.words_learned_today or 0,
+    )
+    await uow.commit()
+    return _challenge_response(updated)
+
+
+@router.post(
+    "/me/daily-challenge/claim",
+    response_model=DailyChallengeResponse,
+    summary="Claim today's daily challenge reward",
+)
+async def claim_daily_challenge(
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)],
+    service: AuthServiceDep,
+    uow: UowDep,
+) -> DailyChallengeResponse:
+    """Claim today's daily challenge reward.
+
+    Marks the challenge as claimed. Only one claim per calendar day is allowed; a second
+    call is refused with ``409 DAILY_CHALLENGE_ALREADY_CLAIMED``.
+    """
+    user = await _authenticate(credentials, service)
+    daily = await _today_challenge(uow, user)
+    if not await uow.users.claim_daily_challenge(
+        user.id, challenge_date=daily.challenge_date
+    ):
+        raise ConflictError(
+            "Daily challenge already claimed today.",
+            code=ErrorCode.DAILY_CHALLENGE_ALREADY_CLAIMED,
+        )
+    await uow.commit()
+    return _challenge_response(
+        await uow.users.get_daily_challenge(user.id, challenge_date=daily.challenge_date)
+    )
+
+
+@router.delete("/me/devices/{device_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Sign a device out and stop its push notifications",
+)
+async def revoke_device(
+    device_id: str,
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)],
+    service: AuthServiceDep,
+) -> Response:
+    user = await _authenticate(credentials, service)
+    try:
+        parsed = uuid.UUID(device_id)
+    except ValueError as exc:
+        raise ValidationFailed("Unknown device.", details={"field": "device_id"}) from exc
+    await service.revoke_device(user.id, parsed)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
 @router.get("/me/devices", response_model=list[DeviceResponse], summary="List signed-in devices")
 async def list_devices(
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)],
@@ -416,25 +550,6 @@ async def list_devices(
         )
         for device in devices
     ]
-
-
-@router.delete(
-    "/me/devices/{device_id}",
-    status_code=status.HTTP_204_NO_CONTENT,
-    summary="Sign a device out and stop its push notifications",
-)
-async def revoke_device(
-    device_id: str,
-    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)],
-    service: AuthServiceDep,
-) -> Response:
-    user = await _authenticate(credentials, service)
-    try:
-        parsed = uuid.UUID(device_id)
-    except ValueError as exc:
-        raise ValidationFailed("Unknown device.", details={"field": "device_id"}) from exc
-    await service.revoke_device(user.id, parsed)
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 # ================================================================== dependencies

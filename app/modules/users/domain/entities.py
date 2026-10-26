@@ -252,3 +252,41 @@ class ExternalIdentity:
     picture_url: str | None = None
     created_at: datetime = field(default_factory=utc_now)
     last_login_at: datetime = field(default_factory=utc_now)
+
+
+@dataclass(slots=True)
+class UserDailyChallenge:
+    """One learner's daily challenge record.
+
+    Tracks progress against the daily challenge: lessons completed and words learned.
+    The challenge resets each calendar day in the learner's timezone.
+    """
+
+    user_id: UserId
+    challenge_date: str
+    lessons_completed_today: int = 0
+    words_learned_today: int = 0
+    claimed: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class ExternalIdentity:
+    """A sign-in account at a provider, linked to exactly one :class:`User`.
+
+    ``(provider, subject)`` is unique and is how an account is recognised on the next
+    sign-in: the subject is the provider's stable, opaque user id, which unlike an email
+    never changes and is never reassigned to a different person. One learner may hold
+    several rows — a Google identity and an Apple identity for the same human — which is
+    why this is its own table rather than columns on ``users``.
+    """
+
+    id: uuid.UUID
+    user_id: UserId
+    provider: str
+    subject: str
+    email: str | None = None
+    email_verified: bool = False
+    display_name: str | None = None
+    picture_url: str | None = None
+    created_at: datetime = field(default_factory=utc_now)
+    last_login_at: datetime = field(default_factory=utc_now)

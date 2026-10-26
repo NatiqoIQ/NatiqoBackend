@@ -205,6 +205,7 @@ class LessonProgress:
     best_score: int = 0
     attempts: int = 0
     xp_earned: int = 0
+    words_learned: int = 0
     completed_at: datetime | None = None
 
     def start(self) -> None:
@@ -212,7 +213,7 @@ class LessonProgress:
         if self.state is not ProgressState.COMPLETED:
             self.state = ProgressState.IN_PROGRESS
 
-    def record_completion(self, *, score_percent: int, xp: int, at: datetime | None = None) -> None:
+    def record_completion(self, *, score_percent: int, xp: int, words: int = 0, at: datetime | None = None) -> None:
         """Fold one finished attempt in.
 
         ``best_score`` keeps the maximum and ``xp_earned`` accumulates, so a retry can
@@ -222,6 +223,7 @@ class LessonProgress:
         self.attempts += 1
         self.xp_earned += xp
         self.best_score = max(self.best_score, score_percent)
+        self.words_learned += words
         self.state = ProgressState.COMPLETED
         self.completed_at = at or utc_now()
 

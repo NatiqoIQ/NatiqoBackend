@@ -57,6 +57,7 @@ EXPECTED_TABLES = {
     "refresh_tokens",
     "review_cards",
     "review_logs",
+    "user_daily_challenges",
     "unit_progress",
     "units",
     "user_achievements",

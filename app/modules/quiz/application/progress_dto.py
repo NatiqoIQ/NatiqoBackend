@@ -39,6 +39,7 @@ class ProgressSummaryView:
     accuracy_percent: int
     current_streak_days: int
     longest_streak_days: int
+    words_learned: int
     last_activity_at: datetime | None
 
 
@@ -64,6 +65,7 @@ class LessonProgressView:
     best_score: int
     attempts: int
     xp_earned: int
+    words_learned: int
     completed_at: datetime | None
 
 
@@ -115,6 +117,7 @@ class UnlockMapItemView:
     best_score: int
     attempts: int
     xp_earned: int
+    words_learned: int
     completed_at: datetime | None
 
 

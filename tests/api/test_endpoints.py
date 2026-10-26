@@ -101,6 +101,9 @@ PUBLISHED_OPERATIONS: set[tuple[str, str]] = {
     ("DELETE", "/api/v1/me"),
     ("GET", "/api/v1/me/devices"),
     ("DELETE", "/api/v1/me/devices/{device_id}"),
+    ("GET", "/api/v1/me/daily-challenge"),
+    ("PATCH", "/api/v1/me/daily-challenge"),
+    ("POST", "/api/v1/me/daily-challenge/claim"),
     ("GET", "/api/v1/content/tree"),
     ("GET", "/api/v1/content/lessons/{lesson_id}"),
     ("POST", "/api/v1/quiz/sessions"),
@@ -4753,3 +4756,193 @@ async def test_media_read_rejects_a_non_uuid_id_before_any_lookup(client: AsyncC
     headers = await _media_headers(client)
     response = await client.get("/api/v1/media/not-a-uuid", headers=headers)
     assert response.status_code == 422, response.text
+
+
+# ============================================================ daily challenge
+# Three endpoints over one per-day row. The behaviour worth pinning down is the
+# arithmetic: counters are increments rather than replacements, a missing counter
+# must never null the other one, and the day boundary is the learner's, not UTC's.
+
+
+async def _challenge_headers(
+    client: AsyncClient, *, timezone: str | None = None, subject: str = "challenge-probe"
+) -> dict[str, str]:
+    # ``timezone`` is a sign-in *body* field: it is applied to the profile only when the
+    # request also creates the account, so it rides in ``body``. A distinct ``subject``
+    # per learner matters more — the account is keyed on (provider, subject), so two
+    # calls that share one resolve to the same account and quietly empty any
+    # two-learner scoping assertion.
+    body = {"timezone": timezone} if timezone else None
+    created = await sign_in(
+        client, token=f"{subject}-id-token", body=body, subject=subject, email=f"{subject}@natiqo.app"
+    )
+    return auth_headers(created["tokens"]["accessToken"])
+
+
+@pytest.mark.asyncio
+async def test_daily_challenge_is_created_zeroed_on_first_read(client: AsyncClient) -> None:
+    headers = await _challenge_headers(client)
+
+    response = await client.get("/api/v1/me/daily-challenge", headers=headers)
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["lessonsCompletedToday"] == 0
+    assert body["wordsLearnedToday"] == 0
+    assert body["claimed"] is False
+
+
+@pytest.mark.asyncio
+async def test_daily_challenge_counts_the_learners_own_calendar_day(client: AsyncClient) -> None:
+    """The date is the learner's, so a far-west timezone is still on the previous day."""
+    headers = await _challenge_headers(client, timezone="Pacific/Midway")
+
+    response = await client.get("/api/v1/me/daily-challenge", headers=headers)
+
+    assert response.status_code == 200, response.text
+    from datetime import UTC, datetime, timedelta
+
+    # Midway is UTC-11: its local date can be a day behind UTC, never ahead.
+    utc_day = datetime.now(UTC).date()
+    local_day = (datetime.now(UTC) + timedelta(hours=-11)).date()
+    assert response.json()["challengeDate"] == local_day.isoformat()
+    assert response.json()["challengeDate"] <= utc_day.isoformat()
+
+
+@pytest.mark.asyncio
+async def test_daily_challenge_patch_adds_to_both_counters(client: AsyncClient) -> None:
+    headers = await _challenge_headers(client)
+
+    first = await client.patch(
+        "/api/v1/me/daily-challenge",
+        headers=headers,
+        json={"lessonsCompletedToday": 1, "wordsLearnedToday": 4},
+    )
+    assert first.status_code == 200, first.text
+    assert first.json()["lessonsCompletedToday"] == 1
+    assert first.json()["wordsLearnedToday"] == 4
+
+    second = await client.patch(
+        "/api/v1/me/daily-challenge",
+        headers=headers,
+        json={"lessonsCompletedToday": 1, "wordsLearnedToday": 3},
+    )
+    assert second.status_code == 200, second.text
+    assert second.json()["lessonsCompletedToday"] == 2
+    assert second.json()["wordsLearnedToday"] == 7
+
+    # The totals survive a re-read; they were not just echoed back.
+    reread = await client.get("/api/v1/me/daily-challenge", headers=headers)
+    assert reread.json()["lessonsCompletedToday"] == 2
+    assert reread.json()["wordsLearnedToday"] == 7
+
+
+@pytest.mark.asyncio
+async def test_daily_challenge_patch_omitting_a_counter_leaves_it_alone(client: AsyncClient) -> None:
+    """``{"wordsLearnedToday": 4}`` must add words without nulling the lessons counter."""
+    headers = await _challenge_headers(client)
+    await client.patch(
+        "/api/v1/me/daily-challenge",
+        headers=headers,
+        json={"lessonsCompletedToday": 2, "wordsLearnedToday": 1},
+    )
+
+    response = await client.patch(
+        "/api/v1/me/daily-challenge",
+        headers=headers,
+        json={"wordsLearnedToday": 4},
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["lessonsCompletedToday"] == 2
+    assert body["wordsLearnedToday"] == 5
+
+
+@pytest.mark.asyncio
+async def test_daily_challenge_patch_is_scoped_to_the_caller(client: AsyncClient) -> None:
+    mine = await _challenge_headers(client, subject="challenge-mine")
+    theirs = await _challenge_headers(client, subject="challenge-theirs")
+    await client.patch(
+        "/api/v1/me/daily-challenge",
+        headers=mine,
+        json={"lessonsCompletedToday": 3, "wordsLearnedToday": 9},
+    )
+
+    response = await client.get("/api/v1/me/daily-challenge", headers=theirs)
+
+    assert response.json()["lessonsCompletedToday"] == 0
+    assert response.json()["wordsLearnedToday"] == 0
+
+
+@pytest.mark.asyncio
+async def test_daily_challenge_patch_rejects_a_negative_counter(client: AsyncClient) -> None:
+    headers = await _challenge_headers(client)
+    response = await client.patch(
+        "/api/v1/me/daily-challenge", headers=headers, json={"wordsLearnedToday": -1}
+    )
+    assert response.status_code == 422, response.text
+
+
+@pytest.mark.asyncio
+async def test_daily_challenge_claim_marks_the_day_claimed(client: AsyncClient) -> None:
+    headers = await _challenge_headers(client)
+
+    claimed = await client.post("/api/v1/me/daily-challenge/claim", headers=headers)
+
+    assert claimed.status_code == 200, claimed.text
+    assert claimed.json()["claimed"] is True
+
+    reread = await client.get("/api/v1/me/daily-challenge", headers=headers)
+    assert reread.json()["claimed"] is True
+
+
+@pytest.mark.asyncio
+async def test_daily_challenge_claim_refuses_a_second_claim_the_same_day(client: AsyncClient) -> None:
+    headers = await _challenge_headers(client)
+    await client.post("/api/v1/me/daily-challenge/claim", headers=headers)
+
+    response = await client.post("/api/v1/me/daily-challenge/claim", headers=headers)
+
+    assert response.status_code == 409, response.text
+    assert error_code(response) == "DAILY_CHALLENGE_ALREADY_CLAIMED"
+
+    # The first claim was not undone by the refused second one.
+    reread = await client.get("/api/v1/me/daily-challenge", headers=headers)
+    assert reread.json()["claimed"] is True
+
+
+@pytest.mark.asyncio
+async def test_daily_challenge_claim_is_scoped_to_the_caller(client: AsyncClient) -> None:
+    mine = await _challenge_headers(client, subject="claim-mine")
+    theirs = await _challenge_headers(client, subject="claim-theirs")
+    await client.post("/api/v1/me/daily-challenge/claim", headers=mine)
+
+    response = await client.get("/api/v1/me/daily-challenge", headers=theirs)
+
+    assert response.json()["claimed"] is False
+
+
+@pytest.mark.asyncio
+async def test_daily_challenge_requires_authentication(client: AsyncClient) -> None:
+    assert (await client.get("/api/v1/me/daily-challenge")).status_code == 401
+    assert (
+        await client.patch("/api/v1/me/daily-challenge", json={"wordsLearnedToday": 1})
+    ).status_code == 401
+    assert (await client.post("/api/v1/me/daily-challenge/claim")).status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_me_reports_days_since_signup(client: AsyncClient) -> None:
+    """The app's \"days using Natiqo\" figure, derived server-side from ``created_at``."""
+    created = await sign_in(client)
+
+    me = await client.get("/api/v1/me", headers=auth_headers(created["tokens"]["accessToken"]))
+
+    assert me.status_code == 200, me.text
+    body = me.json()
+    assert body["daysSinceSignup"] == 0
+    # The figure is derived, so it can never be a negative number of days.
+    assert body["daysSinceSignup"] >= 0
+    # The same value rides on the auth response, so a cold start need not call /me twice.
+    assert created["user"]["daysSinceSignup"] == body["daysSinceSignup"]

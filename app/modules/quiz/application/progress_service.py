@@ -79,6 +79,7 @@ class ProgressService:
             current_streak_days=current_streak,
             longest_streak_days=longest_streak,
             last_activity_at=completion_times[0] if completion_times else None,
+            words_learned=sum(row.words_learned for row in progress_rows),
         )
 
     # ============================================================ one lesson
@@ -305,6 +306,7 @@ def _lesson_view(
         best_score=row.best_score if row is not None else 0,
         attempts=row.attempts if row is not None else 0,
         xp_earned=row.xp_earned if row is not None else 0,
+        words_learned=row.words_learned if row is not None else 0,
         completed_at=row.completed_at if row is not None else None,
     )
 
@@ -327,6 +329,7 @@ def _map_item(
         best_score=row.best_score if row is not None else 0,
         attempts=row.attempts if row is not None else 0,
         xp_earned=row.xp_earned if row is not None else 0,
+        words_learned=row.words_learned if row is not None else 0,
         completed_at=row.completed_at if row is not None else None,
     )
 

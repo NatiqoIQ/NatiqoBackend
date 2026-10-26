@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
+from app.core.time import utc_now
 from app.core.types import (
     CEFRLevel,
     ContentLanguage,
@@ -194,11 +195,13 @@ class MeView:
     is_admin: bool
     email_verified: bool
     created_at: datetime
+    days_since_signup: int
     profile: UserProfileView
     settings: UserSettingsView
 
     @classmethod
     def of(cls, user: User, profile: Any, settings: Any) -> MeView:
+        days = (utc_now() - user.created_at).days
         return cls(
             id=user.id,
             email=user.email,
@@ -206,6 +209,7 @@ class MeView:
             is_admin=user.is_admin,
             email_verified=user.is_email_verified,
             created_at=user.created_at,
+            days_since_signup=days,
             profile=UserProfileView.of(profile),
             settings=UserSettingsView.of(settings),
         )
