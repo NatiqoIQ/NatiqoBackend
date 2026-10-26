@@ -196,6 +196,12 @@ PINS: tuple[Pin, ...] = (
         schema="AnswerCommandResult",
         complete=("$", "$.result"),
     ),
+    Pin(
+        doc=CLIENT_DOCS[2],
+        marker='"wordsLearnedToday": 5',
+        schema="DailyChallengeResponse",
+        complete=("$",),
+    ),
 )
 
 #: Examples the corpus check accepts without a schema, each for a stated reason.

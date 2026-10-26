@@ -19,8 +19,9 @@ It complements, and never repeats:
 | `GET /openapi.json` | Machine-readable schema — generate types from it, do not hand-copy them. |
 
 > **Reality check.** The backend has moved well past the earlier "catalogue only" state.
-> The attempt engine, progress reads, **spaced repetition**, **gamification** and the
-> **AI tutor** are all shipped and live. Only subscriptions, notification delivery, learner
+> The attempt engine, progress reads, **spaced repetition**, **gamification**, the
+> **AI tutor** and **daily challenges** are all shipped and live. Only subscriptions,
+> notification delivery, learner
 > media uploads, vocabulary/grammar and admin/CMS are still ahead. Every readiness label in
 > §6 was read from the mounted routers, not from the roadmap.
 
@@ -57,10 +58,13 @@ Auth & account                       Learning loop
   DELETE /me                             GET    /progress/unlocks     (curriculum-ordered map)
   GET    /me/devices
   DELETE /me/devices/{id}              Spaced repetition
-                                         GET    /review/due
-Catalogue (public, no auth)              GET    /review/stats
-  GET    /content/tree                   GET    /review/preview
-  GET    /content/lessons/{id}           POST   /review/cards/{id}/answer
+  GET    /me/daily-challenge             GET    /review/due
+  PATCH  /me/daily-challenge             GET    /review/stats
+  POST   /me/daily-challenge/claim        GET    /review/preview
+                                         POST   /review/cards/{id}/answer
+Catalogue (public, no auth)
+  GET    /content/tree
+  GET    /content/lessons/{id}
 
 Gamification                         AI tutor
   GET    /gamification/summary         POST   /ai/explain
@@ -448,7 +452,7 @@ Legend: **LIVE** = endpoint exists today · **PHASE n** = unblocked by roadmap p
 | --- | --- | --- |
 | Splash / session restore | `POST /auth/refresh`, `GET /me` | silent; keep splash until decided |
 | Sign-in (Google + Apple) | `POST /auth/google`, `POST /auth/apple` | **first sign-in creates the account** — no register screen and no forgot-password screen, ever |
-| Home shell | `GET /me` | greeting, level chip, daily goal (goal value from `/me` today) |
+| Home shell | `GET /me` | greeting, level chip, daily goal (goal value from `/me` today), days-on-app from `daysSinceSignup` (whole days since signup, server-derived — never count from the device clock) |
 | Profile | `GET/PATCH /me` | cannot edit `currentLevel`; omit a field to leave it untouched |
 | Devices | `GET/DELETE /me/devices` | shows last-seen; revoking a device revokes its sessions |
 | Close account | `DELETE /me` | destructive: confirm dialog + re-auth; no grace period exists server-side (idempotent `204`) |
@@ -660,7 +664,8 @@ Design notes:
 ### 6.6 Gamification — LIVE
 
 Five authenticated endpoints. The hub, the achievement catalogue and the streak screen are
-each a **single read**, so each is one round trip.
+each a **single read**, so each is one round trip. Three more — the **daily challenge**
+under `/me` — are documented at the end of this section.
 
 | Screen | Endpoints | Notes |
 | --- | --- | --- |
@@ -678,6 +683,34 @@ each a **single read**, so each is one round trip.
   gap. If there is no stored stats row yet, the server projects one from durable history —
   a returning learner never reads as a blank sheet.
 - Rate limit 240/min.
+
+**Daily challenge — three authenticated endpoints under `/me`.** One row per learner per
+calendar day, counting today's lessons and words and claimable once.
+
+| Screen | Endpoints | Notes |
+| --- | --- | --- |
+| Daily challenge card (hub or home) | `GET /me/daily-challenge` | today's row, **created on first read** — a learner who has done nothing yet reads zeros, never a 404 |
+| Report a finished sitting | `PATCH /me/daily-challenge` | body `{ "lessonsCompletedToday": 1, "wordsLearnedToday": 4 }` — both fields optional **increments**, not replacements; returns the whole row |
+| Claim today's reward | `POST /me/daily-challenge/claim` | flips `claimed`; a second claim the same day is `409 DAILY_CHALLENGE_ALREADY_CLAIMED` (refresh, do not retry) |
+
+```jsonc
+// GET /me/daily-challenge   → 200   (PATCH and claim return the same shape)
+{ "challengeDate": "2026-10-26", "lessonsCompletedToday": 2,
+  "wordsLearnedToday": 5, "claimed": false }
+```
+
+- **The day boundary is the learner's — not the device's, not UTC's.** `challengeDate` is
+  computed from the profile timezone (`Asia/Baghdad` by default), so the row rolls over at
+  the learner's midnight. Display the server's `challengeDate`; never build the challenge
+  day from the device clock.
+- **PATCH sends what *this* sitting was worth** — e.g. `{"lessonsCompletedToday": 1,
+  "wordsLearnedToday": 3}` right after `op:complete` returns — and the server **adds** it to
+  the day's totals. Never send a running total: two sends would double-count. An omitted
+  field is left alone (words-only does not zero lessons); a negative value is `422`.
+- **Claim only sets the flag today** — no gems or XP are awarded yet, so render a claimed
+  *state*, not an award animation. One claim per calendar day, enforced by the server.
+- These three ride the default `/me` rate-limit scope (**120/min**), not the gamification
+  scope above.
 
 ### 6.7 AI tutor — LIVE, but disabled by default
 
@@ -879,7 +912,7 @@ roadmap phase).
 | **M1** | Sign-in (Google/Apple), session restore, shell, catalogue: the curriculum tree + lesson detail with ETag cache | live endpoints | **buildable now** |
 | **M2** | Lesson reader, profile (view/edit), devices, settings + notification preference toggles, close account | live endpoints | **buildable now** |
 | **M3a** | **Quiz player (the core loop):** start / resume / answer / complete / abandon, server-graded feedback with explanation, session resume across app kill | live quiz endpoints | **buildable now** |
-| **M3b** | Home dashboard, lesson map, XP history, progress tab | live progress reads (§6.4) | **buildable now** |
+| **M3b** | Home dashboard, lesson map, XP history, progress tab, daily-challenge card | live progress reads (§6.4) + `/me/daily-challenge` (§6.6) | **buildable now** |
 | **M4** | Daily review (SRS) queue, review tab + badge, review stats | live review endpoints (§6.5) | **buildable now** |
 | **M5** | Gamification hub, achievements (with claim), streak detail + freeze gate | live gamification endpoints (§6.6) | **buildable now** |
 | **M6** | AI tutor chat + "explain this answer" + quota, behind a feature flag | live AI endpoints (§6.7) | **buildable now** |
@@ -970,6 +1003,10 @@ Rules:
       answer response, never computed locally
 - [ ] Gamification: claim gated on `claimable`; `ALREADY_CLAIMED` refreshes; paywall
       shown when `premium` is false, and `purchase_url` opened on `402`
+- [ ] Daily challenge: PATCH carries per-sitting **increments** (never running totals),
+      the day shown is the server's `challengeDate` (learner timezone, not the device
+      clock), and `DAILY_CHALLENGE_ALREADY_CLAIMED` renders as "already claimed today",
+      not as an error toast
 - [ ] AI surfaces render `source` honestly and degrade on quota/timeout/disabled
 - [ ] No hearts meter anywhere (hearts are not in the loop yet)
 - [ ] No screen for a feature that is still `404` (tabs hidden, not disabled)
@@ -990,7 +1027,8 @@ Rules:
 - Error codes are reserved ahead of the phases that use them. **Live now:** the `AUTH_*`,
   `USER_*`, `CONTENT_*`/`LESSON_*`, `QUIZ_*`/`QUESTION_*`, `REVIEW_*`, `ACHIEVEMENT_*`/
   `ALREADY_CLAIMED`/`NO_FREEZES_AVAILABLE`/`PREMIUM_REQUIRED`, `AI_*`/`CONVERSATION_NOT_FOUND`,
-  and `RATE_LIMITED`/`VALIDATION_ERROR`/`IDEMPOTENCY_KEY_REUSED` sets. **Reserved for later
+  **`DAILY_CHALLENGE_ALREADY_CLAIMED`**, and
+  `RATE_LIMITED`/`VALIDATION_ERROR`/`IDEMPOTENCY_KEY_REUSED` sets. **Reserved for later
   phases:** `INSUFFICIENT_HEARTS`, `SUBSCRIPTION_NOT_FOUND`, `PLAN_NOT_FOUND`,
   `PAYMENT_*`, `NOTIFICATION_DISABLED`, `DEVICE_*`, `MEDIA_*`, `WORD_NOT_FOUND`,
   `GRAMMAR_TOPIC_NOT_FOUND`, `JOB_*`. Handle unknown codes defensively (map to a generic
