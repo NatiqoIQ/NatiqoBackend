@@ -43,18 +43,20 @@ def _as_list(raw: object) -> list[str]:
 def upgrade() -> None:
     conn = op.get_bind()
     metadata = sa.MetaData()
-    users = sa.Table("users", metadata, autoload_with=conn)
 
     op.add_column(
         "users",
         sa.Column("is_admin", sa.Boolean(), nullable=False, server_default=sa.text("false")),
     )
+    # Reflect *after* the column exists: a Table reflected before ``add_column`` has no
+    # ``is_admin`` attribute, so an update through it fails with "Unconsumed column names".
+    users = sa.Table("users", metadata, autoload_with=conn)
 
     result = conn.execute(sa.select(users.c.id, users.c.roles))
     for user_id, roles in result.fetchall():
         if "admin" in _as_list(roles):
             conn.execute(
-                sa.update(users).where(users.c.id == user_id).values(is_admin=True)
+                users.update().where(users.c.id == user_id).values(is_admin=True)
             )
 
     op.drop_column("users", "roles")
@@ -63,16 +65,16 @@ def upgrade() -> None:
 def downgrade() -> None:
     conn = op.get_bind()
     metadata = sa.MetaData()
-    users = sa.Table("users", metadata, autoload_with=conn)
 
     op.add_column(
         "users",
         sa.Column("roles", sa.JSON(), nullable=False, server_default=sa.text("'[\"user\"]'")),
     )
+    users = sa.Table("users", metadata, autoload_with=conn)
 
     result = conn.execute(sa.select(users.c.id, users.c.is_admin))
     for user_id, is_admin in result.fetchall():
         roles = ["admin"] if is_admin else ["user"]
-        conn.execute(sa.update(users).where(users.c.id == user_id).values(roles=roles))
+        conn.execute(users.update().where(users.c.id == user_id).values(roles=roles))
 
     op.drop_column("users", "is_admin")
