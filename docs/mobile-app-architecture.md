@@ -78,8 +78,8 @@ Health (no auth, not under /api/v1)
 ```
 
 **What does not exist yet:** subscriptions/billing, notification delivery (the inbox and
-push), learner media uploads, vocabulary & grammar, admin/CMS, and `GET /me/export`.
-Any request to those prefixes returns `404`. Section 6 maps each of them to the roadmap
+push), vocabulary & grammar, and `GET /me/export`.
+Admin/CMS routes (`/admin/*`) are live in the deployed API. Media upload/presign flows (`/media/presign`, `/media/confirm`, `/media/{media_id}`) are live; companion media (`/media/...`) is public, same-origin and served outside `/api/v1`. Any request to unimplemented prefixes returns `404`. Section 6 maps each of them to the roadmap
 phase that will unlock it. **Do not build a screen for a feature that is still `404`.**
 
 Companion media (`/media/...`) is public, same-origin and served outside `/api/v1`.
@@ -765,13 +765,13 @@ Preference switches already exist today under `PATCH /me`
 delivery itself waits for phase 5. These switches are **part of `GET /me`**, not a
 separate store.
 
-### 6.10 Media — PHASE 6 (learner uploads)
+### 6.10 Media — LIVE (learner uploads)
 
 Two different things share the name. **Catalogue aids already work today:** question
 `imageUrl`/`audioUrl` are public, same-origin `/media/...` files (§6.2), and the quiz
 session and review card serve them too (§6.3, §6.5) — read them directly and cache them.
-**Learner uploads are phase 6:** presigned upload `POST /media/presign` → upload directly
-to S3 → `POST /media/confirm` → read via `GET /media/{id}` (signed URL, 15 min). Relevant
+**Learner uploads are live:** presigned upload `POST /media/presign` → upload directly
+to storage → `POST /media/confirm` → read via `GET /media/{id}` (signed/resigned URL). Relevant
 for speaking/pronunciation answers later; do not stream audio through the API server.
 
 ### 6.11 Vocabulary & grammar — PHASE 9 (not built)

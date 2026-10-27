@@ -24,6 +24,7 @@ Two invariants are worth naming:
 from __future__ import annotations
 
 import uuid
+from collections.abc import Sequence
 from datetime import timedelta
 
 from app.core.config import Settings
@@ -35,8 +36,8 @@ from app.core.errors import (
     ValidationFailed,
 )
 from app.core.events import EventBus, LessonCompleted
-from app.core.time import ensure_aware, utc_now
-from app.core.types import ContentId, QuestionKind, UserId, new_id
+from app.core.time import ensure_aware, local_date, utc_now
+from app.core.types import ContentId, QuestionKind, SkillKind, UserId, new_id
 from app.core.uow import UnitOfWorkProtocol
 from app.modules.content.domain.entities import Lesson, Question
 from app.modules.content.domain.policy import (
@@ -341,6 +342,16 @@ class QuizService:
         xp_awarded = sum(answer.points_awarded for answer in answers)
         score_percent = _percentage(correct_count, session.total)
 
+        # The sitting's own words: vocabulary answered correctly for the first time
+        # ever. Decided here rather than reported by the client, so a completion
+        # retried after a dropped response — from this device or another — recomputes
+        # the same number instead of adding a second one.
+        words_learned = await self._count_new_words(
+            user_id,
+            correct_question_ids=[answer.question_id for answer in answers if answer.is_correct],
+            exclude_session_id=session.id,
+        )
+
         # Practice XP is a lesson ledger — ``lesson_progress.xp_earned`` backs the
         # learner's total and the gamification projection, while completed sessions back
         # admin stats — so a checkpoint sitting completes with no XP of its own rather
@@ -356,7 +367,7 @@ class QuizService:
         if not is_checkpoint and session.lesson_id is not None:
             is_retry = await self._lesson_already_complete(user_id, session.lesson_id)
         granted_xp = 0 if (is_checkpoint or is_retry) else xp_awarded
-        session.complete(xp_awarded=granted_xp)
+        session.complete(xp_awarded=granted_xp, words_learned=words_learned)
         await self._uow.quiz_sessions.save(session)
 
         passed: bool | None = None
@@ -367,8 +378,17 @@ class QuizService:
             )
         else:
             await self._record_progress(
-                user_id, session.lesson_id, score_percent=score_percent, xp=granted_xp
+                user_id,
+                session.lesson_id,
+                score_percent=score_percent,
+                xp=granted_xp,
+                words=words_learned,
             )
+        await self._count_daily_challenge(
+            user_id,
+            lessons_completed=1 if session.mode is SessionMode.LESSON else 0,
+            words_learned=words_learned,
+        )
         await self._publish_completion(
             user_id,
             session,
@@ -385,6 +405,7 @@ class QuizService:
                 answered_question_ids=tuple(answer.question_id for answer in answers),
             ),
             score_percent=score_percent,
+            words_learned=words_learned,
             passed=passed,
             unlocked_unit_id=unlocked_unit_id,
             correct_question_ids=tuple(
@@ -668,21 +689,81 @@ class QuizService:
         *,
         score_percent: int,
         xp: int,
+        words: int = 0,
     ) -> None:
         """Fold the completion into the learner's progress row.
 
         ``xp`` is what the caller has already decided the sitting earned — nothing for a
         replay — so this method never has to know why. ``best_score`` still keeps the
         maximum and ``attempts`` still counts every pass, because a replay is worth
-        recording even when it pays nothing.
+        recording even when it pays nothing. ``words`` arrives already deduplicated to
+        first-time-correct vocabulary (see :meth:`_count_new_words`), so the row can
+        only ever grow by genuinely new words.
         """
         if lesson_id is None:  # pragma: no cover - checkpoint completions take the other branch
             return
         progress = await self._uow.lesson_progress.get(user_id, lesson_id)
         if progress is None:
             progress = LessonProgress(id=new_id(), user_id=user_id, lesson_id=lesson_id)
-        progress.record_completion(score_percent=score_percent, xp=xp)
+        progress.record_completion(score_percent=score_percent, xp=xp, words=words)
         await self._uow.lesson_progress.save(progress)
+
+    async def _count_new_words(
+        self,
+        user_id: UserId,
+        *,
+        correct_question_ids: Sequence[uuid.UUID],
+        exclude_session_id: uuid.UUID,
+    ) -> int:
+        """How many *new* words this sitting taught: vocabulary answered correctly for
+        the first time ever.
+
+        A "learned word" is a vocabulary-skill question the learner gets right that they
+        have never got right in any other session — so a replayed lesson, a retried miss
+        and a review sitting report zero for questions already known, while a word first
+        cracked in a checkpoint still counts. Non-vocabulary skills never count: a
+        grammar question being right is not a new word. The caller stores the result on
+        the session, which is what every words figure downstream reads.
+        """
+        if not correct_question_ids:
+            return 0
+        questions = await self._uow.questions.list_published_by_ids(
+            [ContentId(question_id) for question_id in correct_question_ids]
+        )
+        vocabulary_ids = [question.id for question in questions if question.skill is SkillKind.VOCABULARY]
+        if not vocabulary_ids:
+            return 0
+        already_correct = await self._uow.quiz_answers.correct_question_ids_for_user(
+            user_id, vocabulary_ids, exclude_session_id=exclude_session_id
+        )
+        return sum(1 for question_id in vocabulary_ids if question_id not in already_correct)
+
+    async def _count_daily_challenge(
+        self,
+        user_id: UserId,
+        *,
+        lessons_completed: int,
+        words_learned: int,
+    ) -> None:
+        """Add this completion to today's challenge row, in the learner's own timezone.
+
+        Counted here, inside the completion transaction, rather than by a client report
+        afterwards: a lost response retried, an app killed mid-flight or a second device
+        then cannot count the same sitting twice, and the words land on the calendar day
+        the learner was actually living in when they finished — not on whichever day the
+        retry reached the server. A checkpoint or review sitting contributes its words
+        but is not a lesson, so only a lesson-mode completion moves the lessons counter.
+        """
+        if lessons_completed == 0 and words_learned == 0:
+            return
+        profile = await self._uow.users.get_profile(user_id)
+        today = local_date(utc_now(), profile.timezone if profile is not None else None)
+        await self._uow.users.upsert_daily_challenge(
+            user_id,
+            challenge_date=today.isoformat(),
+            lessons_completed_today=lessons_completed,
+            words_learned_today=words_learned,
+        )
 
     async def _record_unit_progress(
         self,

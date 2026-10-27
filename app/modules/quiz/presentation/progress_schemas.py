@@ -56,6 +56,11 @@ class ProgressSummaryResponse(_ProgressWire):
     correct_count: int = Field(ge=0)
     answered_count: int = Field(ge=0)
     accuracy_percent: int = Field(ge=0, le=100)
+    #: Lifetime first-time vocabulary words: the sum of every completed session's
+    #: ``wordsLearned``, checkpoint and review sittings included. Sessions completed
+    #: before the metric existed read 0 — the value is defined, it was just not recorded
+    #: then; it never means "unavailable".
+    words_learned: int = Field(ge=0)
     current_streak_days: int = Field(ge=0)
     longest_streak_days: int = Field(ge=0)
     last_activity_at: datetime | None = None
@@ -81,6 +86,10 @@ class UnlockMapItemResponse(_ProgressWire):
     best_score: int = Field(ge=0, le=100)
     attempts: int = Field(ge=0)
     xp_earned: int = Field(ge=0)
+    #: Words first learned during *this lesson's own sittings*. A word cracked in a
+    #: checkpoint counts towards the lifetime summary but is not attributed to one
+    #: lesson, so this column sums to at most the summary — never above it.
+    words_learned: int = Field(ge=0)
     completed_at: datetime | None = None
 
 
@@ -134,6 +143,9 @@ class XpEventResponse(_ProgressWire):
     session_id: uuid.UUID
     lesson_id: uuid.UUID | None
     xp_awarded: int = Field(ge=0)
+    #: New vocabulary words taught by that sitting (first-time-correct vocabulary
+    #: questions). Adding this column down the feed reaches the summary's ``wordsLearned``.
+    words_learned: int = Field(ge=0)
     correct_count: int = Field(ge=0)
     total_count: int = Field(ge=0)
     score_percent: int = Field(ge=0, le=100)

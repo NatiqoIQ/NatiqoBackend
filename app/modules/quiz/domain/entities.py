@@ -114,6 +114,11 @@ class QuizSession:
     #: instead of an aggregate over every answer.
     correct_count: int = 0
     xp_awarded: int = 0
+    #: Vocabulary questions answered correctly for the *first time ever* in this sitting
+    #: — the session's contribution to every "words learned" figure in the app, decided
+    #: once at completion (see ``QuizService.complete_session``) so replays and retries
+    #: cannot inflate it.
+    words_learned: int = 0
 
     @property
     def total(self) -> int:
@@ -144,9 +149,12 @@ class QuizSession:
             self.status = SessionStatus.EXPIRED
             self.completed_at = at or utc_now()
 
-    def complete(self, *, xp_awarded: int, at: datetime | None = None) -> None:
+    def complete(
+        self, *, xp_awarded: int, words_learned: int = 0, at: datetime | None = None
+    ) -> None:
         self.status = SessionStatus.COMPLETED
         self.xp_awarded = xp_awarded
+        self.words_learned = words_learned
         self.completed_at = at or utc_now()
 
     def abandon(self, at: datetime | None = None) -> None:

@@ -52,14 +52,16 @@ class ProgressService:
     async def summary(self, user_id: UserId) -> ProgressSummaryView:
         """Roll the learner's durable record into the headline figures.
 
-        Three reads, not one per lesson: the progress rows, an answer tally and the
-        completion times. The timezone is read from the learner's profile so the streak
-        is their calendar, not the server's, and a missing profile falls back to the
-        default zone rather than UTC — the product default is Asia/Baghdad.
+        Four reads, not one per lesson: the progress rows, an answer tally, the
+        completion times and the lifetime word sum. The timezone is read from the
+        learner's profile so the streak is their calendar, not the server's, and a
+        missing profile falls back to the default zone rather than UTC — the product
+        default is Asia/Baghdad.
         """
         progress_rows = await self._uow.lesson_progress.list_for_user(user_id)
         tally = await self._uow.quiz_answers.tally_for_user(user_id)
         completion_times = await self._uow.quiz_sessions.list_completion_times(user_id)
+        words_learned = await self._uow.quiz_sessions.sum_words_learned_for_user(user_id)
         timezone = await self._profile_timezone(user_id)
 
         current_streak, longest_streak = _streaks(completion_times, timezone)
@@ -79,7 +81,7 @@ class ProgressService:
             current_streak_days=current_streak,
             longest_streak_days=longest_streak,
             last_activity_at=completion_times[0] if completion_times else None,
-            words_learned=sum(row.words_learned for row in progress_rows),
+            words_learned=words_learned,
         )
 
     # ============================================================ one lesson
@@ -339,6 +341,7 @@ def _xp_event(session: QuizSession) -> XpEventView:
         session_id=session.id,
         lesson_id=session.lesson_id,
         xp_awarded=session.xp_awarded,
+        words_learned=session.words_learned,
         correct_count=session.correct_count,
         total_count=session.total,
         score_percent=_percentage(session.correct_count, session.total),

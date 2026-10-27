@@ -2539,11 +2539,11 @@ async def test_a_brand_new_learner_has_an_all_zero_summary(client: AsyncClient) 
         "lessonsInProgress": 0,
         "lessonsStarted": 0,
         "correctCount": 0,
-        "answeredCount": 0,
-        "accuracyPercent": 0,
-        "currentStreakDays": 0,
-        "longestStreakDays": 0,
-        "lastActivityAt": None,
+        "answeredCount": 0,            "accuracyPercent": 0,
+            "wordsLearned": 0,
+            "currentStreakDays": 0,
+            "longestStreakDays": 0,
+            "lastActivityAt": None,
         "xp": {"items": [], "meta": {"limit": 20, "hasMore": False, "nextCursor": None}},
     }
 

@@ -134,6 +134,24 @@ class SqlAlchemyQuizSessionRepository(QuizSessionRepositoryPort):
         rows = (await self._session.execute(stmt)).scalars().all()
         return [moment for moment in rows if moment is not None]
 
+    async def sum_words_learned_for_user(self, user_id: UserId) -> int:
+        """See :meth:`QuizSessionRepositoryPort.sum_words_learned_for_user`.
+
+        One aggregate over the completed sessions rather than the lesson ledger, because
+        a checkpoint sitting earns no lesson row but does earn words, and a feed page
+        summing to a different figure than the summary is the kind of drift a client
+        cannot work around.
+        """
+        stmt = (
+            select(func.coalesce(func.sum(QuizSessionModel.words_learned), 0))
+            .select_from(QuizSessionModel)
+            .where(
+                QuizSessionModel.user_id == user_id,
+                QuizSessionModel.status == _COMPLETED,
+            )
+        )
+        return int((await self._session.execute(stmt)).scalar_one())
+
 
 class SqlAlchemyQuizAnswerRepository(QuizAnswerRepositoryPort):
     def __init__(self, session: AsyncSession) -> None:
@@ -234,6 +252,34 @@ class SqlAlchemyQuizAnswerRepository(QuizAnswerRepositoryPort):
             )
             for question_id, attempts, miss_count in rows
         }
+
+    async def correct_question_ids_for_user(
+        self,
+        user_id: UserId,
+        question_ids: Sequence[uuid.UUID],
+        *,
+        exclude_session_id: uuid.UUID,
+    ) -> set[uuid.UUID]:
+        """See :meth:`QuizAnswerRepositoryPort.correct_question_ids_for_user`.
+
+        The join reaches the owner through the session — an answer row carries no user id
+        — and the current session is excluded in SQL, not in Python, so the caller's
+        set-subtraction cannot be defeated by a row that slipped past a post-filter.
+        """
+        if not question_ids:
+            return set()
+        stmt = (
+            select(QuizAnswerModel.question_id)
+            .join(QuizSessionModel, QuizSessionModel.id == QuizAnswerModel.session_id)
+            .where(
+                QuizSessionModel.user_id == user_id,
+                QuizAnswerModel.question_id.in_(list(question_ids)),
+                QuizAnswerModel.is_correct.is_(True),
+                QuizAnswerModel.session_id != exclude_session_id,
+            )
+            .distinct()
+        )
+        return set((await self._session.execute(stmt)).scalars().all())
 
 
 class SqlAlchemyLessonProgressRepository(LessonProgressRepositoryPort):

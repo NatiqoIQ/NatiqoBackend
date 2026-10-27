@@ -141,6 +141,10 @@ class CompletedSessionResponse(WireModel):
 
     session: SessionResponse
     score_percent: int = Field(ge=0, le=100)
+    #: New vocabulary words this sitting taught (first-time-correct vocabulary
+    #: questions). Counted by the server in the completion transaction, so it is the
+    #: authoritative figure — never sum question counts client-side.
+    words_learned: int = Field(ge=0)
     passed: bool | None = None
     unlocked_unit_id: uuid.UUID | None = None
     correct_question_ids: list[uuid.UUID] = Field(default_factory=list)

@@ -43,11 +43,11 @@ pytestmark = pytest.mark.api
 
 ROOT = Path(__file__).resolve().parents[2]
 
-#: The guides a client engineer implements from. The presentation plan is deliberately
-#: absent: it is a design note about work in progress, not a promise to a client.
+#: The guide a client engineer implements from. ``client-contract.md`` and
+#: ``mobile-integration-ar.md`` were folded into this one and deleted: it is the only
+#: surviving contract, and the presentation plan is deliberately absent — it is a design
+#: note about work in progress, not a promise to a client.
 CLIENT_DOCS: tuple[str, ...] = (
-    "docs/client-contract.md",
-    "docs/mobile-integration-ar.md",
     "docs/mobile-app-architecture.md",
 )
 
@@ -99,105 +99,33 @@ class Exempt:
 
 
 # ------------------------------------------------------------------- the corpus
-#: Every payload example in the client guides, pinned to the schema it documents.
+#: Every payload example in the client guide, pinned to the schema it documents.
 PINS: tuple[Pin, ...] = (
-    # ------------------------------------------------------ docs/client-contract.md
-    Pin(doc=CLIENT_DOCS[0], marker='{ "displayName": "Ali" }', schema="UpdateMeRequest"),
-    Pin(
-        doc=CLIENT_DOCS[0],
-        marker='"fb11336eeb1745bf82510f84206fdf39"',
-        schema="ErrorResponse",
-        complete=("$", "$.error"),
-    ),
-    Pin(
-        doc=CLIENT_DOCS[0], marker='"eyJ2Ijox…"', schema="PageMeta", path="$.meta", complete=("$",)
-    ),
-    # ------------------------------------------------ docs/mobile-integration-ar.md
-    Pin(
-        doc=CLIENT_DOCS[1],
-        marker='"idToken": "eyJhbGciOi..."',
-        schema="SocialLoginRequest",
-        complete=("$",),
-    ),
-    Pin(
-        doc=CLIENT_DOCS[1],
-        marker='"expiresIn": 900',
-        schema="AuthResponse",
-        complete=(
-            "$",
-            "$.user",
-            "$.tokens",
-            "$.user.profile",
-            "$.user.settings",
-            "$.user.settings.notificationPreferences",
-        ),
-    ),
-    Pin(doc=CLIENT_DOCS[1], marker='"refreshToken": "<القديم>"', schema="RefreshRequest"),
-    Pin(doc=CLIENT_DOCS[1], marker='"allDevices": false', schema="LogoutRequest", complete=("$",)),
-    Pin(
-        doc=CLIENT_DOCS[1],
-        marker='"detail": "Signed out."',
-        schema="MessageResponse",
-        complete=("$",),
-    ),
-    Pin(
-        doc=CLIENT_DOCS[1],
-        marker='"01d7605b12b64d11a7c68a28320587fe"',
-        schema="ErrorResponse",
-        complete=("$", "$.error"),
-    ),
-    Pin(
-        doc=CLIENT_DOCS[1],
-        marker='{ "displayName": "Ali", "dailyGoalMinutes": 30 }',
-        schema="UpdateMeRequest",
-    ),
-    Pin(doc=CLIENT_DOCS[1], marker='{ "displayName": "Ali" }', schema="UpdateMeRequest"),
-    Pin(doc=CLIENT_DOCS[1], marker="/* ... */", schema="PageMeta", path="$.meta", complete=("$",)),
-    Pin(doc=CLIENT_DOCS[1], marker='"dailyGoalMinutes": 45', schema="UpdateMeRequest"),
-    Pin(
-        doc=CLIENT_DOCS[1],
-        marker='"pushEnabled": true',
-        schema="DeviceResponse",
-        path="$[*]",
-        complete=("$",),
-    ),
-    Pin(
-        doc=CLIENT_DOCS[1],
-        marker='"unitCount": 24',
-        schema="CatalogueTreeResponse",
-        complete=("$", "$.items[*]", "$.items[*].units[*]", "$.items[*].units[*].lessons[*]"),
-    ),
-    Pin(
-        doc=CLIENT_DOCS[1],
-        marker='"kind": "matching"',
-        schema="LessonDetailResponse",
-        complete=("$", "$.questions[*]"),
-    ),
     # --------------------------------------------- docs/mobile-app-architecture.md
     Pin(
-        doc=CLIENT_DOCS[2],
+        doc=CLIENT_DOCS[0],
         marker='"details": { }',
         schema="ErrorResponse",
         complete=("$", "$.error"),
     ),
     Pin(
-        doc=CLIENT_DOCS[2],
+        doc=CLIENT_DOCS[0],
         marker='"answeredQuestionIds":[]',
         schema="SessionDetailResponse",
         complete=("$", "$.session", "$.questions[*]"),
     ),
-    Pin(doc=CLIENT_DOCS[2], marker='"answer": { "choice":"b" }', schema="AnswerCommand"),
-    Pin(doc=CLIENT_DOCS[2], marker='"choices":["a","b"]', schema="AnswerCommand"),
-    Pin(doc=CLIENT_DOCS[2], marker='"order":["Hello!"', schema="AnswerCommand"),
-    Pin(doc=CLIENT_DOCS[2], marker='"matching":["Monday => 1"', schema="AnswerCommand"),
+    Pin(doc=CLIENT_DOCS[0], marker='"answer": { "choice":"b" }', schema="AnswerCommand"),
+    Pin(doc=CLIENT_DOCS[0], marker='"choices":["a","b"]', schema="AnswerCommand"),
+    Pin(doc=CLIENT_DOCS[0], marker='"order":["Hello!"', schema="AnswerCommand"),
+    Pin(doc=CLIENT_DOCS[0], marker='"matching":["Monday => 1"', schema="AnswerCommand"),
     Pin(
-        doc=CLIENT_DOCS[2],
+        doc=CLIENT_DOCS[0],
         marker='"isComplete":false',
         schema="AnswerCommandResult",
         complete=("$", "$.result"),
     ),
     Pin(
-        doc=CLIENT_DOCS[2],
+        doc=CLIENT_DOCS[0],
         marker='"wordsLearnedToday": 5',
         schema="DailyChallengeResponse",
         complete=("$",),
@@ -208,28 +136,6 @@ PINS: tuple[Pin, ...] = (
 EXEMPTIONS: tuple[Exempt, ...] = (
     Exempt(
         doc=CLIENT_DOCS[0],
-        marker='"unitCount": 3',
-        why=(
-            "A generic page illustration, not one endpoint's payload: its `meta` is pinned "
-            "by the pagination example and its item fields by the content-tree example, so "
-            "pinning it here would mean inventing a schema that describes nothing."
-        ),
-    ),
-    Exempt(
-        doc=CLIENT_DOCS[0],
-        marker='{ "display_name": "Ali" }',
-        why=(
-            "The snake_case migration alias. The request layer accepts it on purpose, so it "
-            "must appear in the guide and by construction cannot appear in the schema."
-        ),
-    ),
-    Exempt(
-        doc=CLIENT_DOCS[1],
-        marker='{ "display_name": "Ali" }',
-        why="The same snake_case alias, documented for the Arabic guide's readers.",
-    ),
-    Exempt(
-        doc=CLIENT_DOCS[2],
         marker='"scorePercent":100',
         why=(
             'Written with a structural ellipsis (`{ … , "status":"completed" }`) so the '

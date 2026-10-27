@@ -510,6 +510,14 @@ MediaRateLimitDep = Annotated[None, Depends(rate_limit(scope="media"))]
 #: register share, and so those two cannot be starved by one another.
 AuthRateLimitDep = Annotated[None, Depends(rate_limit(scope="auth"))]
 
+#: Budget for the daily-challenge reads and reports under ``/me``. The scope deliberately
+#: has no entry in the settings map, so it falls back to the default 120/min budget — the
+#: figure the architecture doc quotes for these routes — and a burst past it is a 429
+#: carrying ``Retry-After`` like every other scope. Its own scope name (rather than the
+#: bare default) keeps the window key distinguishable in the logs: an exhausted
+#: "daily_challenge" budget reads as such, not as some anonymous default client.
+DailyChallengeRateLimitDep = Annotated[None, Depends(rate_limit(scope="daily_challenge"))]
+
 
 RateLimitDep = Callable[..., object]
 

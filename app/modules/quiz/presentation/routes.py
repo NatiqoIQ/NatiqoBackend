@@ -189,6 +189,7 @@ async def command_session(
             result=CompletedSessionResponse(
                 session=_session_response(completed.session),
                 score_percent=completed.score_percent,
+                words_learned=completed.words_learned,
                 passed=completed.passed,
                 unlocked_unit_id=completed.unlocked_unit_id,
                 correct_question_ids=list(completed.correct_question_ids),

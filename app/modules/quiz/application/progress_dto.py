@@ -139,3 +139,7 @@ class XpEventView:
     score_percent: int
     completed_at: datetime | None
     unit_id: uuid.UUID | None = None
+    #: First-time-correct vocabulary words in that sitting, straight off the session row
+    #: — the same column the lifetime summary sums, so a feed page always adds up to
+    #: what the summary claims.
+    words_learned: int = 0

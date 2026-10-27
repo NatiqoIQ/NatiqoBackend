@@ -42,6 +42,7 @@ def to_session(model: QuizSessionModel) -> QuizSession:
         completed_at=model.completed_at,
         correct_count=model.correct_count,
         xp_awarded=model.xp_awarded,
+        words_learned=model.words_learned,
         unit_id=model.unit_id,
     )
 
@@ -70,6 +71,7 @@ def to_progress(model: LessonProgressModel) -> LessonProgress:
         best_score=model.best_score,
         attempts=model.attempts,
         xp_earned=model.xp_earned,
+        words_learned=model.words_learned,
         completed_at=model.completed_at,
     )
 
@@ -89,11 +91,10 @@ def to_session_model(session: QuizSession) -> QuizSessionModel:
         question_ids=_session_question_ids(session),
         started_at=session.started_at,
         expires_at=session.expires_at,
-        completed_at=session.completed_at,
-        correct_count=session.correct_count,
+        completed_at=session.completed_at,        correct_count=session.correct_count,
         xp_awarded=session.xp_awarded,
+        words_learned=session.words_learned,
     )
-
 
 def apply_session(session: QuizSession, model: QuizSessionModel) -> None:
     """Copy a mutated session onto its row.
@@ -106,6 +107,7 @@ def apply_session(session: QuizSession, model: QuizSessionModel) -> None:
     model.completed_at = session.completed_at
     model.correct_count = session.correct_count
     model.xp_awarded = session.xp_awarded
+    model.words_learned = session.words_learned
 
 
 def to_answer_model(answer: QuizAnswer) -> QuizAnswerModel:
@@ -148,6 +150,7 @@ def to_progress_model(progress: LessonProgress) -> LessonProgressModel:
         best_score=progress.best_score,
         attempts=progress.attempts,
         xp_earned=progress.xp_earned,
+        words_learned=progress.words_learned,
         completed_at=progress.completed_at,
     )
 
@@ -157,6 +160,7 @@ def apply_progress(progress: LessonProgress, model: LessonProgressModel) -> None
     model.best_score = progress.best_score
     model.attempts = progress.attempts
     model.xp_earned = progress.xp_earned
+    model.words_learned = progress.words_learned
     model.completed_at = progress.completed_at
 
 

@@ -71,6 +71,16 @@ class QuizSessionRepositoryPort(Protocol):
         """
         ...
 
+    async def sum_words_learned_for_user(self, user_id: UserId) -> int:
+        """Lifetime first-time words across every completed session.
+
+        Sums the session column rather than the per-lesson ledger, so checkpoint and
+        review sittings — which write no lesson row — still count towards the total,
+        and so the summary equals what a client would get by adding up the XP feed
+        page by page.
+        """
+        ...
+
 
 @runtime_checkable
 class QuizAnswerRepositoryPort(Protocol):
@@ -120,6 +130,24 @@ class QuizAnswerRepositoryPort(Protocol):
         Spans every session the learner has, including checkpoints: "ever missed" is the
         whole point, and a miss recorded on a previous checkpoint must weight the next
         one just as a miss in a lesson does.
+        """
+        ...
+
+    async def correct_question_ids_for_user(
+        self,
+        user_id: UserId,
+        question_ids: Sequence[uuid.UUID],
+        *,
+        exclude_session_id: uuid.UUID,
+    ) -> set[uuid.UUID]:
+        """The subset of ``question_ids`` the learner already answered correctly in some
+        *other* session.
+
+        This is the read behind "a word counts once ever": completion subtracts this set
+        from the sitting's correct vocabulary questions, so a replayed lesson, a retry of
+        a missed question or a report retried from a second device cannot inflate a
+        lifetime or daily total. The current session is excluded because its own correct
+        answers are exactly what is being counted, not what they should be netted against.
         """
         ...
 

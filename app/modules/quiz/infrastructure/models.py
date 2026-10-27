@@ -95,6 +95,13 @@ class QuizSessionModel(Base, UUIDPrimaryKeyMixin, TimestampMixin):
 
     correct_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     xp_awarded: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    #: First-time-correct vocabulary questions in this sitting. The ``server_default``
+    #: mirrors the migration that added the column: an ``ALTER TABLE ... ADD COLUMN
+    #: NOT NULL`` needs a database-side default for existing rows, and declaring it here
+    #: too keeps ``alembic check`` from reading the two as different schemas.
+    words_learned: Mapped[int] = mapped_column(
+        SmallInteger, nullable=False, default=0, server_default=text("0")
+    )
 
     #: Ordering metadata only — see the module docstring. Never navigated.
     user: Mapped[UserModel] = relationship(lazy="raise_on_sql")
@@ -106,6 +113,7 @@ class QuizSessionModel(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         CheckConstraint(f"status IN ({SESSION_STATUSES_SQL})", name="valid_status"),
         CheckConstraint("correct_count >= 0", name="non_negative_correct_count"),
         CheckConstraint("xp_awarded >= 0", name="non_negative_xp"),
+        CheckConstraint("words_learned >= 0", name="non_negative_session_words"),
         Index("ix_quiz_sessions_user_status", "user_id", "status"),
         Index("ix_quiz_sessions_lesson", "lesson_id"),
         # Checkpoint analytics group a unit's sessions (attempts, pass rate).

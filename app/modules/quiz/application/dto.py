@@ -117,3 +117,7 @@ class CompletedSessionView:
     correct_question_ids: tuple[uuid.UUID, ...] = ()
     missed_question_ids: tuple[uuid.UUID, ...] = ()
     retry_available: bool = False
+    #: New vocabulary words this sitting taught — first-time-correct vocabulary
+    #: questions, server-derived at completion. The result screen renders it directly;
+    #: the app never has to infer words from question counts or XP.
+    words_learned: int = 0

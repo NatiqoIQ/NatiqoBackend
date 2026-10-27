@@ -39,20 +39,21 @@ def upgrade() -> None:
             "user_id",
             sa.Uuid(),
             nullable=False,
-            unique=True,
         ),
         sa.Column("challenge_date", sa.String(length=10), nullable=False),
         sa.Column(
             "lessons_completed_today",
             sa.SmallInteger(),
             nullable=False,
+            server_default=sa.text("0"),
         ),
         sa.Column(
             "words_learned_today",
             sa.SmallInteger(),
             nullable=False,
+            server_default=sa.text("0"),
         ),
-        sa.Column("claimed", sa.Boolean(), nullable=False),
+        sa.Column("claimed", sa.Boolean(), nullable=False, server_default=sa.text("false")),
         sa.Column(
             "created_at",
             sa.DateTime(timezone=True),
@@ -64,7 +65,6 @@ def upgrade() -> None:
             sa.DateTime(timezone=True),
             nullable=False,
             server_default=func.now(),
-            onupdate=func.now(),
         ),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint(

@@ -20,6 +20,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.api.deps import (
     AuthRateLimitDep,
+    DailyChallengeRateLimitDep,
     SettingsDep,
     UowDep,
     client_ip,
@@ -444,6 +445,7 @@ async def get_daily_challenge(
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)],
     service: AuthServiceDep,
     uow: UowDep,
+    _limit: DailyChallengeRateLimitDep,
 ) -> DailyChallengeResponse:
     """Get the learner's daily challenge progress for their current day.
 
@@ -464,6 +466,7 @@ async def update_daily_challenge(
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)],
     service: AuthServiceDep,
     uow: UowDep,
+    _limit: DailyChallengeRateLimitDep,
 ) -> DailyChallengeResponse:
     """Add one sitting's counts to today's challenge.
 
@@ -492,6 +495,7 @@ async def claim_daily_challenge(
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)],
     service: AuthServiceDep,
     uow: UowDep,
+    _limit: DailyChallengeRateLimitDep,
 ) -> DailyChallengeResponse:
     """Claim today's daily challenge reward.
 

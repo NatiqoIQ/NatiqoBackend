@@ -246,7 +246,7 @@ class UserDailyChallengeModel(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     __tablename__ = "user_daily_challenges"
 
     user_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE"), nullable=False, unique=True
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False
     )
     #: Date of the challenge in the learner's local timezone (YYYY-MM-DD).
     challenge_date: Mapped[str] = mapped_column(String(10), nullable=False)
