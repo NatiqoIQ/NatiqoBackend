@@ -51,6 +51,7 @@ from app.modules.users.domain.entities import User, UserDailyChallenge
 from app.modules.users.domain.identity import IdentityProvider, VerifiedIdentity
 from app.modules.users.presentation.schemas import (
     AuthResponse,
+    ClaimDailyChallengePayload,
     DailyChallengeResponse,
     DevicePayload,
     DeviceResponse,
@@ -62,7 +63,6 @@ from app.modules.users.presentation.schemas import (
     RefreshRequest,
     SocialLoginRequest,
     TokenPairResponse,
-    UpdateDailyChallengePayload,
     UpdateMeRequest,
     UserProfileResponse,
     UserSettingsResponse,
@@ -420,20 +420,17 @@ def _challenge_response(daily: UserDailyChallenge) -> DailyChallengeResponse:
 
 
 async def _today_challenge(uow: SqlAlchemyUnitOfWork, user: User) -> UserDailyChallenge:
-    """Today's challenge row in the learner's own timezone, created on first sight.
+    """Today's challenge in the learner's own timezone — a read, never a write.
 
     The calendar date comes from the profile timezone rather than UTC, so a learner in
     Asia/Baghdad whose evening sits past UTC midnight is still counting against the day
-    they are actually living in. The row is created here rather than left to the client
-    to POST, so ``GET`` can never answer "you have no challenge today" for a learner who
-    simply has not done anything yet.
+    they are actually living in. Progress is summed from the sittings recorded for that
+    day, so simply opening the app writes nothing and a learner who has done nothing
+    reads ``0 / 0 / false`` rather than "no challenge today".
     """
     profile = await uow.users.get_profile(user.id)
     today = local_date(utc_now(), profile.timezone if profile else None).isoformat()
-    daily = await uow.users.get_daily_challenge(user.id, challenge_date=today)
-    if daily is None:
-        daily = await uow.users.upsert_daily_challenge(user.id, challenge_date=today)
-    return daily
+    return await uow.users.get_daily_challenge(user.id, challenge_date=today)
 
 
 @router.get(
@@ -456,36 +453,6 @@ async def get_daily_challenge(
     return _challenge_response(await _today_challenge(uow, user))
 
 
-@router.patch(
-    "/me/daily-challenge",
-    response_model=DailyChallengeResponse,
-    summary="Add to today's daily challenge progress",
-)
-async def update_daily_challenge(
-    payload: UpdateDailyChallengePayload,
-    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)],
-    service: AuthServiceDep,
-    uow: UowDep,
-    _limit: DailyChallengeRateLimitDep,
-) -> DailyChallengeResponse:
-    """Add one sitting's counts to today's challenge.
-
-    Both counters are optional **increments** — ``{"wordsLearnedToday": 4}`` adds four
-    words to today's total without touching the lessons counter. This is what makes a
-    lesson-completion screen report its own worth without knowing what came before it.
-    """
-    user = await _authenticate(credentials, service)
-    daily = await _today_challenge(uow, user)
-    updated = await uow.users.upsert_daily_challenge(
-        user.id,
-        challenge_date=daily.challenge_date,
-        lessons_completed_today=payload.lessons_completed_today or 0,
-        words_learned_today=payload.words_learned_today or 0,
-    )
-    await uow.commit()
-    return _challenge_response(updated)
-
-
 @router.post(
     "/me/daily-challenge/claim",
     response_model=DailyChallengeResponse,
@@ -496,17 +463,35 @@ async def claim_daily_challenge(
     service: AuthServiceDep,
     uow: UowDep,
     _limit: DailyChallengeRateLimitDep,
+    payload: ClaimDailyChallengePayload | None = None,
 ) -> DailyChallengeResponse:
     """Claim today's daily challenge reward.
 
-    Marks the challenge as claimed. Only one claim per calendar day is allowed; a second
-    call is refused with ``409 DAILY_CHALLENGE_ALREADY_CLAIMED``.
+    The server decides which day is being claimed, from the learner's timezone; a client
+    that renders the card before midnight and taps after it would otherwise claim a day
+    it is no longer living in. Such a client may send the ``challengeDate`` it displayed
+    and receives ``409 DAILY_CHALLENGE_DATE_CHANGED`` with the authoritative date when
+    the two disagree, rather than a silent claim of the wrong day.
+
+    A day with nothing recorded has no reward: ``409 DAILY_CHALLENGE_NOT_STARTED``. A
+    second claim for the same day is refused with
+    ``409 DAILY_CHALLENGE_ALREADY_CLAIMED``.
     """
     user = await _authenticate(credentials, service)
     daily = await _today_challenge(uow, user)
-    if not await uow.users.claim_daily_challenge(
-        user.id, challenge_date=daily.challenge_date
-    ):
+    if payload is not None and payload.expected_challenge_date is not None:
+        if payload.expected_challenge_date != daily.challenge_date:
+            raise ConflictError(
+                "The daily challenge has moved to a new day.",
+                code=ErrorCode.DAILY_CHALLENGE_DATE_CHANGED,
+                details={"challengeDate": daily.challenge_date},
+            )
+    if daily.lessons_completed_today == 0 and daily.words_learned_today == 0:
+        raise ConflictError(
+            "Nothing has been recorded for today's challenge yet.",
+            code=ErrorCode.DAILY_CHALLENGE_NOT_STARTED,
+        )
+    if not await uow.users.claim_daily_challenge(user.id, challenge_date=daily.challenge_date):
         raise ConflictError(
             "Daily challenge already claimed today.",
             code=ErrorCode.DAILY_CHALLENGE_ALREADY_CLAIMED,
@@ -517,7 +502,8 @@ async def claim_daily_challenge(
     )
 
 
-@router.delete("/me/devices/{device_id}",
+@router.delete(
+    "/me/devices/{device_id}",
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Sign a device out and stop its push notifications",
 )

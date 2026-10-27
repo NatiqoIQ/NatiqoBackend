@@ -13,6 +13,7 @@ from typing import Any, cast
 
 from sqlalchemy import and_, delete, func, or_, select, update
 from sqlalchemy.engine import CursorResult, Result
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.pagination import TimeCursor
@@ -31,6 +32,7 @@ from app.modules.users.domain.entities import (
 from app.modules.users.domain.policy import normalise_email
 from app.modules.users.infrastructure.models import (
     RefreshTokenModel,
+    UserDailyChallengeContributionModel,
     UserDailyChallengeModel,
     UserDeviceModel,
     UserIdentityModel,
@@ -126,16 +128,6 @@ def _to_identity(model: UserIdentityModel) -> ExternalIdentity:
         picture_url=model.picture_url,
         created_at=ensure_aware(model.created_at),
         last_login_at=ensure_aware(model.last_login_at),
-    )
-
-
-def _to_daily_challenge(model: UserDailyChallengeModel) -> UserDailyChallenge:
-    return UserDailyChallenge(
-        user_id=UserId(model.user_id),
-        challenge_date=model.challenge_date,
-        lessons_completed_today=model.lessons_completed_today,
-        words_learned_today=model.words_learned_today,
-        claimed=model.claimed,
     )
 
 
@@ -300,72 +292,96 @@ class SqlAlchemyUserRepository:
     # ------------------------------------------------------------- daily challenges
     async def get_daily_challenge(
         self, user_id: UserId, *, challenge_date: str
-    ) -> UserDailyChallenge | None:
-        """The learner's challenge row for one calendar day, or ``None``.
+    ) -> UserDailyChallenge:
+        """The learner's challenge for one calendar day, always as a record.
 
-        Scoped to ``challenge_date`` because a row is kept per day rather than reused:
-        the day is part of the key, not mutable state on a single row. A caller therefore
-        reads *today's* row explicitly and never has to ask whether a row it got back is
-        stale — absence means "no activity recorded for that day yet".
+        Progress is summed from the day's contributions rather than read off a counter:
+        the ledger is the only write, so the number a client sees is by construction the
+        number of sittings recorded for that day. ``claimed`` is read from the day row,
+        which may legitimately be absent — nothing has been claimed yet.
         """
-        stmt = select(UserDailyChallengeModel).where(
-            UserDailyChallengeModel.user_id == user_id,
-            UserDailyChallengeModel.challenge_date == challenge_date,
+        totals = (
+            await self._session.execute(
+                select(
+                    func.coalesce(
+                        func.sum(UserDailyChallengeContributionModel.lessons_completed), 0
+                    ),
+                    func.coalesce(func.sum(UserDailyChallengeContributionModel.words_learned), 0),
+                ).where(
+                    UserDailyChallengeContributionModel.user_id == user_id,
+                    UserDailyChallengeContributionModel.challenge_date == challenge_date,
+                )
+            )
+        ).one()
+        claimed = (
+            await self._session.execute(
+                select(UserDailyChallengeModel.claimed).where(
+                    UserDailyChallengeModel.user_id == user_id,
+                    UserDailyChallengeModel.challenge_date == challenge_date,
+                )
+            )
+        ).scalar_one_or_none()
+        return UserDailyChallenge(
+            user_id=user_id,
+            challenge_date=challenge_date,
+            lessons_completed_today=int(totals[0] or 0),
+            words_learned_today=int(totals[1] or 0),
+            claimed=bool(claimed),
         )
-        model = (await self._session.execute(stmt)).scalar_one_or_none()
-        if model is None:
-            return None
-        return _to_daily_challenge(model)
 
-    async def upsert_daily_challenge(
+    async def record_daily_challenge_contribution(
         self,
         user_id: UserId,
         *,
+        session_id: uuid.UUID,
         challenge_date: str,
-        lessons_completed_today: int = 0,
-        words_learned_today: int = 0,
-    ) -> UserDailyChallenge:
-        """Record one day's challenge progress, adding to what is already there.
-
-        The counters are **increments**, not replacements: a client that reports "one
-        lesson and four words" for this sitting must not erase the lesson it reported a
-        minute ago, so each call adds to the stored total and a repeated call (a network
-        retry of the same sitting) is a deliberate, visible double count the client
-        avoids by its own idempotency rather than by the server silently overwriting.
-
-        The insert-or-increment pair is guarded by the ``(user_id, challenge_date)``
-        unique constraint, so two concurrent sittings on a new day cannot create two
-        rows: the loser of the insert race is expected to raise, and the caller treats
-        that as "the row now exists" by re-reading rather than by inventing a second row.
-        """
-        stmt = select(UserDailyChallengeModel).where(
-            UserDailyChallengeModel.user_id == user_id,
-            UserDailyChallengeModel.challenge_date == challenge_date,
-        )
-        model = (await self._session.execute(stmt)).scalar_one_or_none()
-        if model is None:
-            model = UserDailyChallengeModel(
-                id=uuid.uuid4(),
-                user_id=user_id,
-                challenge_date=challenge_date,
-                lessons_completed_today=lessons_completed_today,
-                words_learned_today=words_learned_today,
-            )
-            self._session.add(model)
-        else:
-            model.lessons_completed_today += lessons_completed_today
-            model.words_learned_today += words_learned_today
-        await self._session.flush()
-        return _to_daily_challenge(model)
-
-    async def claim_daily_challenge(
-        self, user_id: UserId, *, challenge_date: str
+        lessons_completed: int,
+        words_learned: int,
     ) -> bool:
+        """Credit one finished sitting to its own day, at most once.
+
+        ``False`` means this session is already in the ledger — the caller treats that as
+        success with no new work, because the sitting *has* been counted. The uniqueness
+        of ``(user_id, session_id)`` is what makes that true; the pre-read only avoids
+        paying for an exception on the ordinary replay path.
+
+        The insert runs inside a savepoint: a concurrent retry that slips past the
+        pre-read raises ``IntegrityError`` there, and rolling back to the savepoint leaves
+        the surrounding completion transaction usable instead of poisoning it.
+        """
+        already = (
+            await self._session.execute(
+                select(UserDailyChallengeContributionModel.id).where(
+                    UserDailyChallengeContributionModel.user_id == user_id,
+                    UserDailyChallengeContributionModel.session_id == session_id,
+                )
+            )
+        ).scalar_one_or_none()
+        if already is not None:
+            return False
+        try:
+            async with self._session.begin_nested():
+                self._session.add(
+                    UserDailyChallengeContributionModel(
+                        id=uuid.uuid4(),
+                        user_id=user_id,
+                        session_id=session_id,
+                        challenge_date=challenge_date,
+                        lessons_completed=lessons_completed,
+                        words_learned=words_learned,
+                    )
+                )
+        except IntegrityError:
+            return False
+        return True
+
+    async def claim_daily_challenge(self, user_id: UserId, *, challenge_date: str) -> bool:
         """Take one day's reward. ``False`` means it was already claimed.
 
-        The predicate pins ``claimed`` to false so the statement itself is the guard:
-        two simultaneous claims for the same day cannot both report success, which is
-        what makes "once per day" a database fact rather than a check-then-write race.
+        The day row exists only when it has something to record, so a claim is an
+        update-or-insert: the update's own predicate pins ``claimed`` to false, and the
+        insert is guarded by the ``(user_id, challenge_date)`` unique constraint. Two
+        simultaneous claims on a new day therefore cannot both report success.
         """
         result = await self._session.execute(
             update(UserDailyChallengeModel)
@@ -376,7 +392,31 @@ class SqlAlchemyUserRepository:
             )
             .values(claimed=True)
         )
-        return _rows_affected(result) > 0
+        if _rows_affected(result) > 0:
+            return True
+        exists = (
+            await self._session.execute(
+                select(UserDailyChallengeModel.id).where(
+                    UserDailyChallengeModel.user_id == user_id,
+                    UserDailyChallengeModel.challenge_date == challenge_date,
+                )
+            )
+        ).scalar_one_or_none()
+        if exists is not None:
+            return False
+        try:
+            async with self._session.begin_nested():
+                self._session.add(
+                    UserDailyChallengeModel(
+                        id=uuid.uuid4(),
+                        user_id=user_id,
+                        challenge_date=challenge_date,
+                        claimed=True,
+                    )
+                )
+        except IntegrityError:
+            return False
+        return True
 
 
 class SqlAlchemyRefreshTokenRepository:

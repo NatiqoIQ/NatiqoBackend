@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
+import uuid
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -57,6 +58,7 @@ EXPECTED_TABLES = {
     "refresh_tokens",
     "review_cards",
     "review_logs",
+    "user_daily_challenge_contributions",
     "user_daily_challenges",
     "unit_progress",
     "units",
@@ -756,3 +758,111 @@ def test_the_analytics_indexes_are_dropped_by_a_downgrade(alembic_config: Config
             assert not (dropped & present), f"{table} kept {sorted(dropped & present)}"
     finally:
         connection.close()
+
+
+class TestDailyChallengeLedgerMigration:
+    """The *data* half of the ledger revision, not just its DDL.
+
+    The empty-database tests above would pass even if the backfill silently did nothing,
+    and the old counters are the only surviving record of a learner's past days. These
+    tests migrate a database that already holds such a day, in both directions.
+    """
+
+    @pytest.fixture
+    def legacy_day(self, alembic_config: Config) -> Iterator[tuple[Config, uuid.UUID, str]]:
+        """A learner with one day of counters under the pre-ledger schema."""
+        day = "2026-10-20"
+        command.upgrade(alembic_config, "b9e4d2f7c1a5")
+
+        user_id = uuid.uuid4()
+        connection = sqlite3.connect(_db_path(alembic_config))
+        try:
+            connection.execute(
+                "insert into users (id, email, status, is_admin, created_at, updated_at)"
+                " values (?, ?, 'active', 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+                (user_id.hex, f"{user_id.hex}@example.com"),
+            )
+            connection.execute(
+                "insert into user_daily_challenges (id, user_id, challenge_date,"
+                " lessons_completed_today, words_learned_today, claimed,"
+                " created_at, updated_at) values (?, ?, ?, 2, 6, 1,"
+                " CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+                (uuid.uuid4().hex, user_id.hex, day),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        yield alembic_config, user_id, day
+
+    @staticmethod
+    def _rows(
+        config: Config, sql: str, params: tuple[object, ...] = ()
+    ) -> list[tuple[object, ...]]:
+        connection = sqlite3.connect(_db_path(config))
+        try:
+            return connection.execute(sql, params).fetchall()
+        finally:
+            connection.close()
+
+    def test_upgrade_turns_each_legacy_day_into_one_contribution(
+        self, legacy_day: tuple[Config, uuid.UUID, str]
+    ) -> None:
+        config, user_id, day = legacy_day
+
+        command.upgrade(config, "head")
+
+        rows = self._rows(
+            config,
+            "select user_id, challenge_date, lessons_completed, words_learned"
+            " from user_daily_challenge_contributions",
+        )
+        assert rows == [(user_id.hex, day, 2, 6)]
+        # The counters are gone, because the totals are now derived from that row.
+        columns = {
+            row[1] for row in self._rows(config, "pragma table_info('user_daily_challenges')")
+        }
+        assert "lessons_completed_today" not in columns
+        assert "words_learned_today" not in columns
+
+    def test_downgrade_folds_the_ledger_back_into_the_counters(
+        self, legacy_day: tuple[Config, uuid.UUID, str]
+    ) -> None:
+        config, user_id, day = legacy_day
+        command.upgrade(config, "head")
+
+        command.downgrade(config, "b9e4d2f7c1a5")
+
+        rows = self._rows(
+            config,
+            "select user_id, challenge_date, lessons_completed_today,"
+            " words_learned_today, claimed from user_daily_challenges",
+        )
+        assert rows == [(user_id.hex, day, 2, 6, 1)]
+
+    def test_downgrade_keeps_progress_from_a_day_that_was_never_claimed(
+        self, legacy_day: tuple[Config, uuid.UUID, str]
+    ) -> None:
+        """Under the ledger a day needs no row until it is claimed, so one is rebuilt."""
+        config, user_id, _ = legacy_day
+        command.upgrade(config, "head")
+        connection = sqlite3.connect(_db_path(config))
+        try:
+            connection.execute(
+                "insert into user_daily_challenge_contributions (id, user_id, session_id,"
+                " challenge_date, lessons_completed, words_learned, created_at, updated_at)"
+                " values (?, ?, ?, '2026-10-21', 1, 3, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+                (uuid.uuid4().hex, user_id.hex, uuid.uuid4().hex),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        command.downgrade(config, "b9e4d2f7c1a5")
+
+        rows = self._rows(
+            config,
+            "select challenge_date, lessons_completed_today, words_learned_today, claimed"
+            " from user_daily_challenges where challenge_date = '2026-10-21'",
+        )
+        assert rows == [("2026-10-21", 1, 3, 0)]

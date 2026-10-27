@@ -384,11 +384,7 @@ class QuizService:
                 xp=granted_xp,
                 words=words_learned,
             )
-        await self._count_daily_challenge(
-            user_id,
-            lessons_completed=1 if session.mode is SessionMode.LESSON else 0,
-            words_learned=words_learned,
-        )
+        await self._record_daily_challenge(user_id, session, words_learned=words_learned)
         await self._publish_completion(
             user_id,
             session,
@@ -730,7 +726,9 @@ class QuizService:
         questions = await self._uow.questions.list_published_by_ids(
             [ContentId(question_id) for question_id in correct_question_ids]
         )
-        vocabulary_ids = [question.id for question in questions if question.skill is SkillKind.VOCABULARY]
+        vocabulary_ids = [
+            question.id for question in questions if question.skill is SkillKind.VOCABULARY
+        ]
         if not vocabulary_ids:
             return 0
         already_correct = await self._uow.quiz_answers.correct_question_ids_for_user(
@@ -738,31 +736,45 @@ class QuizService:
         )
         return sum(1 for question_id in vocabulary_ids if question_id not in already_correct)
 
-    async def _count_daily_challenge(
+    async def _record_daily_challenge(
         self,
         user_id: UserId,
+        session: QuizSession,
         *,
-        lessons_completed: int,
         words_learned: int,
     ) -> None:
-        """Add this completion to today's challenge row, in the learner's own timezone.
+        """Attribute this sitting to the calendar day it *finished* on.
 
-        Counted here, inside the completion transaction, rather than by a client report
-        afterwards: a lost response retried, an app killed mid-flight or a second device
-        then cannot count the same sitting twice, and the words land on the calendar day
-        the learner was actually living in when they finished — not on whichever day the
-        retry reached the server. A checkpoint or review sitting contributes its words
-        but is not a lesson, so only a lesson-mode completion moves the lessons counter.
+        The day is derived from the sitting's own ``completed_at`` in the learner's
+        timezone — never from the clock at write time — so a completion the server has
+        already recorded keeps the day it happened on, even when the response is lost and
+        the client retries after midnight. (A completion the server has never seen is
+        stamped when it arrives: the device clock is not trusted for this, so there is no
+        earlier instant to honour.)
+
+        Idempotency is the sitting's identity: the ledger is keyed by
+        ``(user, session)``, so a retried completion, a duplicated delivery or a replayed
+        request records nothing the second time. A checkpoint or review sitting
+        contributes its words but is not a lesson, so only a lesson-mode completion moves
+        the lessons count.
         """
+        lessons_completed = 1 if session.mode is SessionMode.LESSON else 0
         if lessons_completed == 0 and words_learned == 0:
             return
         profile = await self._uow.users.get_profile(user_id)
-        today = local_date(utc_now(), profile.timezone if profile is not None else None)
-        await self._uow.users.upsert_daily_challenge(
+        # ``complete()`` always stamps ``completed_at``; the fallback only covers a
+        # session finished by some future path that forgets to, and a wrong-but-close day
+        # beats an exception that would roll back the lesson the learner just earned.
+        finished_at = session.completed_at or utc_now()
+        challenge_date = local_date(
+            finished_at, profile.timezone if profile is not None else None
+        ).isoformat()
+        await self._uow.users.record_daily_challenge_contribution(
             user_id,
-            challenge_date=today.isoformat(),
-            lessons_completed_today=lessons_completed,
-            words_learned_today=words_learned,
+            session_id=session.id,
+            challenge_date=challenge_date,
+            lessons_completed=lessons_completed,
+            words_learned=words_learned,
         )
 
     async def _record_unit_progress(

@@ -72,32 +72,33 @@ class UserRepositoryPort(Protocol):
     # ------------------------------------------------------- daily challenge
     async def get_daily_challenge(
         self, user_id: UserId, *, challenge_date: str
-    ) -> UserDailyChallenge | None:
-        """The learner's challenge row for one calendar day, or ``None``.
+    ) -> UserDailyChallenge:
+        """The learner's challenge for one calendar day — always a record.
 
-        Absence means "no activity recorded for that day yet" — it is not an error,
-        because a learner who opens the app and does nothing has no row to read.
+        Absence is zeros rather than ``None``: the counts are derived from what was
+        recorded, so a learner who has done nothing reads ``0 / 0 / false`` and no row is
+        written merely to answer a read.
         """
         ...
 
-    async def upsert_daily_challenge(
+    async def record_daily_challenge_contribution(
         self,
         user_id: UserId,
         *,
+        session_id: uuid.UUID,
         challenge_date: str,
-        lessons_completed_today: int = 0,
-        words_learned_today: int = 0,
-    ) -> UserDailyChallenge:
-        """Add this sitting's counts to the day's totals, creating the day if needed.
+        lessons_completed: int,
+        words_learned: int,
+    ) -> bool:
+        """Attribute one finished sitting to its own day, at most once.
 
-        The counters are **increments** rather than replacements: a client reports what
-        one sitting was worth, and that must not erase what an earlier sitting recorded.
+        Returns ``False`` when this session has already been counted, which is what makes
+        a retried completion a no-op instead of a second lesson. ``challenge_date`` is the
+        day the sitting finished in the learner's timezone, not the day this call runs.
         """
         ...
 
-    async def claim_daily_challenge(
-        self, user_id: UserId, *, challenge_date: str
-    ) -> bool:
+    async def claim_daily_challenge(self, user_id: UserId, *, challenge_date: str) -> bool:
         """Take one day's reward; ``False`` means it was already claimed.
 
         The guard lives in the statement's predicate, so two simultaneous claims cannot

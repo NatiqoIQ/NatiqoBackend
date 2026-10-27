@@ -59,8 +59,8 @@ Auth & account                       Learning loop
   GET    /me/devices
   DELETE /me/devices/{id}              Spaced repetition
   GET    /me/daily-challenge             GET    /review/due
-  PATCH  /me/daily-challenge             GET    /review/stats
-  POST   /me/daily-challenge/claim        GET    /review/preview
+  POST   /me/daily-challenge/claim        GET    /review/stats
+                                         GET    /review/preview
                                          POST   /review/cards/{id}/answer
 Catalogue (public, no auth)
   GET    /content/tree
@@ -664,7 +664,7 @@ Design notes:
 ### 6.6 Gamification — LIVE
 
 Five authenticated endpoints. The hub, the achievement catalogue and the streak screen are
-each a **single read**, so each is one round trip. Three more — the **daily challenge**
+each a **single read**, so each is one round trip. Two more — the **daily challenge**
 under `/me` — are documented at the end of this section.
 
 | Screen | Endpoints | Notes |
@@ -684,33 +684,38 @@ under `/me` — are documented at the end of this section.
   a returning learner never reads as a blank sheet.
 - Rate limit 240/min.
 
-**Daily challenge — three authenticated endpoints under `/me`.** One row per learner per
-calendar day, counting today's lessons and words and claimable once.
+**Daily challenge — two authenticated endpoints under `/me`.** One entry per learner per
+calendar day, counting the sittings that finished that day and claimable once. Progress is
+**derived from those sittings, not reported by the client**: completing a quiz records it,
+so there is nothing for the app to send and nothing it can double-send.
 
 | Screen | Endpoints | Notes |
 | --- | --- | --- |
-| Daily challenge card (hub or home) | `GET /me/daily-challenge` | today's row, **created on first read** — a learner who has done nothing yet reads zeros, never a 404 |
-| Report a finished sitting | `PATCH /me/daily-challenge` | body `{ "lessonsCompletedToday": 1, "wordsLearnedToday": 4 }` — both fields optional **increments**, not replacements; returns the whole row |
-| Claim today's reward | `POST /me/daily-challenge/claim` | flips `claimed`; a second claim the same day is `409 DAILY_CHALLENGE_ALREADY_CLAIMED` (refresh, do not retry) |
+| Daily challenge card (hub or home) | `GET /me/daily-challenge` | today's figures, computed on read — a learner who has done nothing yet reads zeros, never a 404 |
+| Claim today's reward | `POST /me/daily-challenge/claim` | flips `claimed`; optional body `{ "expectedChallengeDate": "2026-10-26" }` guards against claiming the wrong day. A second claim is `409 DAILY_CHALLENGE_ALREADY_CLAIMED`, a day with no recorded sitting is `409 DAILY_CHALLENGE_NOT_STARTED`, and a card from another day is `409 DAILY_CHALLENGE_DATE_CHANGED` with the authoritative date in `details.challengeDate` |
 
 ```jsonc
-// GET /me/daily-challenge   → 200   (PATCH and claim return the same shape)
+// GET /me/daily-challenge   → 200   (claim returns the same shape)
 { "challengeDate": "2026-10-26", "lessonsCompletedToday": 2,
   "wordsLearnedToday": 5, "claimed": false }
 ```
 
 - **The day boundary is the learner's — not the device's, not UTC's.** `challengeDate` is
-  computed from the profile timezone (`Asia/Baghdad` by default), so the row rolls over at
+  computed from the profile timezone (`Asia/Baghdad` by default), so the card rolls over at
   the learner's midnight. Display the server's `challengeDate`; never build the challenge
   day from the device clock.
-- **PATCH sends what *this* sitting was worth** — e.g. `{"lessonsCompletedToday": 1,
-  "wordsLearnedToday": 3}` right after `op:complete` returns — and the server **adds** it to
-  the day's totals. Never send a running total: two sends would double-count. An omitted
-  field is left alone (words-only does not zero lessons); a negative value is `422`.
+- **The app reports nothing.** `op:complete` already records the sitting on the server, and
+  that is the only write path. There is no `PATCH`; replaying a completion the server
+  already recorded is a no-op rather than a second lesson, and it keeps the day it
+  originally finished on even if the retry arrives after midnight. A completion the server
+  has never seen is stamped when it arrives — the device clock is never trusted for this.
 - **Claim only sets the flag today** — no gems or XP are awarded yet, so render a claimed
   *state*, not an award animation. One claim per calendar day, enforced by the server.
-- These three ride the default `/me` rate-limit scope (**120/min**), not the gamification
-  scope above.
+- Send `expectedChallengeDate` if the card may have been on screen across midnight: on
+  `DAILY_CHALLENGE_DATE_CHANGED` re-render from `details.challengeDate` instead of
+  retrying the same body.
+- Both ride the default `/me` rate-limit scope (**120/min**), not the gamification scope
+  above.
 
 ### 6.7 AI tutor — LIVE, but disabled by default
 

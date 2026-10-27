@@ -105,6 +105,15 @@ class ErrorCode(StrEnum):
     #: is refreshed, a daily challenge only becomes claimable again after midnight in
     #: the learner's own timezone.
     DAILY_CHALLENGE_ALREADY_CLAIMED = "DAILY_CHALLENGE_ALREADY_CLAIMED"
+    #: ``POST /me/daily-challenge/claim`` carried an ``expectedChallengeDate`` that is not
+    #: the day the server is counting: the learner's calendar moved (or the device clock
+    #: is wrong) between rendering the card and tapping claim. Retrying the same body
+    #: fails identically — the client re-reads the challenge and acts on the date in the
+    #: response instead.
+    DAILY_CHALLENGE_DATE_CHANGED = "DAILY_CHALLENGE_DATE_CHANGED"
+    #: Nothing has been recorded for the day yet, so there is no reward to take. Distinct
+    #: from "already claimed": this day can still become claimable, that one cannot.
+    DAILY_CHALLENGE_NOT_STARTED = "DAILY_CHALLENGE_NOT_STARTED"
 
     # --------------------------------------------------------------- economy
     SUBSCRIPTION_NOT_FOUND = "SUBSCRIPTION_NOT_FOUND"

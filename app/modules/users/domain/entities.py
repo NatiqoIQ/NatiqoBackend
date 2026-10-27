@@ -256,10 +256,13 @@ class ExternalIdentity:
 
 @dataclass(slots=True)
 class UserDailyChallenge:
-    """One learner's daily challenge record.
+    """One learner's daily challenge for one calendar day.
 
-    Tracks progress against the daily challenge: lessons completed and words learned.
-    The challenge resets each calendar day in the learner's timezone.
+    ``lessons_completed_today`` and ``words_learned_today`` are **derived**, not stored:
+    they are the sum of the day's recorded completions (see
+    :class:`UserDailyChallengeContribution`), each attributed to the day its sitting
+    *finished* in the learner's timezone. ``claimed`` is the only state a row holds,
+    because it is the only fact a completion cannot imply.
     """
 
     user_id: UserId
@@ -267,3 +270,21 @@ class UserDailyChallenge:
     lessons_completed_today: int = 0
     words_learned_today: int = 0
     claimed: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class UserDailyChallengeContribution:
+    """One finished sitting's contribution to one calendar day.
+
+    ``session_id`` is the idempotency key: a completion retried, reported twice from two
+    devices, or replayed by an offline queue must not count twice, and the identity of
+    the sitting is the only thing that can express "this is the same event". The date is
+    carried explicitly because it is decided when the sitting finishes, not when the row
+    is written.
+    """
+
+    user_id: UserId
+    session_id: uuid.UUID
+    challenge_date: str
+    lessons_completed: int
+    words_learned: int

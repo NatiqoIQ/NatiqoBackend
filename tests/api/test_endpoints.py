@@ -67,7 +67,11 @@ from app.modules.users.domain.identity import (
     IdentityVerificationError,
     VerifiedIdentity,
 )
-from app.modules.users.infrastructure.models import UserModel
+from app.modules.users.infrastructure.models import (
+    UserDailyChallengeContributionModel,
+    UserDailyChallengeModel,
+    UserModel,
+)
 from app.modules.users.presentation.routes import auth_service
 from app.platform.storage.local import LocalObjectStorage
 
@@ -102,7 +106,6 @@ PUBLISHED_OPERATIONS: set[tuple[str, str]] = {
     ("GET", "/api/v1/me/devices"),
     ("DELETE", "/api/v1/me/devices/{device_id}"),
     ("GET", "/api/v1/me/daily-challenge"),
-    ("PATCH", "/api/v1/me/daily-challenge"),
     ("POST", "/api/v1/me/daily-challenge/claim"),
     ("GET", "/api/v1/content/tree"),
     ("GET", "/api/v1/content/lessons/{lesson_id}"),
@@ -2539,11 +2542,12 @@ async def test_a_brand_new_learner_has_an_all_zero_summary(client: AsyncClient) 
         "lessonsInProgress": 0,
         "lessonsStarted": 0,
         "correctCount": 0,
-        "answeredCount": 0,            "accuracyPercent": 0,
-            "wordsLearned": 0,
-            "currentStreakDays": 0,
-            "longestStreakDays": 0,
-            "lastActivityAt": None,
+        "answeredCount": 0,
+        "accuracyPercent": 0,
+        "wordsLearned": 0,
+        "currentStreakDays": 0,
+        "longestStreakDays": 0,
+        "lastActivityAt": None,
         "xp": {"items": [], "meta": {"limit": 20, "hasMore": False, "nextCursor": None}},
     }
 
@@ -4759,14 +4763,16 @@ async def test_media_read_rejects_a_non_uuid_id_before_any_lookup(client: AsyncC
 
 
 # ============================================================ daily challenge
-# Three endpoints over one per-day row. The behaviour worth pinning down is the
-# arithmetic: counters are increments rather than replacements, a missing counter
-# must never null the other one, and the day boundary is the learner's, not UTC's.
+# One read endpoint and one claim. Progress is no longer a client-writable number: it is
+# the sum over the sittings the quiz engine recorded, each credited to the day it
+# *finished* in the learner's own timezone. What these tests pin down is therefore that
+# the server decides both the count and the day — a client cannot report either, and a
+# completion delivered after midnight cannot move yesterday's work onto today.
 
 
-async def _challenge_headers(
+async def _challenge_learner(
     client: AsyncClient, *, timezone: str | None = None, subject: str = "challenge-probe"
-) -> dict[str, str]:
+) -> tuple[dict[str, str], uuid.UUID]:
     # ``timezone`` is a sign-in *body* field: it is applied to the profile only when the
     # request also creates the account, so it rides in ``body``. A distinct ``subject``
     # per learner matters more — the account is keyed on (provider, subject), so two
@@ -4774,14 +4780,64 @@ async def _challenge_headers(
     # two-learner scoping assertion.
     body = {"timezone": timezone} if timezone else None
     created = await sign_in(
-        client, token=f"{subject}-id-token", body=body, subject=subject, email=f"{subject}@natiqo.app"
+        client,
+        token=f"{subject}-id-token",
+        body=body,
+        subject=subject,
+        email=f"{subject}@natiqo.app",
     )
-    return auth_headers(created["tokens"]["accessToken"])
+    return auth_headers(created["tokens"]["accessToken"]), uuid.UUID(created["user"]["id"])
+
+
+async def _challenge_headers(
+    client: AsyncClient, *, timezone: str | None = None, subject: str = "challenge-probe"
+) -> dict[str, str]:
+    headers, _ = await _challenge_learner(client, timezone=timezone, subject=subject)
+    return headers
+
+
+async def _today(client: AsyncClient, headers: dict[str, str]) -> str:
+    response = await client.get("/api/v1/me/daily-challenge", headers=headers)
+    assert response.status_code == 200, response.text
+    return response.json()["challengeDate"]
+
+
+async def _record_sitting(
+    session: AsyncSession,
+    user_id: uuid.UUID,
+    *,
+    challenge_date: str,
+    lessons: int = 1,
+    words: int = 0,
+    session_id: uuid.UUID | None = None,
+) -> uuid.UUID:
+    """Write one ledger row, standing in for a sitting the quiz engine finished.
+
+    Claiming is about taking the reward, not about how the progress got there, so these
+    tests seed the ledger directly. The path from a real lesson into the ledger has its
+    own test below, driven through the quiz endpoints.
+    """
+    sitting = session_id or uuid.uuid4()
+    session.add(
+        UserDailyChallengeContributionModel(
+            id=uuid.uuid4(),
+            user_id=user_id,
+            session_id=sitting,
+            challenge_date=challenge_date,
+            lessons_completed=lessons,
+            words_learned=words,
+        )
+    )
+    await session.commit()
+    return sitting
 
 
 @pytest.mark.asyncio
-async def test_daily_challenge_is_created_zeroed_on_first_read(client: AsyncClient) -> None:
-    headers = await _challenge_headers(client)
+async def test_daily_challenge_reads_zeroed_without_writing_a_row(
+    client: AsyncClient, content_db: AsyncSession
+) -> None:
+    """Opening the card is a read: it creates nothing to clean up and counts nothing."""
+    headers, user_id = await _challenge_learner(client)
 
     response = await client.get("/api/v1/me/daily-challenge", headers=headers)
 
@@ -4790,6 +4846,16 @@ async def test_daily_challenge_is_created_zeroed_on_first_read(client: AsyncClie
     assert body["lessonsCompletedToday"] == 0
     assert body["wordsLearnedToday"] == 0
     assert body["claimed"] is False
+    rows = (
+        (
+            await content_db.execute(
+                select(UserDailyChallengeModel).where(UserDailyChallengeModel.user_id == user_id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert rows == []
 
 
 @pytest.mark.asyncio
@@ -4810,63 +4876,79 @@ async def test_daily_challenge_counts_the_learners_own_calendar_day(client: Asyn
 
 
 @pytest.mark.asyncio
-async def test_daily_challenge_patch_adds_to_both_counters(client: AsyncClient) -> None:
-    headers = await _challenge_headers(client)
+async def test_completing_a_lesson_advances_the_daily_challenge(
+    client: AsyncClient, content_db: AsyncSession
+) -> None:
+    """The sitting the engine completed *is* the progress — nobody reports it afterwards."""
+    headers, user_id = await _challenge_learner(client, subject="challenge-completes")
+    ids = await seed_catalogue(content_db)
 
-    first = await client.patch(
-        "/api/v1/me/daily-challenge",
-        headers=headers,
-        json={"lessonsCompletedToday": 1, "wordsLearnedToday": 4},
+    session_id = await _complete_a_lesson(client, headers, ids["A1-lesson-1"])
+
+    body = (await client.get("/api/v1/me/daily-challenge", headers=headers)).json()
+    assert body["lessonsCompletedToday"] == 1
+    assert body["wordsLearnedToday"] == 1
+    rows = (
+        (
+            await content_db.execute(
+                select(UserDailyChallengeContributionModel).where(
+                    UserDailyChallengeContributionModel.user_id == user_id
+                )
+            )
+        )
+        .scalars()
+        .all()
     )
-    assert first.status_code == 200, first.text
-    assert first.json()["lessonsCompletedToday"] == 1
-    assert first.json()["wordsLearnedToday"] == 4
-
-    second = await client.patch(
-        "/api/v1/me/daily-challenge",
-        headers=headers,
-        json={"lessonsCompletedToday": 1, "wordsLearnedToday": 3},
-    )
-    assert second.status_code == 200, second.text
-    assert second.json()["lessonsCompletedToday"] == 2
-    assert second.json()["wordsLearnedToday"] == 7
-
-    # The totals survive a re-read; they were not just echoed back.
-    reread = await client.get("/api/v1/me/daily-challenge", headers=headers)
-    assert reread.json()["lessonsCompletedToday"] == 2
-    assert reread.json()["wordsLearnedToday"] == 7
+    assert [row.session_id for row in rows] == [session_id]
+    assert rows[0].lessons_completed == 1
+    assert rows[0].words_learned == 1
 
 
 @pytest.mark.asyncio
-async def test_daily_challenge_patch_omitting_a_counter_leaves_it_alone(client: AsyncClient) -> None:
-    """``{"wordsLearnedToday": 4}`` must add words without nulling the lessons counter."""
-    headers = await _challenge_headers(client)
-    await client.patch(
-        "/api/v1/me/daily-challenge",
-        headers=headers,
-        json={"lessonsCompletedToday": 2, "wordsLearnedToday": 1},
-    )
+async def test_a_sitting_is_credited_to_the_day_it_finished_not_the_day_it_arrived(
+    client: AsyncClient, content_db: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """02:30 UTC on 10 March is 15:30 on 9 March in Midway, so the sitting belongs to the 9th.
 
-    response = await client.patch(
-        "/api/v1/me/daily-challenge",
-        headers=headers,
-        json={"wordsLearnedToday": 4},
+    The request lands on the 10th in UTC. Crediting "today at write time" would move a
+    learner's evening practice onto the following day; the sitting's own ``completed_at``
+    is what decides.
+    """
+    headers, user_id = await _challenge_learner(
+        client, timezone="Pacific/Midway", subject="challenge-midnight"
     )
+    ids = await seed_catalogue(content_db)
+    finished_at = datetime(2026, 3, 10, 2, 30, tzinfo=UTC)
+    monkeypatch.setattr("app.modules.quiz.domain.entities.utc_now", lambda: finished_at)
+    monkeypatch.setattr("app.modules.users.presentation.routes.utc_now", lambda: finished_at)
 
-    assert response.status_code == 200, response.text
-    body = response.json()
-    assert body["lessonsCompletedToday"] == 2
-    assert body["wordsLearnedToday"] == 5
+    await _complete_a_lesson(client, headers, ids["A1-lesson-1"])
+
+    body = (await client.get("/api/v1/me/daily-challenge", headers=headers)).json()
+    assert body["challengeDate"] == "2026-03-09"
+    assert body["lessonsCompletedToday"] == 1
+    rows = (
+        (
+            await content_db.execute(
+                select(UserDailyChallengeContributionModel).where(
+                    UserDailyChallengeContributionModel.user_id == user_id
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert [row.challenge_date for row in rows] == ["2026-03-09"]
 
 
 @pytest.mark.asyncio
-async def test_daily_challenge_patch_is_scoped_to_the_caller(client: AsyncClient) -> None:
-    mine = await _challenge_headers(client, subject="challenge-mine")
+async def test_daily_challenge_progress_is_scoped_to_the_caller(
+    client: AsyncClient, content_db: AsyncSession
+) -> None:
+    mine, user_id = await _challenge_learner(client, subject="challenge-mine")
     theirs = await _challenge_headers(client, subject="challenge-theirs")
-    await client.patch(
-        "/api/v1/me/daily-challenge",
-        headers=mine,
-        json={"lessonsCompletedToday": 3, "wordsLearnedToday": 9},
+    await _record_sitting(
+        content_db, user_id, challenge_date=await _today(client, mine), lessons=3, words=9
     )
 
     response = await client.get("/api/v1/me/daily-challenge", headers=theirs)
@@ -4876,30 +4958,29 @@ async def test_daily_challenge_patch_is_scoped_to_the_caller(client: AsyncClient
 
 
 @pytest.mark.asyncio
-async def test_daily_challenge_patch_rejects_a_negative_counter(client: AsyncClient) -> None:
-    headers = await _challenge_headers(client)
-    response = await client.patch(
-        "/api/v1/me/daily-challenge", headers=headers, json={"wordsLearnedToday": -1}
-    )
-    assert response.status_code == 422, response.text
-
-
-@pytest.mark.asyncio
-async def test_daily_challenge_claim_marks_the_day_claimed(client: AsyncClient) -> None:
-    headers = await _challenge_headers(client)
+async def test_daily_challenge_claim_marks_the_day_claimed(
+    client: AsyncClient, content_db: AsyncSession
+) -> None:
+    headers, user_id = await _challenge_learner(client, subject="challenge-claim")
+    await _record_sitting(content_db, user_id, challenge_date=await _today(client, headers))
 
     claimed = await client.post("/api/v1/me/daily-challenge/claim", headers=headers)
 
     assert claimed.status_code == 200, claimed.text
     assert claimed.json()["claimed"] is True
+    assert claimed.json()["lessonsCompletedToday"] == 1
 
     reread = await client.get("/api/v1/me/daily-challenge", headers=headers)
     assert reread.json()["claimed"] is True
+    assert reread.json()["lessonsCompletedToday"] == 1
 
 
 @pytest.mark.asyncio
-async def test_daily_challenge_claim_refuses_a_second_claim_the_same_day(client: AsyncClient) -> None:
-    headers = await _challenge_headers(client)
+async def test_daily_challenge_claim_refuses_a_second_claim_the_same_day(
+    client: AsyncClient, content_db: AsyncSession
+) -> None:
+    headers, user_id = await _challenge_learner(client, subject="challenge-reclaim")
+    await _record_sitting(content_db, user_id, challenge_date=await _today(client, headers))
     await client.post("/api/v1/me/daily-challenge/claim", headers=headers)
 
     response = await client.post("/api/v1/me/daily-challenge/claim", headers=headers)
@@ -4913,9 +4994,69 @@ async def test_daily_challenge_claim_refuses_a_second_claim_the_same_day(client:
 
 
 @pytest.mark.asyncio
-async def test_daily_challenge_claim_is_scoped_to_the_caller(client: AsyncClient) -> None:
-    mine = await _challenge_headers(client, subject="claim-mine")
+async def test_daily_challenge_claim_refuses_a_day_with_nothing_recorded(
+    client: AsyncClient,
+) -> None:
+    """No sitting, no reward — and a distinct code from "already claimed", because this
+    day can still become claimable."""
+    headers = await _challenge_headers(client, subject="challenge-idle")
+
+    response = await client.post("/api/v1/me/daily-challenge/claim", headers=headers)
+
+    assert response.status_code == 409, response.text
+    assert error_code(response) == "DAILY_CHALLENGE_NOT_STARTED"
+
+
+@pytest.mark.asyncio
+async def test_daily_challenge_claim_refuses_a_card_from_a_previous_day(
+    client: AsyncClient, content_db: AsyncSession
+) -> None:
+    """A card rendered before midnight must not silently claim the new day's reward."""
+    headers, user_id = await _challenge_learner(client, subject="challenge-stale")
+    today = await _today(client, headers)
+    await _record_sitting(content_db, user_id, challenge_date=today)
+
+    response = await client.post(
+        "/api/v1/me/daily-challenge/claim",
+        headers=headers,
+        json={"expectedChallengeDate": "2000-01-01"},
+    )
+
+    assert response.status_code == 409, response.text
+    assert error_code(response) == "DAILY_CHALLENGE_DATE_CHANGED"
+    # The authoritative date rides along, so the client can redraw the card in one round
+    # trip instead of guessing which day the server is counting.
+    assert response.json()["error"]["details"]["challengeDate"] == today
+    assert (await client.get("/api/v1/me/daily-challenge", headers=headers)).json()[
+        "claimed"
+    ] is False
+
+
+@pytest.mark.asyncio
+async def test_daily_challenge_claim_accepts_the_day_the_client_displayed(
+    client: AsyncClient, content_db: AsyncSession
+) -> None:
+    headers, user_id = await _challenge_learner(client, subject="challenge-current")
+    today = await _today(client, headers)
+    await _record_sitting(content_db, user_id, challenge_date=today)
+
+    response = await client.post(
+        "/api/v1/me/daily-challenge/claim",
+        headers=headers,
+        json={"expectedChallengeDate": today},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["claimed"] is True
+
+
+@pytest.mark.asyncio
+async def test_daily_challenge_claim_is_scoped_to_the_caller(
+    client: AsyncClient, content_db: AsyncSession
+) -> None:
+    mine, user_id = await _challenge_learner(client, subject="claim-mine")
     theirs = await _challenge_headers(client, subject="claim-theirs")
+    await _record_sitting(content_db, user_id, challenge_date=await _today(client, mine))
     await client.post("/api/v1/me/daily-challenge/claim", headers=mine)
 
     response = await client.get("/api/v1/me/daily-challenge", headers=theirs)
@@ -4926,10 +5067,21 @@ async def test_daily_challenge_claim_is_scoped_to_the_caller(client: AsyncClient
 @pytest.mark.asyncio
 async def test_daily_challenge_requires_authentication(client: AsyncClient) -> None:
     assert (await client.get("/api/v1/me/daily-challenge")).status_code == 401
-    assert (
-        await client.patch("/api/v1/me/daily-challenge", json={"wordsLearnedToday": 1})
-    ).status_code == 401
     assert (await client.post("/api/v1/me/daily-challenge/claim")).status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_the_client_reported_increment_endpoint_is_gone(client: AsyncClient) -> None:
+    """Removed rather than deprecated: it was the only way to count a sitting twice."""
+    headers = await _challenge_headers(client, subject="challenge-patch")
+
+    response = await client.patch(
+        "/api/v1/me/daily-challenge",
+        headers=headers,
+        json={"lessonsCompletedToday": 1},
+    )
+
+    assert response.status_code == 405, response.text
 
 
 @pytest.mark.asyncio

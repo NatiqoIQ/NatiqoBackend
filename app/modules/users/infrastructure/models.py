@@ -1,6 +1,6 @@
 """Users module — SQLAlchemy models.
 
-Six tables, split along the axes that change for different reasons:
+Eight tables, split along the axes that change for different reasons:
 
 - ``users`` — account lifecycle. Changes rarely; the most sensitive.
 - ``user_identities`` — the Google/Apple accounts linked to a learner. Append-mostly.
@@ -8,6 +8,8 @@ Six tables, split along the axes that change for different reasons:
 - ``user_settings`` — behaviour switches. Changes often, and is per-device-ish later.
 - ``refresh_tokens`` — appended on every rotation. Never updated except to revoke.
 - ``user_devices`` — one row per install, used for push and per-device revocation.
+- ``user_daily_challenges`` — one row per learner per day, holding only the claim.
+- ``user_daily_challenge_contributions`` — append-only ledger of finished sittings.
 
 Splitting them means a profile edit never contends with a sign-in, and a token table
 that grows without bound never bloats a row the app reads on every request.
@@ -29,6 +31,7 @@ from sqlalchemy import (
     SmallInteger,
     String,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -238,11 +241,14 @@ class UserDeviceModel(Base, UUIDPrimaryKeyMixin, TimestampMixin):
 
 
 class UserDailyChallengeModel(Base, UUIDPrimaryKeyMixin, TimestampMixin):
-    """One learner's daily challenge record.
+    """One learner's daily challenge state for one day.
 
-    One row per learner per day, tracking their progress against the daily challenge.
-    The challenge resets each calendar day in the learner's timezone.
+    The row keeps only the fact a completion cannot imply: whether the day's reward was
+    taken. Progress is derived from :class:`UserDailyChallengeContributionModel`, so
+    there is no counter here to fall out of step with the sittings it is supposed to
+    summarise — and a retried write cannot inflate a total that is never stored.
     """
+
     __tablename__ = "user_daily_challenges"
 
     user_id: Mapped[uuid.UUID] = mapped_column(
@@ -250,12 +256,10 @@ class UserDailyChallengeModel(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     )
     #: Date of the challenge in the learner's local timezone (YYYY-MM-DD).
     challenge_date: Mapped[str] = mapped_column(String(10), nullable=False)
-    #: Number of lessons completed today.
-    lessons_completed_today: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=0)
-    #: Number of new words learned today.
-    words_learned_today: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=0)
     #: Whether the daily challenge has been claimed today.
-    claimed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    claimed: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
 
     #: Ordering metadata only — see the module docstring. Never navigated.
     user: Mapped[UserModel] = relationship(lazy="raise_on_sql")
@@ -263,7 +267,47 @@ class UserDailyChallengeModel(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     __table_args__ = (
         # A learner can have at most one row per day.
         UniqueConstraint("user_id", "challenge_date", name="uq_user_daily_challenge_day"),
-        Index("ix_user_daily_challenge_user", "user_id"),
         # Enable efficient "who claimed today" queries.
         Index("ix_user_daily_challenge_date", "challenge_date"),
+    )
+
+
+class UserDailyChallengeContributionModel(Base, UUIDPrimaryKeyMixin, TimestampMixin):
+    """One finished sitting's contribution to the day it finished on.
+
+    The row *is* the idempotency record: ``(user_id, session_id)`` is unique, so a
+    completion that is retried, delivered twice from two devices or replayed from an
+    offline queue cannot be counted twice. ``challenge_date`` is decided once, from the
+    sitting's own ``completed_at`` in the learner's timezone, and never recomputed from
+    the clock at write time — a retried completion keeps the day it happened on, even
+    when the retry itself arrives after midnight.
+
+    ``session_id`` is deliberately not a foreign key to ``quiz_sessions``: the users
+    module does not depend on the quiz module's schema, and a day's totals are an account
+    fact that should outlive the sitting row it was earned in.
+    """
+
+    __tablename__ = "user_daily_challenge_contributions"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    #: The completed sitting this contribution came from — the idempotency key.
+    session_id: Mapped[uuid.UUID] = mapped_column(nullable=False)
+    #: The day the sitting finished in the learner's local timezone (YYYY-MM-DD).
+    challenge_date: Mapped[str] = mapped_column(String(10), nullable=False)
+    lessons_completed: Mapped[int] = mapped_column(
+        SmallInteger, nullable=False, default=0, server_default=text("0")
+    )
+    words_learned: Mapped[int] = mapped_column(
+        SmallInteger, nullable=False, default=0, server_default=text("0")
+    )
+
+    #: Ordering metadata only — see the module docstring. Never navigated.
+    user: Mapped[UserModel] = relationship(lazy="raise_on_sql")
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "session_id", name="uq_daily_challenge_contribution_session"),
+        # Every read is "sum this learner's contributions for this day".
+        Index("ix_daily_challenge_contribution_day", "user_id", "challenge_date"),
     )

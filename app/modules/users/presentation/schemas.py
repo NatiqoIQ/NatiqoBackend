@@ -202,21 +202,22 @@ class UpdateMeRequest(WireModel):
     daily_goal_new_words: Annotated[int, Field(ge=1, le=200)] | None = None
 
 
-#: PATCH /me/daily-challenge body
-class UpdateDailyChallengePayload(WireModel):
-    """Update daily challenge progress.
+#: POST /me/daily-challenge/claim body
+class ClaimDailyChallengePayload(WireModel):
+    """Optional guard on which day is being claimed.
 
-    Increment lessons completed and/or words learned for today. Both fields are optional:
-    sending only one updates just that counter; the other stays as-is.
+    ``challengeDate`` is the date the client displayed on the card. The server always
+    claims *its own* current day for the learner — this value is only compared, so a card
+    rendered before midnight cannot claim the wrong day by accident. Omitting the body
+    keeps the old behaviour: claim whatever today is.
     """
 
     model_config = ConfigDict(extra="forbid")
 
-    lessons_completed_today: Annotated[int, Field(ge=0)] | None = None
-    words_learned_today: Annotated[int, Field(ge=0)] | None = None
+    expected_challenge_date: Annotated[str, Field(pattern=r"^\d{4}-\d{2}-\d{2}$")] | None = None
 
 
-# GET/PATCH/POST /me/daily-challenge response
+# GET/POST /me/daily-challenge response
 class DailyChallengeResponse(WireModel):
     """One calendar day's challenge record for the signed-in learner.
 
@@ -225,7 +226,9 @@ class DailyChallengeResponse(WireModel):
     contradicted the naming contract the Flutter client generates types from.
 
     ``challengeDate`` is the learner's own calendar date (from their profile timezone),
-    so it can legitimately be a day behind the server's UTC date near midnight.
+    so it can legitimately be a day behind the server's UTC date near midnight. The two
+    counts are derived from the sittings recorded for that day; they are not write
+    targets, and there is no endpoint that can set them.
     """
 
     challenge_date: str
@@ -242,6 +245,7 @@ class DailyChallengeResponse(WireModel):
 
 __all__ = [
     "AuthResponse",
+    "ClaimDailyChallengePayload",
     "DailyChallengeResponse",
     "DevicePayload",
     "DeviceResponse",
@@ -253,7 +257,6 @@ __all__ = [
     "RefreshRequest",
     "SocialLoginRequest",
     "TokenPairResponse",
-    "UpdateDailyChallengePayload",
     "UpdateMeRequest",
     "UserProfileResponse",
     "UserSettingsResponse",
