@@ -219,6 +219,10 @@ class SqlAlchemyQuizAnswerRepository(QuizAnswerRepositoryPort):
         )
         return int((await self._session.execute(stmt)).scalar_one())
 
+    async def exists_for_question(self, question_id: uuid.UUID) -> bool:
+        stmt = select(QuizAnswerModel.id).where(QuizAnswerModel.question_id == question_id).limit(1)
+        return (await self._session.execute(stmt)).first() is not None
+
     async def tally_for_user(self, user_id: UserId) -> AnswerTally:
         stmt = (
             select(

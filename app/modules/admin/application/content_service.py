@@ -681,6 +681,17 @@ class AdminContentService:
         _apply_delete(
             lambda: assert_hard_delete_allowed(lesson.state, subject="The question's lesson")
         )
+        #: The foreign key from ``quiz_answers`` cascades, so a hard delete here erases
+        #: every learner's history for this item. A draft lesson can still contain a
+        #: question learners answered before it was reverted, and "delete" must not mean
+        #: "forget what people did". The way out is to leave the question in place and
+        #: keep its lesson unpublished, not to destroy the record.
+        if await self._uow.quiz_answers.exists_for_question(ContentId(question.id)):
+            raise ConflictError(
+                "This question has learner history and cannot be deleted. "
+                "Keep its lesson unpublished to hide it instead.",
+                code=ErrorCode.CONFLICT,
+            )
         await self._uow.editorial.delete_question(question.id)
         await self._audit(
             actor_id,

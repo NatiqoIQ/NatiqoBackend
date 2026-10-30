@@ -34,7 +34,7 @@ from typing import Any
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient, Response
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import SettingsDep, UowDep, get_storage
@@ -5098,3 +5098,82 @@ async def test_me_reports_days_since_signup(client: AsyncClient) -> None:
     assert body["daysSinceSignup"] >= 0
     # The same value rides on the auth response, so a cold start need not call /me twice.
     assert created["user"]["daysSinceSignup"] == body["daysSinceSignup"]
+
+
+@pytest.mark.asyncio
+async def test_a_question_with_learner_history_is_not_hard_deleted(
+    client: AsyncClient, content_db: AsyncSession
+) -> None:
+    """Deleting a question cascades to quiz_answers, which is learner history.
+
+    A draft lesson can still contain an item people answered before the lesson was
+    reverted, so the parent's state alone is not enough: the editorial delete must look
+    at whether anyone has answered it, and refuse with a way out rather than erase the
+    trail.
+    """
+    headers = await _grant_admin(client, content_db)
+    level = await _create_level(client, headers, code="A2")
+    unit = (
+        await client.post(
+            f"/api/v1/admin/content/levels/{level['id']}/units",
+            json={"title": "Introductions"},
+            headers=headers,
+        )
+    ).json()
+    lesson = (
+        await client.post(
+            f"/api/v1/admin/content/units/{unit['id']}/lessons",
+            json={"title": "Saying hello", "summary": "Greetings.", "estimated_minutes": 5},
+            headers=headers,
+        )
+    ).json()
+    question = (
+        await client.post(
+            f"/api/v1/admin/content/lessons/{lesson['id']}/questions",
+            json=QUESTION_BODY,
+            headers=headers,
+        )
+    ).json()
+
+    learner = UserModel(id=uuid.uuid4(), email=f"{uuid.uuid4().hex}@example.com", status="active")
+    content_db.add(learner)
+    now = datetime.now(UTC)
+    quiz_session = QuizSessionModel(
+        id=uuid.uuid4(),
+        user_id=learner.id,
+        mode="lesson",
+        lesson_id=uuid.UUID(lesson["id"]),
+        status=SessionStatus.ACTIVE.value,
+        question_ids=[question["id"]],
+        started_at=now,
+        expires_at=now + timedelta(hours=1),
+    )
+    content_db.add(quiz_session)
+    content_db.add(
+        QuizAnswerModel(
+            id=uuid.uuid4(),
+            session_id=quiz_session.id,
+            question_id=uuid.UUID(question["id"]),
+            position=1,
+            given_answer={"choice": "Hello"},
+            is_correct=True,
+            points_awarded=2,
+            attempt=1,
+            answered_at=now,
+        )
+    )
+    await content_db.commit()
+    content_db.expunge_all()
+
+    refused = await client.delete(
+        f"/api/v1/admin/content/questions/{question['id']}", headers=headers
+    )
+
+    assert refused.status_code == 409, refused.text
+    assert error_code(refused) == "CONFLICT"
+    remaining = await content_db.scalar(
+        select(func.count())
+        .select_from(QuizAnswerModel)
+        .where(QuizAnswerModel.question_id == uuid.UUID(question["id"]))
+    )
+    assert remaining == 1, "the learner's answer must survive the refusal"

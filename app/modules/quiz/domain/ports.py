@@ -115,6 +115,15 @@ class QuizAnswerRepositoryPort(Protocol):
 
     async def count_for_session(self, session_id: uuid.UUID) -> int: ...
 
+    async def exists_for_question(self, question_id: uuid.UUID) -> bool:
+        """Whether any learner has ever answered this question.
+
+        Exists for the editorial delete path: deleting a question cascades to
+        ``quiz_answers``, so an editor removing a question from a draft lesson would
+        silently erase the history of everyone who practised it while it was published.
+        """
+        ...
+
     async def tally_for_user(self, user_id: UserId) -> AnswerTally:
         """Answered and correct counts across every answer in the learner's sessions.
 
