@@ -165,3 +165,44 @@ async def test_two_restarts_in_one_day_enqueue_one_job() -> None:
 
     assert second is False
     assert await queue.size() == 1
+
+
+# ------------------------------------------------------------------------ acks
+class _AckingQueue(InMemoryQueue):
+    """Records every acknowledgement, so dropping a job is visible."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.acked: list[Job] = []
+
+    async def ack(self, job: Job) -> None:
+        self.acked.append(job)
+        await super().ack(job)
+
+
+@pytest.mark.asyncio
+async def test_a_finished_job_is_acknowledged() -> None:
+    """Without an ack the Redis adapter would requeue it after the visibility timeout."""
+    queue = _AckingQueue()
+    worker = Worker(queue, {JobName.CLEANUP_EXPIRED_TOKENS: _CountingHandler()})
+    await queue.enqueue(Job(name=JobName.CLEANUP_EXPIRED_TOKENS))
+
+    job = await worker.run_once(timeout_ms=0)
+
+    assert job is not None
+    assert queue.acked == [job]
+
+
+@pytest.mark.asyncio
+async def test_a_poison_job_is_acknowledged_too() -> None:
+    """A permanently failing job must leave the in-flight set, or recovery loops forever."""
+    queue = _AckingQueue()
+    handler = _CountingHandler(fail_times=99)
+    worker = Worker(queue, {JobName.CLEANUP_EXPIRED_TOKENS: handler})
+    await queue.enqueue(Job(name=JobName.CLEANUP_EXPIRED_TOKENS, max_attempts=2))
+
+    job = await worker.run_once(timeout_ms=0)
+
+    assert job is not None
+    assert len(queue.acked) == 1
+    assert handler.calls == 2

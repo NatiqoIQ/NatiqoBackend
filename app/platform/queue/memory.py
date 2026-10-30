@@ -54,6 +54,14 @@ class InMemoryQueue:
         self._queue.task_done()
         return job
 
+    async def ack(self, job: Job) -> None:
+        """In-process queue: a job cannot outlive the process holding it."""
+        self._inflight.discard(str(job.job_id))
+
+    async def recover(self) -> int:
+        """Nothing can be recovered: the queue dies with the process."""
+        return 0
+
     async def size(self) -> int:
         return self._queue.qsize()
 

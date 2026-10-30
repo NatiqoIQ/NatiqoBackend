@@ -1,0 +1,123 @@
+# Prometheus alert rules for the Natiqo API.
+#
+# Every expression below is built only from series the application actually exports
+# (app/core/metrics.py). That constraint is deliberate: an alert on a metric nobody
+# emits is worse than no alert, because it looks like coverage.
+#
+# Tune the thresholds against the Phase 0 baseline (docs/system-design-scaling-plan-ar.md
+# §10). They are set for the 2,000 RPS design target, not for today's traffic.
+
+groups:
+  - name: natiqo-availability
+    rules:
+      - alert: NatiqoInstanceDown
+        expr: up{job="natiqo-api"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Natiqo API instance {{ $labels.instance }} is not scrapeable"
+          description: "The process is gone or /metrics is unreachable. Check the container and the last application log line."
+
+      - alert: NatiqoNoTraffic
+        expr: sum(rate(natiqo_http_requests_total[5m])) == 0 and up{job="natiqo-api"} == 1
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "The API is up but serving no traffic"
+          description: "Either the load balancer removed every instance, or requests are failing before the middleware runs. Check the ingress and /ready."
+
+      - alert: NatiqoHighErrorRate
+        expr: |
+          sum(rate(natiqo_http_requests_total{status=~"5.."}[5m]))
+          /
+          clamp_min(sum(rate(natiqo_http_requests_total[5m])), 0.001)
+          > 0.01
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "5xx ratio above 1% for 5 minutes"
+          description: "Current ratio: {{ $value | humanizePercentage }}. Check /ready, PostgreSQL, and the newest deploy."
+
+  - name: natiqo-latency
+    rules:
+      - alert: NatiqoSlowRequests
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (le) (rate(natiqo_http_request_duration_seconds_bucket[5m]))
+          ) > 0.5
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "p95 latency above 500 ms"
+          description: "The SLO is p95 < 200 ms on reads. This is the p95 across every route; break it down by route in the Traffic dashboard."
+
+      - alert: NatiqoReadLatencyBudget
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (le) (rate(natiqo_http_request_duration_seconds_bucket{route=~"/api/v1/content/.*|/api/v1/me.*|/api/v1/progress.*|/api/v1/review.*"}[5m]))
+          ) > 0.2
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Read p95 above its 200 ms SLO"
+          description: "Look for cache misses, a hot PostgreSQL row, or a replica that is not being used."
+
+  - name: natiqo-saturation
+    rules:
+      - alert: NatiqoDbPoolExhausted
+        expr: natiqo_db_pool_checked_out >= natiqo_db_pool_size
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Every pooled database connection is checked out"
+          description: "Requests are about to block for database_pool_timeout (3 s) and then fail. Check for long transactions and the AI path."
+
+      - alert: NatiqoDbPoolSaturated
+        expr: natiqo_db_pool_checked_out / clamp_min(natiqo_db_pool_size, 1) > 0.7
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Database pool above 70% for 10 minutes"
+          description: "Headroom is shrinking. Confirm that connections are not held across provider calls and that PgBouncer is in place."
+
+      - alert: NatiqoQueueBacklog
+        expr: natiqo_queue_depth > 1000
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "More than 1,000 jobs waiting"
+          description: "The worker is slower than producers, or it is not running. Check worker logs for job_dead / recovery_failed."
+
+  - name: natiqo-traffic
+    rules:
+      - alert: NatiqoTooManyRateLimits
+        expr: |
+          sum(rate(natiqo_http_requests_total{status="429"}[5m]))
+          /
+          clamp_min(sum(rate(natiqo_http_requests_total[5m])), 0.001)
+          > 0.05
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "More than 5% of requests are rate-limited"
+          description: "Either an abuse attempt, or a shared carrier NAT exhausting a per-IP budget. Check the 429 series by route."
+
+      - alert: NatiqoTrafficAboveDesign
+        expr: sum(rate(natiqo_http_requests_total[5m])) > 2000
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Sustained traffic above the 2,000 RPS design target"
+          description: "This is the point where the Phase 2 capacity plan must be re-run, not merely scaled horizontally."

@@ -35,6 +35,10 @@ logger = get_logger("workers.main")
 #: enough that shutdown is prompt, long enough that an idle worker is not a busy loop.
 POLL_TIMEOUT_MS = 1000
 
+#: How often an idle worker sweeps abandoned claims. Frequent enough that a crashed
+#: job is retried within minutes, infrequent enough that the sweep is not itself load.
+RECOVERY_INTERVAL_SECONDS = 30
+
 #: First retry waits a second, then two, four… capped here. Capped rather than unbounded
 #: because ``max_attempts`` is 5 by default, and 16 seconds of total backoff is a better
 #: use of a worker process than fifteen minutes of sleeping on one bad job.
@@ -104,13 +108,22 @@ class Worker:
         return False
 
     async def run_once(self, *, timeout_ms: int | None = None) -> Job | None:
-        """Drain at most one job. ``None`` means the queue was empty."""
+        """Drain at most one job. ``None`` means the queue was empty.
+
+        The job is acknowledged whether the handler succeeded or exhausted its attempts.
+        A success obviously leaves the in-flight set; a permanent failure has to leave
+        it too, or recovery would requeue the same poison payload forever. The log line
+        is the current dead-letter record.
+        """
         job = await self._queue.dequeue(
             timeout_ms=self._poll_timeout_ms if timeout_ms is None else timeout_ms
         )
         if job is None:
             return None
-        await self.handle(job)
+        try:
+            await self.handle(job)
+        finally:
+            await self._queue.ack(job)
         return job
 
     async def run_forever(self, stop: asyncio.Event) -> None:
@@ -122,8 +135,18 @@ class Worker:
         connection again.
         """
         logger.info("worker.started", jobs=sorted(str(name) for name in self._handlers))
+        last_recovery = 0.0
         while not stop.is_set():
             try:
+                # Recover before consuming: a job abandoned by a previous process must
+                # not wait behind the jobs that arrived after it.
+                now = asyncio.get_running_loop().time()
+                if now - last_recovery >= RECOVERY_INTERVAL_SECONDS:
+                    last_recovery = now
+                    try:
+                        await self._queue.recover()
+                    except Exception as exc:  # noqa: BLE001 - recovery is best-effort
+                        logger.warning("worker.recovery_failed", error=str(exc)[:200])
                 await self.run_once()
             except asyncio.CancelledError:
                 raise

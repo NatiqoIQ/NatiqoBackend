@@ -10,7 +10,7 @@
 
 ## 0) الملخّص التنفيذي (TL;DR)
 
-> **حالة التنفيذ:** شُحن 6 من 9 بنود P0 فعلياً (F1, F2, F3, F7, F32, F28) و3 جزئياً (F4, F6, F29). التفاصيل والأدلة في **§9.1**، ولا يُعتبر أي بند منجزاً إن لم يكن له اختبار في المستودع.
+> **حالة التنفيذ:** شُحن 8 من 9 بنود P0 فعلياً (F1, F2, F3, F7, F32, F28, F4, F29)، ويبقى F6 جزئياً (Sentry/OTel). التفاصيل والأدلة في **§9.1**، ولا يُعتبر أي بند منجزاً إن لم يكن له اختبار في المستودع.
 
 **الخلاصة في سطر واحد:** الكود الحالي **مصمَّم بشكل جيد جداً كنظام Modular Monolith**، لكنه **مُنشَّأ لبيئة تطوير/خادم واحد**، وليس لحركة مرور عشرات الآلاف. لا نحتاج إعادة كتابة؛ نحتاج **سلسلة إصلاحات محددة + طبقة Edge + ضبط قاعدة البيانات + طابور مهام موثوق + مراقبة حقيقية**.
 
@@ -43,7 +43,7 @@
 ### الطريق الزمني
 | المرحلة | المدة | الهدف | معيار الخروج |
 |---|---|---|---|
-| **Phase 0 — نرى ونحمي** | أسبوعان | إصلاحات P0 + Baseline | حمل 200 RPS، لا أخطاء 5xx، Dashboards + 8 تنبيهات |
+| **Phase 0 — نرى ونحمي** | أسبوعان | إصلاحات P0 + Baseline | حمل 200 RPS، لا أخطاء 5xx، لوحة + 10 تنبيهات |
 | **Phase 1 — 20k DAU** | 4 أسابيع | Edge + PgBouncer + Cache + Streams | 500 RPS لمدة 30 دقيقة، p95 < 250ms |
 | **Phase 2 — 100k DAU** | 6 أسابيع | Read replica + Retention + Counters + DR | 2,000 RPS، Soak 24 ساعة، استعادة < ساعة |
 | **Phase 3 — 300k+** | 8–12 أسبوعاً | Cells/Sharding عند الحاجة + CDC + تحسين التكلفة | 5,000 RPS، تكلفة/1k طلب محددة |
@@ -609,6 +609,8 @@ return {1, 0}
 - راقب `429` حسب النوع؛ إذا تجاوز 0.5% للمستخدمين الموثّقين فهناك خطأ في التحديد.
 
 ### 7.6 الطابور والعمل غير المتزامن
+**المشحون الآن (Phase 0):** `BLMOVE` ينقل الوظيفة ذرياً من `jobs` إلى `jobs:processing`، مع `ZADD` لموعد انتهاء الصلاحية (300s). العامل ينادي `ack()` بعد النجاح أو بعد استنفاد المحاولات، و`recover()` يفحص كل 30 ثانية ويعيد الوظائف المنتهية إلى `jobs`. هذا **at-least-once**: القتل في منتصف الوظيفة يعيدها، لكنه قد ينفّذها مرتين — لذلك كل معالج يجب أن يكون idempotent. لا DLQ دائم بعد.
+
 **المعمارية المقترحة (Phase 1):**
 ```
 Stream: jobs:default   Consumer Group: workers
@@ -873,7 +875,7 @@ ALTER TABLE user_stats
 
 | المهمة | التفاصيل | معيار القبول |
 |---|---|---|
-| P0-1 Observability | `/metrics`, OTel traces, Sentry, 3 Dashboards, 8 Alerts | كل طلب قابل للتتبع |
+| P0-1 Observability | `/metrics`, OTel traces, Sentry, 3 Dashboards, 8+ Alerts | كل طلب قابل للتتبع |
 | P0-2 Rate limiting | Principal = User/Token، Token Bucket، Proxy headers | 1,000 VU من IP واحد → 429 < 1% |
 | P0-3 AI isolation | فصل الجلسة عن النداء، Bulkhead، Timeout 10s | Pool < 40% تحت 500 طلب AI |
 | P0-4 Migrations | Job منفصل + Advisory Lock | Rolling deploy بلا أقفال |
@@ -887,7 +889,7 @@ ALTER TABLE user_stats
 
 ### 9.1 حالة التنفيذ الفعلية (2026-10-31)
 
-شُحن في هذه الدفعة **6 بنود P0 كاملة + 3 بنود جزئية**، وأُضيف 22 اختباراً جديداً (المجموع 1,009 اختباراً، والتغطية 82.5%، والحد الأدنى في CI هو 80%). كل بند أدناه يشير إلى مكانه في الكود، حتى لا تتحول الخطة إلى وثيقة نوايا.
+شُحن في هذه الدفعة **8 بنود P0 كاملة + بند واحد جزئي (F6)**، وأُضيف 32 اختباراً جديداً (المجموع 1,019 اختباراً، والتغطية 82.9%، والحد الأدنى في CI هو 80%). كل بند أدناه يشير إلى مكانه في الكود، حتى لا تتحول الخطة إلى وثيقة نوايا.
 
 | البند | الحالة | ما شُحن فعلاً | المتبقي / القيد |
 |---|---|---|---|
@@ -896,15 +898,15 @@ ALTER TABLE user_stats
 | **F2** عزل الذكاء الاصطناعي | ✅ مكتمل | `AiTutorService.explain/ask` ينهي المعاملة **قبل** نداء المزوّد (البيانات تُنسخ إلى locals)، و`AIService._call_provider` يفرض `asyncio.Semaphore` (bulkhead) + `wait_for` بحد 10 ثوانٍ؛ التشبع/المهلة يسقطان إلى الرد المؤلَّف لا إلى 500. | Circuit breaker عالمي وMetering مجمّع (P2-4). |
 | **F3** الترحيلات | ✅ مكتمل | خدمة `migrate` مستقلة في `docker-compose.yml`، و`CMD` في `Dockerfile` لم يعد يشغّل `alembic upgrade head`، و`alembic/env.py` يأخذ `pg_advisory_xact_lock` داخل معاملة الترحيل. | Expand/Contract يبقى قاعدة مراجعة لكل migration جديدة. |
 | **F7** مهلات قاعدة البيانات | ✅ مكتمل | `statement_timeout=4s`, `lock_timeout=1.5s`, `idle_in_transaction_session_timeout=8s` تُمرَّر عبر `connect_args.server_settings`، و`database_pool_timeout` من 30 إلى 3 ثوانٍ. | لا شيء. |
-| **F6** المراقبة | ⚠️ جزئي | `GET /metrics` (خارج نسخة الـ API) يعرض: عدد الطلبات حسب route/status، histogram للكمون، in-flight، uptime، حجم/إشغال pool قاعدة البيانات، وعمق الطابور. قابل للإطفاء بـ `METRICS_ENABLED=false`. | **لم يُشحن بعد:** Sentry، OTel traces، اللوحات الثلاث و8 تنبيهات. الإعدادات `SENTRY_DSN`/`OTEL_*` ما زالت غير موصولة، ويجب إضافتها مع قيود `uv.lock`. |
-| **F4** أمان الطابور | ⚠️ جزئي | Redis منفصل للطابور (`QUEUE_REDIS_URL`) بسياسة `noeviction`، وRedis للكاش بـ `allkeys-lru`؛ فُصلت الخدمتان في Compose مع volume للطابور. | **ما زال `BLPOP` at-most-once**: لا ACK/visibility/DLQ. الاسترجاع الحقيقي (Streams + XACK + XAUTOCLAIM) في P1-6. لا تدّعِ «لا فقدان وظائف» قبل ذلك. |
+| **F6** المراقبة | ⚠️ جزئي | `GET /metrics` (خارج نسخة الـ API) يعرض: عدد الطلبات حسب route/status، histogram للكمون، in-flight، uptime، حجم/إشغال pool قاعدة البيانات، وعمق الطابور. أُضيف `deploy/monitoring/`: إعداد Prometheus، **10 قواعد تنبيه**، ولوحة Grafana جاهزة للاستيراد بثلاثة أقسام. | **لم يُشحن بعد:** Sentry، OTel traces. `SENTRY_DSN`/`OTEL_*` ما زالت غير موصولة وتحتاج SDK + `uv.lock`؛ ولا يمكن إغلاق F6 قبل trace واحد من الـ ingress إلى SQL. |
+| **F4** أمان الطابور | ✅ مكتمل (Phase 0) | Redis منفصل للطابور (`QUEUE_REDIS_URL`) بسياسة `noeviction` مع volume، وRedis للكاش بـ `allkeys-lru`. الاستهلاك أصبح **at-least-once**: `BLMOVE` إلى processing list + `ack()` + `recover()` لاسترجاع الـ claims المنتهية (visibility 300s) كل 30 ثانية؛ والمهمة السامة تُـack وتُسجَّل بدل أن تدور للأبد. | التكرار وارد بحكم at-least-once، ولا DLQ دائم بعد — Streams + XAUTOCLAIM + DLQ في P1-6. |
 | **F5** النسخ والتعافي | ❌ خارج الكود | — | PITR على PostgreSQL المُدار + تمرين استعادة شهري مكتوب في Runbook. لا يمكن إنجازه من داخل المستودع. |
 | **F28** كاش الوسائط | ✅ مكتمل | `/media/*` يحصل على `Cache-Control: public, max-age=604800, stale-while-revalidate=86400` و`Cross-Origin-Resource-Policy: cross-origin`؛ الملف المفقود يبقى `no-store`. | إعداد CDN/WAF (P1-1, P1-5) خارج الكود. |
-| **F29** قفل Idempotency | ⚠️ جزئي | فشل Redis في `_load` لم يعد يُفشل الطلب. | قفل `SET NX` أثناء التنفيذ (409 أو انتظار) مؤجل إلى P2-9. |
+| **F29** قفل Idempotency | ✅ مكتمل | قفل in-flight عبر `increment(key:inflight)` بعمر 60s: الطلب المتزامن الثاني لنفس المفتاح يحصل على `409 IDEMPOTENCY_IN_PROGRESS` + `Retry-After: 1` بدل تنفيذ الكتابة مرتين. القفل يُحرَّر بعد تخزين الرد، وفشل الكاش يجعله fail-open. | لا شيء. |
 
 **قاعدة القراءة:** ✅ يعني أن السلوك موجود ومغطّى باختبار في المستودع؛ ⚠️ يعني أن جزءاً منه فقط؛ ❌ يعني أنه قرار بنية تحتية لا يغلقه كود. لا تُرقّى ⚠️ إلى ✅ في تقرير الإنجاز قبل أن يوجد اختبار قبول مقابل.
 
-**اختبارات هذه الدفعة:** `tests/unit/test_health.py` (سياسة الجاهزية)، `tests/unit/test_ai_bulkhead.py` (المهلة والتشبع)، `tests/api/test_metrics.py` (الـ endpoint نفسه)، `tests/api/test_media_cache.py` (رؤوس الوسائط)، وإضافات في `tests/unit/test_deps.py` (هوية الحد وفشل الكاش) و`tests/integration/test_ai_tutor.py` (أن النداء يحدث بعد إغلاق المعاملة).
+**اختبارات هذه الدفعة:** `tests/unit/test_health.py` (سياسة الجاهزية)، `tests/unit/test_ai_bulkhead.py` (المهلة والتشبع)، `tests/api/test_metrics.py`، `tests/api/test_media_cache.py`، `tests/unit/test_queue_redis.py` (at-least-once + الاسترجاع)، وإضافات في `tests/unit/test_deps.py`، `tests/unit/test_worker.py`، `tests/integration/test_idempotency.py` (قفل التنفيذ المتزامن) و`tests/integration/test_ai_tutor.py`.
 
 ---
 

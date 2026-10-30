@@ -68,6 +68,22 @@ class QueuePort(Protocol):
 
     async def dequeue(self, timeout_ms: int = 1000) -> Job | None: ...
 
+    async def ack(self, job: Job) -> None:
+        """Confirm that ``job`` finished and may leave the in-flight set.
+
+        Without this the queue cannot distinguish "still running" from "the worker died
+        holding it", which is the difference between at-most-once and at-least-once.
+        """
+        ...
+
+    async def recover(self) -> int:
+        """Requeue jobs whose claim outlived its visibility timeout.
+
+        Returns the number of jobs moved back. Called periodically by the worker, not by
+        the API: recovery is the consumer's responsibility.
+        """
+        ...
+
     async def size(self) -> int: ...
 
     async def ping(self) -> bool: ...

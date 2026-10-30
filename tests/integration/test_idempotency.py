@@ -13,6 +13,8 @@ safe, because each one has a cheaper-looking implementation that is wrong:
 
 from __future__ import annotations
 
+import asyncio
+import json
 import uuid
 from collections.abc import AsyncIterator
 from typing import Any
@@ -396,3 +398,149 @@ async def test_a_failing_request_is_not_cached(client: AsyncClient):
 
     assert rejected.status_code == 422
     assert accepted.status_code == 200, accepted.text
+
+
+# ---------------------------------------------------------------- in-flight lock
+def _scope_for(key: str) -> dict[str, Any]:
+    return {
+        "type": "http",
+        "http_version": "1.1",
+        "method": "POST",
+        "scheme": "http",
+        "path": "/api/v1/quiet",
+        "raw_path": b"/api/v1/quiet",
+        "root_path": "",
+        "query_string": b"",
+        "headers": [(b"idempotency-key", key.encode()), (b"content-type", b"application/json")],
+        "client": ("198.51.100.1", 1234),
+        "server": ("test", 80),
+        "state": {},
+    }
+
+
+def _receive_body() -> Any:
+    sent = False
+
+    async def receive() -> dict[str, Any]:
+        nonlocal sent
+        if sent:
+            return {"type": "http.disconnect"}
+        sent = True
+        return {"type": "http.request", "body": b"{}", "more_body": False}
+
+    return receive
+
+
+class _Capture:
+    def __init__(self) -> None:
+        self.messages: list[dict[str, Any]] = []
+
+    async def __call__(self, message: dict[str, Any]) -> None:
+        self.messages.append(message)
+
+    @property
+    def status(self) -> int:
+        return next(int(m["status"]) for m in self.messages if m["type"] == "http.response.start")
+
+    @property
+    def headers(self) -> dict[str, str]:
+        start = next(m for m in self.messages if m["type"] == "http.response.start")
+        return {k.decode().lower(): v.decode() for k, v in start.get("headers", [])}
+
+    @property
+    def body(self) -> bytes:
+        return b"".join(
+            m.get("body", b"") for m in self.messages if m["type"] == "http.response.body"
+        )
+
+
+async def test_a_second_identical_request_is_refused_while_the_first_is_running() -> None:
+    """Two concurrent retries must not both execute the write.
+
+    The first request is held open inside the app; the second presents the same key and
+    must be answered with a short 409 instead of running the handler again. Once the
+    first finishes, a third call replays the stored response — the lock is a gate, not a
+    permanent refusal.
+    """
+    from app.platform.cache.memory import InMemoryCache
+
+    started = asyncio.Event()
+    finish = asyncio.Event()
+
+    async def slow_app(scope: Any, receive: Any, send: Any) -> None:
+        await receive()
+        started.set()
+        await finish.wait()
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 200,
+                "headers": [(b"content-type", b"application/json")],
+            }
+        )
+        await send({"type": "http.response.body", "body": b'{"ok":true}'})
+
+    middleware = IdempotencyMiddleware(slow_app, cache=InMemoryCache(), ttl_seconds=60)
+
+    first = _Capture()
+    first_task = asyncio.create_task(middleware(_scope_for("same-key"), _receive_body(), first))
+    await asyncio.wait_for(started.wait(), timeout=1)
+
+    second = _Capture()
+    await asyncio.wait_for(middleware(_scope_for("same-key"), _receive_body(), second), timeout=1)
+
+    assert second.status == 409
+    assert json.loads(second.body)["error"]["code"] == "IDEMPOTENCY_IN_PROGRESS"
+    assert second.headers["retry-after"] == "1"
+
+    finish.set()
+    await asyncio.wait_for(first_task, timeout=1)
+    assert first.status == 200
+
+    replay = _Capture()
+    await middleware(_scope_for("same-key"), _receive_body(), replay)
+
+    assert replay.status == 200
+    assert replay.headers["idempotent-replay"] == "true"
+
+
+class _NoLockCache:
+    """A cache that answers reads but refuses the in-flight claim."""
+
+    def build_key(self, *parts: str) -> str:
+        return ":".join(parts)
+
+    async def get(self, key: str) -> str | None:
+        return None
+
+    async def set(self, key: str, value: str, *, ttl_seconds: int | None = None) -> None:
+        return None
+
+    async def delete(self, *keys: str) -> int:
+        return 0
+
+    async def exists(self, key: str) -> bool:
+        return False
+
+    async def increment(self, key: str, *, amount: int = 1, ttl_seconds: int | None = None) -> int:
+        raise RuntimeError("redis unreachable")
+
+    async def ping(self) -> bool:
+        return False
+
+
+async def test_a_cache_outage_does_not_block_writes() -> None:
+    """The lock is an optimisation; losing it must not turn a POST into a 500."""
+
+    async def app(scope: Any, receive: Any, send: Any) -> None:
+        await receive()
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b"ok"})
+
+    middleware = IdempotencyMiddleware(app, cache=_NoLockCache())  # type: ignore[arg-type]
+    captured = _Capture()
+
+    await middleware(_scope_for("outage-key"), _receive_body(), captured)
+
+    assert captured.status == 200
+    assert captured.body == b"ok"

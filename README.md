@@ -35,6 +35,11 @@ process, so a job the API enqueues would never reach a separately started worker
 `allkeys-lru` (a cache entry may be evicted) while the queue runs with `noeviction` (a job
 may not); one instance cannot honour both policies, so production should set it.
 
+Delivery is **at-least-once**: a job moves to a processing list, is acknowledged by the
+worker, and is requeued if the claim outlives its 5-minute visibility timeout. A crash can
+therefore execute a job twice, so handlers must be idempotent. A durable dead-letter queue
+is not implemented yet; an exhausted job is acknowledged and logged.
+
 In Compose the schema is migrated by a one-shot `migrate` service before the API and worker
 start; the web image deliberately no longer runs `alembic upgrade head` on boot, so a
 rolling deploy cannot have several replicas racing the same DDL.
