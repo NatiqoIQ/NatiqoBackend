@@ -80,21 +80,32 @@ class AiTutorService:
 
         graded = grade_answer(_gradeable(question), answer, attempt=FIRST_ATTEMPT)
         context = await self._context(user_id)
+        question_text = question.prompt
+        authored_explanation = question.explanation or None
+        learner_answer = _learner_answer(answer)
+        correct_answer = _correct_answer_text(graded.correct_answer)
+        #: End the read transaction *before* the upstream call. Everything the provider
+        #: needs is already copied into locals: holding the transaction open across a
+        #: call that can take ten seconds pins a pooled connection for no reason, and at
+        #: 700 RPS a handful of slow providers would exhaust the whole pool and stall every
+        #: unrelated endpoint. Committing a read-only transaction only returns the
+        #: connection; nothing is written.
+        await self._uow.commit()
         result = await self._ai.explain_answer(
             context=context,
-            question_text=question.prompt,
-            learner_answer=_learner_answer(answer),
-            correct_answer=_correct_answer_text(graded.correct_answer),
+            question_text=question_text,
+            learner_answer=learner_answer,
+            correct_answer=correct_answer,
             is_correct=graded.is_correct,
-            explanation_en=question.explanation or None,
+            explanation_en=authored_explanation,
             # A question carries a single authored rationale today, so it grounds the model
             # in every explanation language rather than leaving Iraqi learners ungrounded.
-            explanation_iq=question.explanation or None,
+            explanation_iq=authored_explanation,
         )
         return ExplanationView(
             is_correct=graded.is_correct,
             correct_answer=graded.correct_answer,
-            explanation=str(result.get("text") or question.explanation),
+            explanation=str(result.get("text") or authored_explanation),
             source=str(result.get("source", "authored")),
         )
 
@@ -158,6 +169,11 @@ class AiTutorService:
         )
 
         context = await self._context(user_id)
+        #: Same rule as ``explain``: persist the learner's turn and release the connection
+        #: before asking the model. The reply is written in a second, short transaction.
+        #: The alternative — one transaction spanning the provider call — is what turns a
+        #: slow model into a database connection leak under load.
+        await self._uow.commit()
         result = await self._ai.tutor_reply(context=context, history=history, message=text)
         reply = str(result.get("reply") or "")
 

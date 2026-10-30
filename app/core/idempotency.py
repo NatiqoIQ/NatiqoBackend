@@ -222,7 +222,15 @@ class IdempotencyMiddleware:
             await self._store(key, fingerprint(body), captured)
 
     async def _load(self, key: str) -> dict[str, Any] | None:
-        raw = await self.cache.get(key)
+        try:
+            raw = await self.cache.get(key)
+        except Exception:  # noqa: BLE001 - degrade to "no replay", never to a 500
+            # An idempotency lookup is an optimisation on a retry, not a precondition
+            # for doing the work. If Redis is unreachable the request executes
+            # normally; the client gets one execution instead of a replayed response,
+            # which is the same behaviour it would see without the header.
+            logger.warning("idempotency.load_failed", key=key[:40])
+            return None
         if not raw:
             return None
         try:

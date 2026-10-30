@@ -13,6 +13,7 @@ Guarantees, in order of importance:
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable, Sequence
 from typing import Any
 
@@ -26,6 +27,7 @@ from app.platform.ai.port import (
     AIProviderError,
     AIQuotaExceeded,
     AIRequest,
+    AIResponse,
     AIServicePort,
     AIUsage,
     TutorContext,
@@ -56,6 +58,12 @@ class AIService(AIServicePort):
         self._record = usage_recorder
         self._budget = budget
         self._settings = get_settings()
+        #: A bulkhead, not a queue. Waiting behind an unlimited number of slow provider
+        #: calls is how an AI outage becomes an API outage: each wait holds a request
+        #: slot, and the fallback (which is good) is never reached. The semaphore caps
+        #: concurrency; the tiny acquire timeout means "saturated" fails into the
+        #: authored fallback immediately instead of adding another second of latency.
+        self._bulkhead = asyncio.Semaphore(max(1, self._settings.ai_max_concurrent_requests))
 
     @property
     def enabled(self) -> bool:
@@ -154,7 +162,7 @@ class AIService(AIServicePort):
             response_format="json",
         )
         try:
-            response = await self._provider.complete(request, context=context)
+            response = await self._call_provider(request, context)
         except AIQuotaExceeded:
             raise
         except AIProviderError as exc:
@@ -227,9 +235,31 @@ class AIService(AIServicePort):
         }
 
     # ------------------------------------------------------------ plumbing
+    async def _call_provider(self, request: AIRequest, context: TutorContext) -> AIResponse:
+        """One bounded call: a concurrency slot, a wall-clock deadline, then the provider.
+
+        Both bounds raise :class:`AIProviderError`, which every caller already maps to
+        its deterministic fallback. ``asyncio.wait_for`` cancels the HTTP request when
+        the deadline passes, so the provider connection is closed rather than left to
+        finish invisibly.
+        """
+        try:
+            await asyncio.wait_for(self._bulkhead.acquire(), timeout=0.05)
+        except TimeoutError as exc:
+            raise AIProviderError("ai provider saturated: too many concurrent requests") from exc
+        try:
+            return await asyncio.wait_for(
+                self._provider.complete(request, context=context),
+                timeout=self._settings.ai_timeout_seconds,
+            )
+        except TimeoutError as exc:
+            raise AIProviderError("ai provider timed out") from exc
+        finally:
+            self._bulkhead.release()
+
     async def _complete(self, request: AIRequest, context: TutorContext) -> str | None:
         try:
-            response = await self._provider.complete(request, context=context)
+            response = await self._call_provider(request, context)
         except AIQuotaExceeded:
             raise
         except AIProviderError as exc:

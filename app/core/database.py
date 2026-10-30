@@ -59,6 +59,22 @@ def _create_engine() -> AsyncEngine:
             max_overflow=settings.database_max_overflow,
             pool_timeout=settings.database_pool_timeout,
             pool_recycle=settings.database_pool_recycle,
+            #: Enforced by PostgreSQL itself, so they also apply to queries the ORM
+            #: never sees (a migration, a psql session, a runaway lock wait). A
+            #: statement timeout bounds how long a backend can pin a pooled
+            #: connection; the lock timeout bounds how long it waits behind another
+            #: transaction. Without both, one slow query is indistinguishable from a
+            #: database outage to everyone queued behind it.
+            connect_args={
+                "server_settings": {
+                    "application_name": "natiqo-api",
+                    "statement_timeout": str(settings.database_statement_timeout_ms),
+                    "lock_timeout": str(settings.database_lock_timeout_ms),
+                    "idle_in_transaction_session_timeout": str(
+                        settings.database_idle_transaction_timeout_ms
+                    ),
+                }
+            },
         )
     engine = create_async_engine(url, **kwargs)
     if is_sqlite:

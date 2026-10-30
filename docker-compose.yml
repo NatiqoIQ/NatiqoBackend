@@ -25,15 +25,48 @@ services:
       retries: 12
       start_period: 10s
 
+  # Cache: evicting the least-recently-used entry under pressure is correct here —
+  # every key is a cache entry that can be rebuilt from PostgreSQL.
   redis:
     image: redis:7-alpine
     restart: unless-stopped
+    command: ["redis-server", "--maxmemory", "512mb", "--maxmemory-policy", "allkeys-lru"]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
       timeout: 3s
       retries: 12
       start_period: 5s
+
+  # Queue: the opposite policy. A job is not a cache entry; evicting it silently
+  # deletes work a learner is waiting for (a notification, a cleanup, a settlement).
+  # Separate instance also keeps a cache flush or an LRU storm away from the queue.
+  redis-queue:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "noeviction"]
+    volumes:
+      - redis_queue:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+
+  # Runs once per deploy, before any API replica. The API deliberately no longer runs
+  # ``alembic upgrade head`` on boot: N replicas racing the same DDL is how a rolling
+  # deploy corrupts a schema. Alembic env.py additionally takes an advisory lock, so
+  # even a manual migration from a laptop cannot interleave with this job.
+  migrate:
+    build: .
+    env_file:
+      - .env
+    command: ["alembic", "upgrade", "head"]
+    restart: "no"
+    depends_on:
+      db:
+        condition: service_healthy
 
   app:
     build: .
@@ -45,11 +78,16 @@ services:
       # deliver it to nobody, because the worker is a different process — and the only
       # symptom would be background work that silently never runs.
       QUEUE_ENABLED: "true"
+      QUEUE_REDIS_URL: redis://redis-queue:6379/0
     depends_on:
       db:
         condition: service_healthy
       redis:
         condition: service_healthy
+      redis-queue:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     ports:
       - "8000:8000"
     volumes:
@@ -68,15 +106,17 @@ services:
       - .env
     environment:
       QUEUE_ENABLED: "true"
+      QUEUE_REDIS_URL: redis://redis-queue:6379/0
     command: ["python", "-m", "app.workers.main"]
     depends_on:
       db:
         condition: service_healthy
-      redis:
+      redis-queue:
         condition: service_healthy
-      app:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
 
 volumes:
   pgdata:
   media_data:
+  redis_queue:

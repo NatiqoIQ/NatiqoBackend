@@ -31,6 +31,14 @@ registered for each name (`app/workers/handlers.py`). It needs a *shared* queue 
 process, so a job the API enqueues would never reach a separately started worker. In
 `docker-compose.yml` both processes get `QUEUE_ENABLED=true` explicitly for that reason.
 
+`QUEUE_REDIS_URL` optionally points jobs at a second Redis instance. The cache runs with
+`allkeys-lru` (a cache entry may be evicted) while the queue runs with `noeviction` (a job
+may not); one instance cannot honour both policies, so production should set it.
+
+In Compose the schema is migrated by a one-shot `migrate` service before the API and worker
+start; the web image deliberately no longer runs `alembic upgrade head` on boot, so a
+rolling deploy cannot have several replicas racing the same DDL.
+
 **SQLite (zero external services).** Set `DATABASE_URL=sqlite+aiosqlite:///./local.db` and
 `REDIS_URL=` (empty selects the in-memory cache/queue adapters), then create the schema
 without Alembic — the migrations are PostgreSQL-specific:
@@ -295,7 +303,8 @@ Client-facing documentation:
 | Method | Path | Auth | Purpose |
 | --- | --- | --- | --- |
 | `GET` | `/health` | — | Liveness probe |
-| `GET` | `/ready` | — | Readiness; verifies the database and cache, `503` when unhealthy |
+| `GET` | `/ready` | — | Readiness; `503` only when PostgreSQL is down — a Redis/queue failure reports `degraded` with 200 |
+| `GET` | `/metrics` | — | Prometheus exposition: request rate, latency histogram, in-flight, DB-pool saturation, queue depth. Unversioned; restrict it to the monitoring network in production |
 | `POST` | `/api/v1/auth/google` | — | Sign in with a Google ID token, creating the account on first sight. Issues access + refresh tokens |
 | `POST` | `/api/v1/auth/apple` | — | Sign in with an Apple ID token, same contract |
 | `POST` | `/api/v1/auth/refresh` | refresh token | Rotate a refresh token; replay is rejected |

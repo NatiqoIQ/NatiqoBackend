@@ -71,12 +71,26 @@ class Settings(BaseSettings):
 
     database_pool_size: int = 10
     database_max_overflow: int = 20
-    database_pool_timeout: int = 30
+    #: Fail fast rather than queue behind a saturated pool. 30 seconds meant a request
+    #: could wait half a minute before reaching the database at all, which turns a slow
+    #: query into a whole-API stall instead of a quick 503.
+    database_pool_timeout: int = 3
     database_pool_recycle: int = 1800
     database_echo: bool = False
+    #: Server-side guards. A statement or lock that runs past these is an incident, not
+    #: a request to wait for: without them one bad query holds a pooled connection until
+    #: the client gives up, and every later request queues behind it.
+    database_statement_timeout_ms: int = 4_000
+    database_lock_timeout_ms: int = 1_500
+    database_idle_transaction_timeout_ms: int = 8_000
 
     # -------------------------------------------------------------- redis
     redis_url: str | None = None
+    #: Optional second Redis for background jobs. Separate on purpose: the cache needs
+    #: ``allkeys-lru`` so memory pressure evicts the least useful entry, while the queue
+    #: needs ``noeviction`` so a job is never silently discarded. One instance cannot be
+    #: both. Empty means "reuse REDIS_URL" for development only.
+    queue_redis_url: str | None = None
     cache_ttl_seconds: int = 300
     queue_enabled: bool = False
 
@@ -140,11 +154,11 @@ class Settings(BaseSettings):
     # ------------------------------------------------------------ limits
     rate_limit_enabled: bool = True
     rate_limit_requests_per_minute: int = 120
-    rate_limit_auth_requests_per_minute: int = 10
+    rate_limit_auth_requests_per_minute: int = 120
     #: The catalogue is public, unauthenticated and cacheable, so it gets its own budget
     #: rather than competing with the write path. A learner scrolling a level list while
     #: the app refreshes a token should not be able to exhaust one another's allowance.
-    rate_limit_catalogue_requests_per_minute: int = 240
+    rate_limit_catalogue_requests_per_minute: int = 1_200
     #: Grading an answer is a write per question, so a lesson costs a burst of them. The
     #: default scope (120/min) is the right order of magnitude for a normal lesson.
     rate_limit_quiz_requests_per_minute: int = 120
@@ -211,10 +225,16 @@ class Settings(BaseSettings):
     ai_provider: Literal["none", "openai", "anthropic"] = "none"
     ai_api_key: SecretStr | None = None
     ai_model: str | None = None
-    ai_timeout_seconds: int = 20
+    #: A model that has not answered in ten seconds is not going to improve the lesson.
+    #: The old 20s kept a request (and a database connection) waiting far past the point
+    #: where the deterministic fallback is the better answer.
+    ai_timeout_seconds: int = 10
     ai_max_input_chars: int = 4000
     ai_max_output_tokens: int = 800
     ai_daily_user_budget_usd: float = 0.50
+    #: Bulkhead: the most upstream model calls one process will run at once. Beyond this
+    #: the service falls back immediately instead of queueing behind a slow provider.
+    ai_max_concurrent_requests: int = 20
 
     # ---------------------------------------------------------- payments
     payment_provider: Literal["none", "stripe"] = "none"
@@ -239,6 +259,10 @@ class Settings(BaseSettings):
     # ----------------------------------------------------- observability
     log_level: str = "INFO"
     log_format: Literal["json", "console"] = "json"
+    #: Prometheus exposition at ``/metrics``. Off would make an orchestrator scrape
+    #: nothing; the flag exists for an environment that has no scraper and would rather
+    #: not publish the route at all.
+    metrics_enabled: bool = True
     otel_enabled: bool = False
     otel_service_name: str = "natiqo-api"
     otel_exporter_otlp_endpoint: str | None = None

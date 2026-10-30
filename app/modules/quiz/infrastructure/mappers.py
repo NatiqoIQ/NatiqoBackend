@@ -91,10 +91,12 @@ def to_session_model(session: QuizSession) -> QuizSessionModel:
         question_ids=_session_question_ids(session),
         started_at=session.started_at,
         expires_at=session.expires_at,
-        completed_at=session.completed_at,        correct_count=session.correct_count,
+        completed_at=session.completed_at,
+        correct_count=session.correct_count,
         xp_awarded=session.xp_awarded,
         words_learned=session.words_learned,
     )
+
 
 def apply_session(session: QuizSession, model: QuizSessionModel) -> None:
     """Copy a mutated session onto its row.

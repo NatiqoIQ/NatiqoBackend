@@ -47,9 +47,7 @@ ROOT = Path(__file__).resolve().parents[2]
 #: ``mobile-integration-ar.md`` were folded into this one and deleted: it is the only
 #: surviving contract, and the presentation plan is deliberately absent — it is a design
 #: note about work in progress, not a promise to a client.
-CLIENT_DOCS: tuple[str, ...] = (
-    "docs/mobile-app-architecture.md",
-)
+CLIENT_DOCS: tuple[str, ...] = ("docs/mobile-app-architecture.md",)
 
 _FENCE = re.compile(r"```(?:json|jsonc)\r?\n(.*?)```", re.DOTALL)
 

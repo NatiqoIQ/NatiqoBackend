@@ -80,6 +80,14 @@ def _do_run_migrations(connection: Connection) -> None:
     )
 
     with context.begin_transaction():
+        #: One migration at a time, cluster-wide. The API used to run ``alembic upgrade
+        #: head`` on every container start, so a rolling deploy had several replicas
+        #: racing the same DDL: both read the current revision, both try to create the
+        #: same table, one wins and the other crashes — or worse, half-applies a
+        #: migration. A transaction-scoped advisory lock serialises them and is released
+        #: automatically on commit, rollback or crash, so no stale lock can survive.
+        if not _is_sqlite(connection):
+            connection.exec_driver_sql("SELECT pg_advisory_xact_lock(7592001)")
         context.run_migrations()
 
 

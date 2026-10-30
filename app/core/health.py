@@ -118,6 +118,27 @@ async def queue_check(ping: Any) -> CheckResult:
     )
 
 
+def overall_status(checks: list[CheckResult], *, uses_redis: bool) -> HealthStatus:
+    """Reduce dependency checks to one verdict.
+
+    PostgreSQL is the *only* dependency that can fail the request path: the cache is
+    fail-open (see ``deps.rate_limit``), idempotency degrades to a normal execution,
+    and the queue is asynchronous. Reporting a Redis blip as UNHEALTHY would pull every
+    instance out of the load balancer and turn a degraded background worker into a full
+    outage — the opposite of what the readiness probe is for. Only a dead database is
+    fatal.
+    """
+    unhealthy = [check for check in checks if check.status is HealthStatus.UNHEALTHY]
+    if any(check.name == "database" for check in unhealthy):
+        return HealthStatus.UNHEALTHY
+    if unhealthy:
+        return HealthStatus.DEGRADED
+    if not uses_redis:
+        # Running on the in-memory adapter: functional, but not production-grade.
+        return HealthStatus.DEGRADED
+    return HealthStatus.HEALTHY
+
+
 async def build_health_report(*, deep: bool) -> HealthReport:
     from app.core.config import get_settings
 
@@ -136,17 +157,7 @@ async def build_health_report(*, deep: bool) -> HealthReport:
     checks.append(await cache_check(cache.ping))
     checks.append(await queue_check(get_queue().ping))
 
-    unhealthy = [c for c in checks if c.status is HealthStatus.UNHEALTHY]
-    if any(c.name != "queue" for c in unhealthy):
-        status = HealthStatus.UNHEALTHY
-    elif unhealthy:
-        # Only the queue: background work is stalled, the request path is not.
-        status = HealthStatus.DEGRADED
-    elif any(c.name == "cache" for c in checks) and not settings.uses_redis:
-        # Running on the in-memory adapter: functional, but not production-grade.
-        status = HealthStatus.DEGRADED
-    else:
-        status = HealthStatus.HEALTHY
+    status = overall_status(checks, uses_redis=settings.uses_redis)
     return HealthReport(
         status=status,
         checks=checks,

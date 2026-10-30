@@ -11,6 +11,7 @@ once per request. :func:`reset_composition_root` clears them for tests.
 
 from __future__ import annotations
 
+import hashlib
 import time
 from collections.abc import AsyncIterator, Callable
 from functools import lru_cache
@@ -79,6 +80,18 @@ def get_cache() -> CachePort:
 CacheDep = Annotated[CachePort, Depends(get_cache)]
 
 
+@lru_cache(maxsize=1)
+def _rate_limit_fallback() -> CachePort:
+    """Counters kept in this process while the shared cache is unreachable.
+
+    Not a second source of truth: it exists only so a Redis blip degrades the limiter
+    from exact to approximate instead of turning every limited route into a 500.
+    """
+    from app.platform.cache.memory import InMemoryCache
+
+    return InMemoryCache()
+
+
 # ---------------------------------------------------------------------- queue
 @lru_cache(maxsize=1)
 def _build_queue() -> QueuePort:
@@ -87,7 +100,9 @@ def _build_queue() -> QueuePort:
         from app.platform.queue.redis import RedisQueue
 
         logger.info("deps.queue_adapter", adapter="redis")
-        return RedisQueue.from_url(settings.redis_url or "")
+        #: Jobs live in their own instance when one is configured: the cache can evict
+        #: under memory pressure, a queued job must not be evicted with it.
+        return RedisQueue.from_url(settings.queue_redis_url or settings.redis_url or "")
     logger.info("deps.queue_adapter", adapter="memory")
     from app.platform.queue.memory import InMemoryQueue
 
@@ -420,6 +435,33 @@ def client_ip(request: Request) -> str:
     return "unknown"
 
 
+def rate_limit_principal(request: Request) -> str:
+    """Who owns the budget: a user, a token, or — last resort — an IP address.
+
+    Keying the limiter on the IP alone breaks the moment a carrier puts a city behind
+    one NAT address: every subscriber shares one 1,200/minute allowance, so ordinary
+    browsing starts returning 429 for people who did nothing wrong. The ladder is:
+
+    * ``u:<id>`` when an earlier dependency already resolved the caller;
+    * ``t:<sha256(access token)>`` otherwise — stable for the token's lifetime, and it
+      cannot be spoofed, because a forged token never reaches this dependency (auth
+      rejects it first). The digest, not the token, so the key is safe to log;
+    * ``ip:<address>`` for anonymous traffic (the catalogue before sign-in, login).
+
+    A caller cannot promote itself: the header is only read after the token has been
+    accepted, and an unauthenticated request has no other identity to claim.
+    """
+    user_id = getattr(request.state, "user_id", None)
+    if user_id:
+        return f"u:{user_id}"
+    authorization = request.headers.get("authorization", "")
+    scheme, _, token = authorization.partition(" ")
+    if scheme.lower() == "bearer" and token.strip():
+        digest = hashlib.sha256(token.strip().encode()).hexdigest()[:32]
+        return f"t:{digest}"
+    return f"ip:{client_ip(request)}"
+
+
 def rate_limit(scope: str = "default", limit: int | None = None) -> Callable[..., object]:
     """Build a FastAPI dependency enforcing a per-client request budget.
 
@@ -450,8 +492,19 @@ def rate_limit(scope: str = "default", limit: int | None = None) -> Callable[...
             }.get(scope, settings.rate_limit_requests_per_minute)
         # The window key is derived server-side from the clock, never from a header.
         window = int(time.time() // 60)
-        key = cache.build_key("ratelimit", scope, client_ip(request), str(window))
-        current = await cache.increment(key, amount=1, ttl_seconds=120)
+        key = cache.build_key("ratelimit", scope, rate_limit_principal(request), str(window))
+        try:
+            current = await cache.increment(key, amount=1, ttl_seconds=120)
+        except Exception as exc:  # noqa: BLE001 - Redis is not on the request's critical path
+            # A cache outage must not turn into an API outage. Count in this process
+            # instead: the allowance is approximate (once per replica) but the endpoint
+            # keeps serving, which is strictly better than a 500 for every caller.
+            logger.warning("ratelimit.cache_unavailable", scope=scope, error=str(exc)[:200])
+            try:
+                current = await _rate_limit_fallback().increment(key, amount=1, ttl_seconds=120)
+            except Exception:  # noqa: BLE001 - last resort: fail open
+                logger.warning("ratelimit.failed_open", scope=scope)
+                return
         if current > budget:
             logger.warning("ratelimit.exceeded", scope=scope, limit=budget)
             raise RateLimitedError(
@@ -532,5 +585,6 @@ def reset_composition_root() -> None:
         _build_push,
         _build_ai_provider,
         _build_identity_verifiers,
+        _rate_limit_fallback,
     ):
         factory.cache_clear()
