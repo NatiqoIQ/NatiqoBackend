@@ -62,12 +62,28 @@ def _cleanup_expired_tokens(ctx: WorkerContext) -> JobHandler:
     """
 
     async def handle(job: Job) -> None:
+        batch_size = 5000
+        #: A poisoned loop guard, not a business limit: if a batch keeps coming back
+        #: full, something is not deleting what it selected, and running all night
+        #: would hide that behind a row count.
+        max_batches = 200
+        total = 0
         async with ctx.uow_factory() as uow:
-            removed = await uow.refresh_tokens.purge_expired(before=ctx.now())
-            await uow.commit()
+            for _ in range(max_batches):
+                removed = await uow.refresh_tokens.purge_expired(before=ctx.now(), limit=batch_size)
+                await uow.commit()
+                total += removed
+                if removed < batch_size:
+                    break
+            else:  # pragma: no cover - only reachable if deletes stop taking effect
+                logger.warning(
+                    "worker.tokens_purge_truncated",
+                    removed=total,
+                    job_id=str(job.job_id),
+                )
         logger.info(
             "worker.tokens_purged",
-            removed=removed,
+            removed=total,
             job_id=str(job.job_id),
             job=str(job.name),
         )

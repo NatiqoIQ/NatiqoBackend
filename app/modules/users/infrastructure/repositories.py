@@ -503,14 +503,21 @@ class SqlAlchemyRefreshTokenRepository:
         )
         return _rows_affected(result)
 
-    async def purge_expired(self, *, before: datetime | None = None) -> int:
-        """Delete expired rows — see :meth:`RefreshTokenRepositoryPort.purge_expired`.
+    async def purge_expired(self, *, before: datetime | None = None, limit: int = 5000) -> int:
+        """Delete one batch of expired rows — see the port for why it is batched.
 
-        Only ``expires_at`` is read, which is why the model indexes that column alone:
-        the job walks an index and deletes, and never scans the table to decide.
+        The inner SELECT walks ``ix_refresh_expires`` and stops at ``limit``; the outer
+        DELETE touches only those ids. Both PostgreSQL and SQLite accept a subquery in
+        ``IN``, so the same statement serves the test suite and production.
         """
+        cutoff = before or utc_now()
+        expired_ids = (
+            select(RefreshTokenModel.id)
+            .where(RefreshTokenModel.expires_at < cutoff)
+            .limit(max(1, limit))
+        )
         result = await self._session.execute(
-            delete(RefreshTokenModel).where(RefreshTokenModel.expires_at < (before or utc_now()))
+            delete(RefreshTokenModel).where(RefreshTokenModel.id.in_(expired_ids))
         )
         return _rows_affected(result)
 

@@ -63,6 +63,7 @@ from app.modules.quiz.domain.entities import (
 from app.modules.quiz.domain.policy import (
     FIRST_ATTEMPT,
     GradeableQuestion,
+    GradedAnswer,
     SubmittedAnswer,
     grade_answer,
 )
@@ -292,7 +293,14 @@ class QuizService:
             attempt=attempt,
         )
         if prior is None:
-            await self._uow.quiz_answers.add(resolved)
+            inserted = await self._uow.quiz_answers.add(resolved)
+            if not inserted:
+                # Another request recorded this answer between our read and our write.
+                # Its row is authoritative — usually the same tap retried — so return
+                # that verdict instead of a 500 or a second award.
+                return await self._verdict_for_existing_answer(
+                    user_id, session_id, question_id, graded
+                )
         else:
             # Overwritten, not appended: the unique constraint keeps one row per question,
             # so a retry cannot inflate the answered count the completion check relies on.
@@ -309,6 +317,40 @@ class QuizService:
             correct_answer=graded.correct_answer,
             explanation=graded.explanation,
             points_awarded=graded.points_awarded,
+            answered_count=answered_count,
+            total_count=session.total,
+            correct_count=session.correct_count,
+            is_complete=answered_count >= session.total,
+        )
+
+    async def _verdict_for_existing_answer(
+        self,
+        user_id: UserId,
+        session_id: uuid.UUID,
+        question_id: uuid.UUID,
+        graded: GradedAnswer,
+    ) -> GradedAnswerView:
+        """Rebuild the response from the answer that won the race.
+
+        The transaction is rolled back first: the losing INSERT wrote nothing, and the
+        session entity in this transaction still holds the counters from before the
+        winner committed. A fresh read is the only way to report the true
+        ``correct_count`` without copying the winner's bookkeeping.
+        """
+        await self._uow.rollback()
+        session = await self._require_owned(user_id, session_id)
+        current = await self._uow.quiz_answers.get(session.id, question_id)
+        if current is None:  # pragma: no cover - the row existed a statement ago
+            raise ConflictError(
+                "That question has already been answered.",
+                code=ErrorCode.QUESTION_ALREADY_ANSWERED,
+            )
+        answered_count = await self._uow.quiz_answers.count_for_session(session.id)
+        return GradedAnswerView(
+            is_correct=current.is_correct,
+            correct_answer=graded.correct_answer,
+            explanation=current.explanation or graded.explanation,
+            points_awarded=current.points_awarded,
             answered_count=answered_count,
             total_count=session.total,
             correct_count=session.correct_count,

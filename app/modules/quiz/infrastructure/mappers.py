@@ -10,6 +10,7 @@ update field by field.
 from __future__ import annotations
 
 import uuid
+from typing import Any
 
 from app.core.types import UserId
 from app.modules.quiz.domain.entities import (
@@ -112,19 +113,29 @@ def apply_session(session: QuizSession, model: QuizSessionModel) -> None:
     model.words_learned = session.words_learned
 
 
+def to_answer_values(answer: QuizAnswer) -> dict[str, Any]:
+    """The insertable columns of an answer, shared by the ORM and upsert paths.
+
+    Kept as a dict rather than only a model because the dialect-aware
+    ``INSERT ... ON CONFLICT DO NOTHING`` needs values, and duplicating the mapping in
+    the repository is how a new column silently stops being written on one path.
+    """
+    return {
+        "id": answer.id,
+        "session_id": answer.session_id,
+        "question_id": answer.question_id,
+        "position": answer.position,
+        "given_answer": dict(answer.given_answer),
+        "is_correct": answer.is_correct,
+        "points_awarded": answer.points_awarded,
+        "attempt": answer.attempt,
+        "explanation": answer.explanation,
+        "answered_at": answer.answered_at,
+    }
+
+
 def to_answer_model(answer: QuizAnswer) -> QuizAnswerModel:
-    return QuizAnswerModel(
-        id=answer.id,
-        session_id=answer.session_id,
-        question_id=answer.question_id,
-        position=answer.position,
-        given_answer=dict(answer.given_answer),
-        is_correct=answer.is_correct,
-        points_awarded=answer.points_awarded,
-        attempt=answer.attempt,
-        explanation=answer.explanation,
-        answered_at=answer.answered_at,
-    )
+    return QuizAnswerModel(**to_answer_values(answer))
 
 
 def apply_answer(answer: QuizAnswer, model: QuizAnswerModel) -> None:

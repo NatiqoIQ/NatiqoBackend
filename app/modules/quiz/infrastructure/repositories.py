@@ -45,6 +45,7 @@ from app.modules.quiz.infrastructure.mappers import (
     apply_unit_progress,
     to_answer,
     to_answer_model,
+    to_answer_values,
     to_progress,
     to_progress_model,
     to_session,
@@ -157,8 +158,34 @@ class SqlAlchemyQuizAnswerRepository(QuizAnswerRepositoryPort):
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
-    async def add(self, answer: QuizAnswer) -> None:
-        self._session.add(to_answer_model(answer))
+    async def add(self, answer: QuizAnswer) -> bool:
+        """Insert one answer, returning ``False`` when the row already exists.
+
+        A plain INSERT would make two concurrent submissions of the same question a
+        500 (``IntegrityError`` on ``uq_quiz_answers_session_question``). The conflict
+        is not exceptional: a double tap or a retried request produces it, and the
+        correct outcome is that the *first* answer wins. ``ON CONFLICT DO NOTHING``
+        makes that decision inside the database, so the caller can tell whether it lost
+        the race from the row count instead of from an exception.
+        """
+        values = to_answer_values(answer)
+        dialect = self._session.get_bind().dialect.name
+        if dialect == "postgresql":
+            from sqlalchemy.dialects.postgresql import insert as dialect_insert
+        elif dialect == "sqlite":
+            from sqlalchemy.dialects.sqlite import insert as dialect_insert
+        else:  # pragma: no cover - both supported engines are covered above
+            self._session.add(QuizAnswerModel(**values))
+            await self._session.flush()
+            return True
+
+        statement = (
+            dialect_insert(QuizAnswerModel)
+            .values(**values)
+            .on_conflict_do_nothing(index_elements=["session_id", "question_id"])
+        )
+        result = await self._session.execute(statement)
+        return bool(result.rowcount)
 
     async def save(self, answer: QuizAnswer) -> None:
         model = await self._session.get(QuizAnswerModel, answer.id)

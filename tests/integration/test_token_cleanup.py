@@ -122,3 +122,42 @@ async def test_an_empty_table_is_not_an_error(uow: SqlAlchemyUnitOfWork) -> None
     async with make_uow() as fresh:
         remaining = await fresh.session.scalar(select(func.count()).select_from(RefreshTokenModel))
     assert remaining == 0
+
+
+@pytest.mark.asyncio
+async def test_purge_is_bounded_per_statement(uow: SqlAlchemyUnitOfWork) -> None:
+    """A big purge must not be one DELETE that locks the table and writes one huge WAL.
+
+    The worker loops until a batch comes back short, committing between batches, so each
+    statement touches at most ``limit`` rows and releases its locks before the next.
+    """
+    session = uow.session
+    user = UserModel(id=uuid.uuid4(), email=f"{uuid.uuid4().hex}@example.com", status="active")
+    session.add(user)
+    for _ in range(12):
+        session.add(
+            RefreshTokenModel(
+                id=uuid.uuid4(),
+                user_id=user.id,
+                jti_hash=uuid.uuid4().hex * 2,
+                family_id=uuid.uuid4().hex[:16],
+                expires_at=_NOW - timedelta(hours=1),
+            )
+        )
+    await session.commit()
+
+    removed = 0
+    batches = 0
+    while True:
+        count = await uow.refresh_tokens.purge_expired(before=_NOW, limit=5)
+        await uow.commit()
+        batches += 1
+        removed += count
+        if count < 5:
+            break
+
+    assert removed == 12
+    assert batches == 3  # 5 + 5 + 2
+    async with make_uow() as fresh:
+        remaining = await fresh.session.scalar(select(func.count()).select_from(RefreshTokenModel))
+    assert remaining == 0

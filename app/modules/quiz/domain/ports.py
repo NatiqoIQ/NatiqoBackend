@@ -84,7 +84,14 @@ class QuizSessionRepositoryPort(Protocol):
 
 @runtime_checkable
 class QuizAnswerRepositoryPort(Protocol):
-    async def add(self, answer: QuizAnswer) -> None: ...
+    async def add(self, answer: QuizAnswer) -> bool:
+        """Insert a first answer; ``False`` means a concurrent request already recorded it.
+
+        The unique constraint is the arbiter, not a preceding read: two submissions can
+        both see no row, and the loser must learn that from the write rather than from a
+        500.
+        """
+        ...
 
     async def save(self, answer: QuizAnswer) -> None:
         """Persist a re-graded answer. Inserts when the row is not there yet.
