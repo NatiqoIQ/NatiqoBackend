@@ -7,7 +7,7 @@ disabling the endpoint removes it rather than publishing an empty document.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
 
 import pytest
 import pytest_asyncio
@@ -19,7 +19,7 @@ from app.main import app
 
 
 @pytest.fixture(autouse=True)
-def _clean_metrics() -> AsyncIterator[None]:
+def _clean_metrics() -> Iterator[None]:
     """Counters are process-global; a previous test's traffic must not leak in."""
     reset_metrics()
     yield
