@@ -260,7 +260,7 @@ connect_args={
 | **F12** | Access token 15 دقيقة → ~12 عملية Refresh/مستخدم/يوم نشط؛ كل Refresh معاملة كتابة (قراءة + إدراج + تحديث). Purge يومي دفعة واحدة. | ~1.2M صف/يوم في `refresh_tokens`؛ جدول منتفخ؛ Purge يسبب قفزات I/O. | رفع TTL إلى 30 دقيقة (نصف الكتابات)، Purge على دفعات 5k بـ `ctid`, أرشفة شهرية. |
 | **F13** | `record_ai_usage` ينشئ Task + جلسة DB مستقلة لكل نداء؛ لا سقف عالمي؛ `AI_DAILY_USER_BUDGET_USD` فقط. | Churn اتصالات؛ تكلفة غير محدودة عند إساءة استخدام أو خطأ. | تجميع الاستخدام في دفعات، سقف يومي عالمي + لكل feature، Bulkhead، Circuit Breaker. |
 | **F14** | نفس `REDIS_URL` للكاش والطابور (`deps._build_cache` و`_build_queue`). | `allkeys-lru` قد يحذف وظائف؛ `noeviction` يوقف الكاش. | Redis منفصلان (أو Cluster منفصل) بسياسات ذاكرة مختلفة. |
-| **F15** | `quiz_answers`, `review_logs`, `ai_usage_records`, `audit_logs`, `refresh_tokens`, `user_daily_challenge_contributions` بلا Partitioning/Retention. | مئات GB سنوياً؛ فهارس تتضخم؛ VACUUM أبطأ. | Partitioning للجداول Append-only بلا قيود Unique عابرة، وRetention/Audit للأخرى. |
+| **F15** | `quiz_answers`, `review_logs`, `ai_usage_records`, `audit_logs`, `refresh_tokens`, `user_daily_challenge_contributions` بلا Partitioning/Retention. | مئات GB سنوياً؛ فهارس تتضخم؛ VACUUM أبطأ. | Partitioning للجداول Append-only بلا قيود Unique عابرة، وRetention/Audit للأخرى (شُحن حذف التوكنات بدفعات). |
 | **F16** | `DATABASE_POOL_SIZE=10` ثابت؛ لا PgBouncer. | مع 20 نسخة → 200–600 اتصال؛ PostgreSQL ينهار فوق ~300–500. | معادلة pool في §7.3 + PgBouncer transaction mode. |
 | **F17** | Access log لكل طلب في `RequestContextMiddleware`؛ `/ready` يضرب DB + Redis في كل Probe. | ملايين الأسطر يومياً؛ Probe كل 5s × N نسخ = حمل زائد. | Sampling 1:10 للطلبات الناجحة، 100% للأخطاء؛ Cache نتيجة `/ready` لـ 3–5s. |
 | **F18** | Idempotency يخزّن جسم الاستجابة كاملاً (مضغوطاً) 24h في Redis. | استهلاك ذاكرة كبير؛ منافسة مع الكاش. | حد أقصى 64KB، TTL متدرج، Redis منفصل، تجاهل الاستجابات الكبيرة. |
@@ -275,8 +275,8 @@ connect_args={
 | **F27** | لا CDC/Warehouse. | تقارير ثقيلة على قاعدة المعاملات. | CDC (Debezium) → Warehouse + جدول Rollups. |
 | **F28** | `SecurityHeadersMiddleware` يضع `Cache-Control: no-store` على كل استجابة لا تحمل `@cacheable`، و`StaticFiles` لا يضع سياسة تخزين. | كل تشغيل لملف صوت/صورة يعيد التحميل من الـ API؛ لا CDN ولا كاش عميل؛ عرض نطاق هائل لتطبيق لغة. | اسمح لمسارات `/media` بإعلان `public, max-age=31536000, immutable` (اسم ملف بإصدار/hash)، أو قدّمها من CDN مباشرة. أضف اختباراً يتأكد من الـ Header. واضبط `Cross-Origin-Resource-Policy: cross-origin` للوسائط إن كان نطاق الـ CDN مختلفاً. |
 | **F29** | `IdempotencyMiddleware` يقرأ المفتاح ثم ينفّذ؛ لا قفل «قيد التنفيذ». | إعادة إرسال سريعة (أو ضغط مزدوج) تنفّذ الطلب مرتين قبل تخزين النتيجة. | `SET NX` كقفل تنفيذ + انتظار قصير + إعادة قراءة النتيجة، أو `409 CONFLICT_IN_PROGRESS`. |
-| **F30** | `submit_answer` يقرأ الإجابة السابقة ثم يُدرج/يحدّث؛ لا قفل صف. | إجابتان متزامنتان لنفس السؤال تصطدمان بـ `uq_quiz_answers_session_question` → 500. | `INSERT ... ON CONFLICT (session_id, question_id) DO UPDATE` أو معالجة `IntegrityError` بإعادة القراءة. |
-| **F31** | `quiz_answers.question_id` و`review_cards.question_id` بـ `ON DELETE CASCADE`. | حذف سؤال من المنهج يمحو تاريخ إجابات المتعلمين ومراجعاتهم. | لا تحذف أسئلة لها تاريخ؛ استخدم `state='retired'` وأبقِ الـ FK بلا حذف. |
+| **F30** | `submit_answer` يقرأ الإجابة السابقة ثم يُدرج/يحدّث؛ لا قفل صف. | إجابتان متزامنتان لنفس السؤال تصطدمان بـ `uq_quiz_answers_session_question` → 500. | `INSERT ... ON CONFLICT (session_id, question_id) DO NOTHING` ثم قراءة إجابة الفائز وإعادة حكمها. |
+| **F31** | `quiz_answers.question_id` و`review_cards.question_id` بـ `ON DELETE CASCADE`. | حذف سؤال من المنهج يمحو تاريخ إجابات المتعلمين ومراجعاتهم. | ارفض الحذف إن وُجد أي `quiz_answers` للسؤال (409)؛ الإخفاء يكون بإبقاء الدرس غير منشور. |
 
 ---
 
