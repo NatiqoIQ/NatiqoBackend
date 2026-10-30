@@ -206,7 +206,7 @@
 **معيار القبول:** استعادة كاملة إلى نقطة قبل 15 دقيقة في < 60 دقيقة، موثقة ومُجرَّبة.
 
 #### F6 — لا Observability
-**الدليل:** `app/core/config.py` يحتوي `OTEL_ENABLED`, `SENTRY_DSN`، لكن `grep` لا يجد أي مستهلك لهما. لا `/metrics`. `/metrics` مذكور في `_QUIET_PATHS` فقط. لا tracing.
+**الدليل وقت المسح:** `app/core/config.py` يحتوي `OTEL_ENABLED`, `SENTRY_DSN`، لكن `grep` لم يجد أي مستهلك لهما. لم يكن هناك `/metrics`؛ كان مذكوراً في `_QUIET_PATHS` فقط. **تحديث:** `/metrics` شُحن في §9.1، ويبقى Sentry/OTel بلا مستهلك.
 **الأثر:** بلا مقاييس ستُشخّص كل حادثة بعد فوات الأوان، ولن تعرف أثر أي تحسين.
 **الحل:** راجع §7.10 كاملاً. الحد الأدنى في Phase 0:
 - `/metrics` (Prometheus) لتأخير HTTP، معدل الأخطاء، pool DB، Redis، الطابور.
@@ -1120,7 +1120,7 @@ thresholds: {
 ## 15) ملاحظات جانبية مهمة
 
 1. **README متأخر عن الكود:** يذكر مسارات `/api/v1/content/levels` و`/content/units/...` التي استُبدلت بـ `/content/tree`، ويشير إلى `docs/mobile-integration-ar.md` و`docs/backend-roadmap-ar.md` غير الموجودين. يجب تحديثه لأن الفريق والعميل يعتمدان عليه.
-2. **`/metrics` مذكور في `_QUIET_PATHS` لكنه غير موجود** — أضفه ضمن Phase 0.
+2. **`/metrics` كان مذكوراً في `_QUIET_PATHS` وغير موجود** — أُضيف في Phase 0 (انظر §9.1)؛ لم يبقَ من هذه الملاحظة إلا أن Sentry/OTel ما زالا غير موصولين.
 3. **`SENTRY_DSN` و`OTEL_*` إعدادات ميتة** — إما تُنفَّذ أو تُحذف؛ الإعدادات غير المستخدمة خطأ تشغيلي.
 4. **`AI_TIMEOUT_SECONDS=20`** أطول من أي SLO واقعي؛ اخفضه.
 5. **`database_pool_timeout=30`** أخطر من أي استعلام بطيء؛ اخفضه فوراً.
@@ -1198,7 +1198,7 @@ LIMIT 10;
 
 | اليوم | العمل | المخرج |
 |---|---|---|
-| 1–2 | تفعيل `/metrics` + Sentry + OTel | Dashboards أولية |
+| 1–2 | `/metrics` (منجز) + Sentry + OTel | Dashboards أولية |
 | 2–3 | k6 Baseline على Staging | تقرير 200 RPS |
 | 3–5 | إصلاح Rate limit (Principal + Token Bucket) | اختبار CGNAT |
 | 4–6 | فصل جلسة AI + Bulkhead + Timeout | اختبار 500 طلب AI |
