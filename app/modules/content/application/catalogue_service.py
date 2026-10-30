@@ -44,7 +44,14 @@ from app.modules.content.application.dto import (
     UnitNodeView,
     UnitView,
 )
-from app.modules.content.domain.entities import Lesson, Level, Question, Unit
+from app.modules.content.domain.entities import (
+    Lesson,
+    LessonPlacement,
+    Level,
+    Question,
+    Unit,
+    UnitPlacement,
+)
 from app.modules.content.domain.policy import pre_attempt_choices, pre_attempt_prompts
 
 
@@ -178,45 +185,74 @@ class CatalogueService:
     async def tree(self) -> tuple[LevelNodeView, ...]:
         """The whole published catalogue as one nested tree: levels → units → lessons.
 
-        This composes the three paged reads rather than reaching past them, so the
-        published-only and 404 rules keep living in exactly one place. It is *not* a
-        request to the per-level or per-unit endpoints: those are gone, and this is what
-        replaced them — one response an app shell can hold whole instead of a walk.
+        This is the first screen every client loads, so it must not be a walk. It reads
+        the four facts it needs in four queries — published levels, every published unit
+        with its placement, every published lesson with its placement, and the question
+        counts for that whole set — then assembles the nesting in memory. The previous
+        implementation composed the paged reads, which was cleaner but issued roughly one
+        query per unit *per level*: on the seeded curriculum that was ~37 sequential
+        round-trips, and every morning launch paid it again. The published-only rule did
+        not move: ``list_published_ordered`` joins the level and (for lessons) the unit,
+        so a child of a draft parent is absent here exactly as it is from the paged reads.
 
-        Each level of nesting is capped at ``MAX_PAGE_SIZE``. A curriculum that exceeds
-        one page of levels, or one page of units inside a level, is truncated here; that
-        is a deliberate ceiling on a single cached response, not a paging affordance, and
-        the real curriculum is far below it. The result is cached for a minute upstream,
-        so the handful of composition queries cost once per cache window, not per caller.
+        Each level of nesting stays capped at ``MAX_PAGE_SIZE``. A curriculum larger than
+        that is truncated, not paged: this endpoint is a single cached document, and the
+        real catalogue is far below the cap.
         """
-        level_page = await self.list_levels(limit=MAX_PAGE_SIZE)
+        levels = await self._uow.levels.list_published(limit=MAX_PAGE_SIZE, after=None)
+        level_codes = {level.code for level in levels}
+        units = [
+            placement
+            for placement in await self._uow.units.list_published_ordered()
+            if placement.level_code in level_codes
+        ]
+        lessons = await self._uow.lessons.list_published_ordered()
+        lesson_counts: dict[ContentId, int] = defaultdict(int)
+        for question in await self._uow.questions.list_for_lessons(
+            [placement.lesson.id for placement in lessons]
+        ):
+            lesson_counts[question.lesson_id] += 1
+
+        units_by_level: dict[CEFRLevel, list[UnitPlacement]] = defaultdict(list)
+        for placement in units:
+            units_by_level[placement.level_code].append(placement)
+        lessons_by_unit: dict[ContentId, list[LessonPlacement]] = defaultdict(list)
+        for placement in lessons:
+            lessons_by_unit[placement.lesson.unit_id].append(placement)
+
         nodes: list[LevelNodeView] = []
-        for level in level_page.items:
-            unit_page = await self.list_units(level.code, limit=MAX_PAGE_SIZE)
+        for level in levels:
+            level_units = units_by_level.get(level.code, [])
+            unit_nodes: list[UnitNodeView] = []
+            for placement in level_units[:MAX_PAGE_SIZE]:
+                unit = placement.unit
+                unit_lessons = lessons_by_unit.get(unit.id, [])
+                unit_nodes.append(
+                    UnitNodeView(
+                        id=unit.id,
+                        level_code=placement.level_code.value,
+                        title=unit.title,
+                        description=unit.description,
+                        position=unit.position,
+                        lesson_count=len(unit_lessons),
+                        lessons=tuple(
+                            _lesson_summary(lp.lesson, lesson_counts.get(lp.lesson.id, 0))
+                            for lp in unit_lessons[:MAX_PAGE_SIZE]
+                        ),
+                    )
+                )
             nodes.append(
                 LevelNodeView(
                     id=level.id,
-                    code=level.code,
+                    code=level.code.value,
                     title=level.title,
                     description=level.description,
                     position=level.position,
-                    unit_count=level.unit_count,
-                    units=tuple([await self._unit_node(unit) for unit in unit_page.items]),
+                    unit_count=len(level_units),
+                    units=tuple(unit_nodes),
                 )
             )
         return tuple(nodes)
-
-    async def _unit_node(self, unit: UnitView) -> UnitNodeView:
-        lesson_page = await self.list_lessons(unit.id, limit=MAX_PAGE_SIZE)
-        return UnitNodeView(
-            id=unit.id,
-            level_code=unit.level_code,
-            title=unit.title,
-            description=unit.description,
-            position=unit.position,
-            lesson_count=unit.lesson_count,
-            lessons=tuple(lesson_page.items),
-        )
 
 
 # ------------------------------------------------------------------- internals

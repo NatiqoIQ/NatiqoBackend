@@ -677,3 +677,53 @@ class TestQuestionRepository:
         await session.flush()
 
         assert await uow.questions.get_published(ContentId(row.id)) is None
+
+
+# --------------------------------------------------------------------- tree cost
+@pytest.mark.asyncio
+async def test_the_tree_costs_a_fixed_number_of_queries(
+    uow: SqlAlchemyUnitOfWork, service: CatalogueService, session: AsyncSession
+) -> None:
+    """The tree must not scale its query count with the curriculum.
+
+    It used to compose the paged reads: one level query, then a handful per unit per
+    level. That is the classic N+1, and it ran on the first screen of every launch. The
+    bulk build reads levels, units, lessons and question counts once each — four
+    statements no matter how many rows are underneath.
+    """
+    from sqlalchemy import event
+
+    level = _level_row(session, code="A1", position=1)
+    for unit_position in range(1, 4):
+        unit = _unit_row(session, level.id, title=f"Unit {unit_position}", position=unit_position)
+        for lesson_position in range(1, 4):
+            lesson = _lesson_row(
+                session,
+                unit.id,
+                title=f"Lesson {lesson_position}",
+                position=lesson_position,
+            )
+            _question_row(session, lesson.id)
+    await session.commit()
+
+    statements: list[str] = []
+
+    def _record(conn: object, cursor: object, statement: str, *args: object) -> None:
+        statements.append(statement)
+
+    sync_engine = session.bind.sync_engine  # type: ignore[union-attr]
+    event.listen(sync_engine, "before_cursor_execute", _record)
+    try:
+        tree = await service.tree()
+    finally:
+        event.remove(sync_engine, "before_cursor_execute", _record)
+
+    selects = [s for s in statements if s.lstrip().upper().startswith("SELECT")]
+    assert len(selects) == 4, [s[:80] for s in selects]
+
+    assert len(tree) == 1
+    assert tree[0].unit_count == 3
+    assert len(tree[0].units) == 3
+    assert tree[0].units[0].lesson_count == 3
+    assert len(tree[0].units[0].lessons) == 3
+    assert tree[0].units[0].lessons[0].question_count == 1
