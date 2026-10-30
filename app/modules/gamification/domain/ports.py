@@ -22,7 +22,22 @@ __all__ = [
 @runtime_checkable
 class UserStatsRepositoryPort(Protocol):
     async def get(self, user_id: UserId) -> UserStats | None: ...
-    async def add(self, stats: UserStats) -> None: ...
+
+    async def get_for_update(self, user_id: UserId) -> UserStats | None:
+        """Read the row and hold a row lock until the transaction ends.
+
+        XP is a read-modify-write: two completions for the same learner on two devices
+        both read ``xp_total`` and both write back their own total, so one award is
+        silently lost. The lock makes the second reader wait and read the first
+        writer's committed value. Engines without row locks (SQLite in tests) ignore
+        it; the guarantee is PostgreSQL's.
+        """
+        ...
+
+    async def add(self, stats: UserStats) -> bool:
+        """Insert a stats row; ``False`` means a concurrent request inserted it first."""
+        ...
+
     async def save(self, stats: UserStats) -> None: ...
 
 

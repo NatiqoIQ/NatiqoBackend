@@ -100,3 +100,35 @@ async def test_a_successful_call_returns_the_response_and_releases_the_slot() ->
     assert provider.calls == 1
     # The slot was released in ``finally``: a second call must not be saturated.
     assert service._bulkhead.locked() is False
+
+
+@pytest.mark.asyncio
+async def test_the_cap_is_shared_by_every_request_scoped_service(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``AIService`` is rebuilt per request, so the cap must not live on the instance.
+
+    With a per-instance semaphore ``AI_MAX_CONCURRENT_REQUESTS`` never binds: every
+    request would arrive with a fresh, empty pool. The loop-wide registry is what makes
+    the setting mean anything, and this test pins that two services built the way the
+    composition root builds them resolve to the same pool.
+    """
+    from app.platform.ai import service as service_module
+
+    loop = asyncio.get_running_loop()
+    shared = asyncio.Semaphore(1)
+    monkeypatch.setitem(service_module._SHARED_BULKHEADS, loop, shared)
+
+    first = AIService(_Provider())
+    second = AIService(_Provider())
+
+    assert first._slots() is shared
+    assert second._slots() is shared
+
+    await shared.acquire()
+    try:
+        with pytest.raises(AIProviderError) as raised:
+            await second._call_provider(_REQUEST, _CONTEXT)
+        assert "saturated" in str(raised.value)
+    finally:
+        shared.release()

@@ -93,6 +93,12 @@ IN_PROGRESS_BODY: dict[str, Any] = {
 #: enough that a crashed process does not block its key for the whole retention window.
 IN_FLIGHT_TTL_SECONDS = 60
 
+#: Largest response body worth storing. An export or a bulk import result can be
+#: megabytes, and keeping a day of those in the same Redis that serves rate limits and
+#: the catalogue would evict the small, hot records. Above this size the request runs
+#: normally and simply is not replayable — a duplicate is the lesser harm.
+MAX_STORED_BODY_BYTES = 64 * 1024
+
 
 def fingerprint(payload: bytes) -> str:
     """Stable hash of a request body, used to detect key reuse with different content."""
@@ -290,6 +296,13 @@ class IdempotencyMiddleware:
         return record if isinstance(record, dict) else None
 
     async def _store(self, key: str, body_fingerprint: str, captured: _ResponseCapture) -> None:
+        if len(captured.body) > MAX_STORED_BODY_BYTES:
+            logger.info(
+                "idempotency.response_too_large",
+                bytes=len(captured.body),
+                limit=MAX_STORED_BODY_BYTES,
+            )
+            return
         record = {
             "fingerprint": body_fingerprint,
             "status": captured.status,

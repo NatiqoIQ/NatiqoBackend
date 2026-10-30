@@ -111,7 +111,7 @@ class GamificationService:
                 "There is no such achievement.", code=ErrorCode.ACHIEVEMENT_NOT_FOUND
             )
 
-        stats = await self._stats(user_id)
+        stats = await self._locked_stats(user_id)
         if achievement.xp_reward > 0:
             stats.award_xp(achievement.xp_reward)
             stats.set_league(league_for_xp(stats.xp_total))
@@ -149,7 +149,7 @@ class GamificationService:
                 "Streak freezes are part of Premium.",
                 details={"purchase_url": self._settings.premium_purchase_url},
             )
-        stats = await self._stats(user_id)
+        stats = await self._locked_stats(user_id)
         if not stats.consume_freeze():
             raise ConflictError(
                 "You have no streak freezes left.", code=ErrorCode.NO_FREEZES_AVAILABLE
@@ -172,13 +172,29 @@ class GamificationService:
         timezone = await self._timezone(user_id)
         today = local_date(on, timezone)
 
-        stats = await self._uow.user_stats.get(user_id)
+        #: The row lock is what makes XP a serialised read-modify-write. Without it two
+        #: completions for one learner on two devices both read the old total and the
+        #: later write erases the earlier award.
+        stats = await self._uow.user_stats.get_for_update(user_id)
         if stats is None:
             # No row yet: project from history. The completion that triggered this event is
             # already staged and flushed by the caller, so the projection *includes* it and
             # adding ``xp_awarded`` on top would count the same XP twice.
-            stats = await self._project(user_id)
-            await self._uow.user_stats.add(stats)
+            projected = await self._project(user_id)
+            if await self._uow.user_stats.add(projected):
+                stats = projected
+            else:
+                # Two *first* completions raced: the other transaction inserted the row
+                # between our projection and our insert. Its row is now committed, so
+                # read it under the lock and add only this completion's delta.
+                stats = await self._uow.user_stats.get_for_update(user_id)
+                if stats is None:  # pragma: no cover - the insert conflict proves it exists
+                    stats = projected
+                else:
+                    stats.award_xp(xp_awarded)
+                    stats.set_league(league_for_xp(stats.xp_total))
+                    stats.record_activity(today)
+                    await self._uow.user_stats.save(stats)
         else:
             stats.award_xp(xp_awarded)
             stats.set_league(league_for_xp(stats.xp_total))
@@ -200,6 +216,20 @@ class GamificationService:
         if stats is None:
             stats = await self._project_from_rows(user_id, rows)
         return stats, lessons_completed
+
+    async def _locked_stats(self, user_id: UserId) -> UserStats:
+        """Stats for a write path: row lock first, projection only if the row is absent.
+
+        A claim or a freeze is a read-modify-write of the same row a lesson completion
+        updates. Taking the lock here too means the two cannot overwrite each other's
+        XP or gems, not just two completions.
+        """
+        stats = await self._uow.user_stats.get_for_update(user_id)
+        if stats is not None:
+            return stats
+        projected = await self._project(user_id)
+        await self._uow.user_stats.add(projected)
+        return projected
 
     async def _stats(self, user_id: UserId) -> UserStats:
         stats = await self._uow.user_stats.get(user_id)

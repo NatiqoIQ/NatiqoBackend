@@ -14,6 +14,7 @@ Guarantees, in order of importance:
 from __future__ import annotations
 
 import asyncio
+import weakref
 from collections.abc import Callable, Sequence
 from typing import Any
 
@@ -45,6 +46,31 @@ logger = get_logger("ai.service")
 #: Signature the service hands to the composition root to persist usage records.
 UsageRecorder = Callable[[AIUsage], None]
 
+#: One semaphore per event loop, shared by every request-scoped ``AIService``.
+#:
+#: The service cannot own this: it is rebuilt for every request (its budget reads the
+#: request's transaction), so an instance attribute would give each request its own cap
+#: and ``AI_MAX_CONCURRENT_REQUESTS`` would never bind. Keyed weakly by loop so a test
+#: loop that ends does not leak its semaphore into the next one.
+_SHARED_BULKHEADS: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Semaphore] = (
+    weakref.WeakKeyDictionary()
+)
+
+
+def _shared_bulkhead() -> asyncio.Semaphore:
+    """The process-wide slot pool for the running loop.
+
+    Called from async code only, so ``get_running_loop`` is always available. Creating
+    the semaphore is synchronous, and the event loop is single-threaded, so two coroutines
+    cannot both install one for the same loop.
+    """
+    loop = asyncio.get_running_loop()
+    semaphore = _SHARED_BULKHEADS.get(loop)
+    if semaphore is None:
+        semaphore = asyncio.Semaphore(max(1, get_settings().ai_max_concurrent_requests))
+        _SHARED_BULKHEADS[loop] = semaphore
+    return semaphore
+
 
 class AIService(AIServicePort):
     def __init__(
@@ -58,12 +84,21 @@ class AIService(AIServicePort):
         self._record = usage_recorder
         self._budget = budget
         self._settings = get_settings()
-        #: A bulkhead, not a queue. Waiting behind an unlimited number of slow provider
-        #: calls is how an AI outage becomes an API outage: each wait holds a request
-        #: slot, and the fallback (which is good) is never reached. The semaphore caps
-        #: concurrency; the tiny acquire timeout means "saturated" fails into the
-        #: authored fallback immediately instead of adding another second of latency.
-        self._bulkhead = asyncio.Semaphore(max(1, self._settings.ai_max_concurrent_requests))
+        #: Test seam. Production always resolves the loop-wide semaphore below; a test
+        #: that needs a known width assigns here instead of mutating global state.
+        self._bulkhead: asyncio.Semaphore | None = None
+
+    def _slots(self) -> asyncio.Semaphore:
+        """A bulkhead, not a queue.
+
+        Waiting behind an unlimited number of slow provider calls is how an AI outage
+        becomes an API outage: each wait holds a request slot and the fallback (which is
+        good) is never reached. The cap is shared by every request because the service
+        is request-scoped — see :data:`_SHARED_BULKHEADS`.
+        """
+        if self._bulkhead is not None:
+            return self._bulkhead
+        return _shared_bulkhead()
 
     @property
     def enabled(self) -> bool:
@@ -243,8 +278,9 @@ class AIService(AIServicePort):
         the deadline passes, so the provider connection is closed rather than left to
         finish invisibly.
         """
+        slots = self._slots()
         try:
-            await asyncio.wait_for(self._bulkhead.acquire(), timeout=0.05)
+            await asyncio.wait_for(slots.acquire(), timeout=0.05)
         except TimeoutError as exc:
             raise AIProviderError("ai provider saturated: too many concurrent requests") from exc
         try:
@@ -255,7 +291,7 @@ class AIService(AIServicePort):
         except TimeoutError as exc:
             raise AIProviderError("ai provider timed out") from exc
         finally:
-            self._bulkhead.release()
+            slots.release()
 
     async def _complete(self, request: AIRequest, context: TutorContext) -> str | None:
         try:

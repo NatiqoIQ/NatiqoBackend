@@ -544,3 +544,43 @@ async def test_a_cache_outage_does_not_block_writes() -> None:
 
     assert captured.status == 200
     assert captured.body == b"ok"
+
+
+async def test_an_oversized_response_is_not_stored_and_the_retry_runs_again() -> None:
+    """A response larger than the store cap must not evict the small, hot records.
+
+    The trade is explicit: an export retried with the same key executes twice instead of
+    replaying. That is the behaviour a client without the header already has, and it is
+    cheaper than letting a few megabytes per key displace rate limits and catalogue
+    entries for a day.
+    """
+    from app.platform.cache.memory import InMemoryCache
+
+    calls = 0
+    payload = b"x" * (64 * 1024 + 1)
+
+    async def big_app(scope: Any, receive: Any, send: Any) -> None:
+        nonlocal calls
+        calls += 1
+        await receive()
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 200,
+                "headers": [(b"content-type", b"application/octet-stream")],
+            }
+        )
+        await send({"type": "http.response.body", "body": payload})
+
+    cache = InMemoryCache()
+    middleware = IdempotencyMiddleware(big_app, cache=cache, ttl_seconds=60)
+
+    first = _Capture()
+    await middleware(_scope_for("big-key"), _receive_body(), first)
+    second = _Capture()
+    await middleware(_scope_for("big-key"), _receive_body(), second)
+
+    assert first.status == 200
+    assert second.status == 200
+    assert calls == 2, "the second request must execute, not replay"
+    assert "idempotent-replay" not in second.headers
