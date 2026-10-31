@@ -4563,6 +4563,27 @@ async def test_admin_overview_aggregates_every_card_of_the_home_screen(
 
 
 @pytest.mark.asyncio
+async def test_the_overview_is_cached_between_reads(
+    client: AsyncClient, content_db: AsyncSession
+) -> None:
+    """A dashboard polled by several admins must not rescan every table each time.
+
+    The proof is a write that would change the answer: a new account joins after the
+    first read, and the second read still reports the first total. A 30-second stale
+    total is invisible on this screen; the scan behind it is not.
+    """
+    admin = await _grant_admin(client, content_db, token="stats-cache-admin")
+    first = await client.get("/api/v1/admin/stats/overview", headers=admin)
+    assert first.status_code == 200, first.text
+
+    await sign_in(client, token="stats-cache-newcomer")
+
+    second = await client.get("/api/v1/admin/stats/overview", headers=admin)
+    assert second.status_code == 200
+    assert second.json()["users"]["total"] == first.json()["users"]["total"]
+
+
+@pytest.mark.asyncio
 async def test_the_overview_is_admin_only_and_bounded(
     client: AsyncClient, content_db: AsyncSession
 ) -> None:

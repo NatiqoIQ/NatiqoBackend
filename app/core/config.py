@@ -112,6 +112,10 @@ class Settings(BaseSettings):
     #: costs one rebuild while a longer TTL would make "I published it" look broken.
     catalogue_cache_ttl_seconds: int = 30
     flags_cache_ttl_seconds: int = 30
+    #: The dashboard runs nineteen aggregates per load; a dashboard that is 30 seconds
+    #: stale is indistinguishable from a fresh one, and the scan rate drops by orders of
+    #: magnitude while several admins have the page open.
+    admin_stats_cache_ttl_seconds: int = 30
     #: `/ready` is polled by orchestrators every few seconds; a shorter cache would
     #: only move the same database ping to every probe replica.
     ready_cache_ttl_seconds: float = 2.0
