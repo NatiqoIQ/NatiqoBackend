@@ -178,7 +178,7 @@ class SqlAlchemyQuizSessionRepository(QuizSessionRepositoryPort):
         )
         stmt = delete(QuizSessionModel).where(QuizSessionModel.id.in_(doomed))
         result = await self._session.execute(stmt.execution_options(synchronize_session=False))
-        return int(result.rowcount or 0)
+        return int(getattr(result, "rowcount", 0) or 0)
 
 
 class SqlAlchemyQuizAnswerRepository(QuizAnswerRepositoryPort):
@@ -212,7 +212,7 @@ class SqlAlchemyQuizAnswerRepository(QuizAnswerRepositoryPort):
             .on_conflict_do_nothing(index_elements=["session_id", "question_id"])
         )
         result = await self._session.execute(statement)
-        return bool(result.rowcount)
+        return bool(getattr(result, "rowcount", 0))
 
     async def save(self, answer: QuizAnswer) -> None:
         model = await self._session.get(QuizAnswerModel, answer.id)

@@ -174,7 +174,7 @@ class SqlAlchemyUserStatsRepository:
             .on_conflict_do_nothing(index_elements=["user_id"])
         )
         result = await self._session.execute(statement)
-        return bool(result.rowcount)
+        return bool(getattr(result, "rowcount", 0))
 
     async def save(self, stats: UserStats) -> None:
         model = await self._session.get(UserStatsModel, stats.user_id)

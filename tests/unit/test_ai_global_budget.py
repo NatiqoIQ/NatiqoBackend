@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import uuid
 from decimal import Decimal
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -67,7 +67,9 @@ class _BrokenCache(InMemoryCache):
 @pytest.mark.asyncio
 async def test_spend_below_the_ceiling_is_allowed() -> None:
     session = _Session(Decimal("3.5"))
-    budget = budget_for(session, _settings(ai_daily_user_budget_usd=0.0), cache=InMemoryCache())  # type: ignore[arg-type]
+    budget = budget_for(
+        cast(Any, session), _settings(ai_daily_user_budget_usd=0.0), cache=InMemoryCache()
+    )  # type: ignore[arg-type]
     status = await budget.status(_USER, feature=_FEATURE)
     assert status.allowed is True
 
@@ -75,7 +77,9 @@ async def test_spend_below_the_ceiling_is_allowed() -> None:
 @pytest.mark.asyncio
 async def test_spend_at_the_ceiling_is_denied_with_a_clear_reason() -> None:
     session = _Session(Decimal("5"))
-    budget = budget_for(session, _settings(ai_daily_user_budget_usd=0.0), cache=InMemoryCache())  # type: ignore[arg-type]
+    budget = budget_for(
+        cast(Any, session), _settings(ai_daily_user_budget_usd=0.0), cache=InMemoryCache()
+    )  # type: ignore[arg-type]
     status = await budget.status(_USER, feature=_FEATURE)
     assert status.allowed is False
     assert "platform" in (status.reason or "")
@@ -85,7 +89,7 @@ async def test_spend_at_the_ceiling_is_denied_with_a_clear_reason() -> None:
 async def test_the_spend_figure_is_cached_between_requests() -> None:
     session = _Session(Decimal("1"))
     budget = budget_for(
-        session,
+        cast(Any, session),
         _settings(ai_daily_user_budget_usd=0.0),  # isolate the global path
         cache=InMemoryCache(),
     )  # type: ignore[arg-type]
@@ -100,10 +104,10 @@ async def test_the_spend_figure_is_cached_between_requests() -> None:
 async def test_a_broken_cache_does_not_disable_the_cap() -> None:
     session = _Session(Decimal("9"))
     budget = budget_for(
-        session,
+        cast(Any, session),
         _settings(ai_daily_user_budget_usd=0.0),
         cache=_BrokenCache(),
-    )  # type: ignore[arg-type]
+    )
     status = await budget.status(_USER, feature=_FEATURE)
     assert status.allowed is False
     assert session.calls == 1
@@ -130,7 +134,7 @@ async def test_a_user_who_is_already_over_budget_skips_the_global_query() -> Non
 async def test_zero_global_limit_does_not_wrap_the_budget() -> None:
     session = _Session(Decimal("100"))
     budget = budget_for(
-        session,
+        cast(Any, session),
         _settings(ai_daily_user_budget_usd=0.0, ai_daily_global_budget_usd=0.0),
         cache=InMemoryCache(),
     )  # type: ignore[arg-type]

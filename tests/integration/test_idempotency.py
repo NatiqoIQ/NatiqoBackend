@@ -16,7 +16,7 @@ from __future__ import annotations
 import asyncio
 import json
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, MutableMapping
 from typing import Any
 
 import pytest
@@ -433,9 +433,9 @@ def _receive_body() -> Any:
 
 class _Capture:
     def __init__(self) -> None:
-        self.messages: list[dict[str, Any]] = []
+        self.messages: list[MutableMapping[str, Any]] = []
 
-    async def __call__(self, message: dict[str, Any]) -> None:
+    async def __call__(self, message: MutableMapping[str, Any]) -> None:
         self.messages.append(message)
 
     @property

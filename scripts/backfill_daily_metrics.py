@@ -104,6 +104,7 @@ async def backfill(*, start: date | None, end: date | None, mark: bool, dry_run:
             await repository.mark_backfilled(start=first, through=last)
             await session.commit()
             meta = await session.get(MetricsMetaModel, 1)
+            assert meta is not None  # mark_backfilled just wrote it in this transaction
             print(f"rollout marker written: {meta.backfilled_from} .. {meta.backfilled_through}")
         elif mark:
             print(
