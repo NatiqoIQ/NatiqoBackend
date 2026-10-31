@@ -59,7 +59,7 @@ class ProgressService:
         missing profile falls back to the default zone rather than UTC — the product
         default is Asia/Baghdad.
         """
-        progress_rows = await self._uow.lesson_progress.list_for_user(user_id)
+        totals = await self._uow.lesson_progress.totals_for_user(user_id)
         tally = await self._uow.quiz_answers.tally_for_user(user_id)
         completion_times = await self._uow.quiz_sessions.list_completion_times(user_id)
         words_learned = await self._uow.quiz_sessions.sum_words_learned_for_user(user_id)
@@ -68,14 +68,10 @@ class ProgressService:
         current_streak, longest_streak = _streaks(completion_times, timezone)
 
         return ProgressSummaryView(
-            total_xp=sum(row.xp_earned for row in progress_rows),
-            lessons_completed=sum(
-                1 for row in progress_rows if row.state is ProgressState.COMPLETED
-            ),
-            lessons_in_progress=sum(
-                1 for row in progress_rows if row.state is ProgressState.IN_PROGRESS
-            ),
-            lessons_started=len(progress_rows),
+            total_xp=totals.xp_total,
+            lessons_completed=totals.lessons_completed,
+            lessons_in_progress=totals.lessons_in_progress,
+            lessons_started=totals.lessons_started,
             correct_count=tally.correct,
             answered_count=tally.answered,
             accuracy_percent=tally.accuracy_percent,

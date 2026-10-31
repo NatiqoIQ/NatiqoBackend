@@ -27,6 +27,7 @@ from app.modules.quiz.domain.entities import (
     AnswerHistory,
     AnswerTally,
     LessonProgress,
+    LessonProgressTotals,
     ProgressState,
     QuizAnswer,
     QuizSession,
@@ -341,6 +342,21 @@ class SqlAlchemyLessonProgressRepository(LessonProgressRepositoryPort):
         )
         models = (await self._session.execute(stmt)).scalars().all()
         return [to_progress(model) for model in models]
+
+    async def totals_for_user(self, user_id: UserId) -> LessonProgressTotals:
+        stmt = select(
+            func.coalesce(func.sum(LessonProgressModel.xp_earned), 0),
+            func.count(),
+            func.count(case((LessonProgressModel.state == ProgressState.COMPLETED.value, 1))),
+            func.count(case((LessonProgressModel.state == ProgressState.IN_PROGRESS.value, 1))),
+        ).where(LessonProgressModel.user_id == user_id)
+        xp_total, started, completed, in_progress = (await self._session.execute(stmt)).one()
+        return LessonProgressTotals(
+            xp_total=int(xp_total or 0),
+            lessons_started=int(started or 0),
+            lessons_completed=int(completed or 0),
+            lessons_in_progress=int(in_progress or 0),
+        )
 
     async def completed_lesson_ids(self, user_id: UserId) -> set[uuid.UUID]:
         stmt = select(LessonProgressModel.lesson_id).where(

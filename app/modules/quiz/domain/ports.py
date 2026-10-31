@@ -19,6 +19,7 @@ from app.modules.quiz.domain.entities import (
     AnswerHistory,
     AnswerTally,
     LessonProgress,
+    LessonProgressTotals,
     QuizAnswer,
     QuizSession,
     UnitProgress,
@@ -181,6 +182,15 @@ class LessonProgressRepositoryPort(Protocol):
 
         Unpaginated: it backs the summary roll-up and the unlock map, both of which need
         the whole set at once, and a learner can have at most one row per published lesson.
+        """
+        ...
+
+    async def totals_for_user(self, user_id: UserId) -> LessonProgressTotals:
+        """Counts and XP for the summary, in one grouped query.
+
+        ``list_for_user`` hydrates every row, which the unlock map needs; the summary
+        only needs four numbers, and the difference is the whole history of a learner
+        who has finished the catalogue.
         """
         ...
 

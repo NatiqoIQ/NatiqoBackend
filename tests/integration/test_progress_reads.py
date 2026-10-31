@@ -664,3 +664,43 @@ async def test_completed_lesson_ids_is_a_membership_read(uow: SqlAlchemyUnitOfWo
     await uow.commit()
 
     assert await uow.lesson_progress.completed_lesson_ids(UserId(user.id)) == {finished.id}
+
+
+@pytest.mark.asyncio
+async def test_totals_for_user_is_one_grouped_read(uow: SqlAlchemyUnitOfWork) -> None:
+    """The summary needs four numbers, not every row.
+
+    A learner who has finished the catalogue has one row per lesson; hydrating them to
+    count them is the difference between a constant-size read and a growing one.
+    """
+    from app.modules.quiz.domain.entities import LessonProgress, ProgressState
+
+    user = _user_row(uow.session)
+    lessons = _unit_with_lessons(
+        uow.session,
+        code="A1",
+        lessons=[(1, "One"), (2, "Two"), (3, "Three")],
+    )
+    await uow.session.flush()
+    for lesson, state, xp in (
+        (lessons[0], ProgressState.COMPLETED, 40),
+        (lessons[1], ProgressState.COMPLETED, 50),
+        (lessons[2], ProgressState.IN_PROGRESS, 0),
+    ):
+        await uow.lesson_progress.save(
+            LessonProgress(
+                id=uuid.uuid4(),
+                user_id=UserId(user.id),
+                lesson_id=lesson.id,
+                state=state,
+                xp_earned=xp,
+            )
+        )
+    await uow.commit()
+
+    totals = await uow.lesson_progress.totals_for_user(UserId(user.id))
+
+    assert totals.xp_total == 90
+    assert totals.lessons_started == 3
+    assert totals.lessons_completed == 2
+    assert totals.lessons_in_progress == 1
