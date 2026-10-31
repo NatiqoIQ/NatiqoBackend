@@ -48,6 +48,9 @@ def _async_dsn(url: str) -> str:
     return url
 
 
+_KEY_ID_PATTERN = re.compile(r"[A-Za-z0-9_-]{1,32}")
+
+
 class Settings(BaseSettings):
     """Typed application settings."""
 
@@ -113,6 +116,13 @@ class Settings(BaseSettings):
     # ----------------------------------------------------------- security
     jwt_secret: SecretStr = SecretStr("dev-only-access-secret-change-me-0000000000000000000000")
     jwt_refresh_secret: SecretStr = SecretStr("dev-only-refresh-secret-change-me-00000000000000")
+    #: ``kid`` written into every token header. Bump it when rotating ``JWT_SECRET``.
+    jwt_key_id: str = "v1"
+    #: The previous key pair, accepted during the rotation window. Tokens are matched
+    #: by the ``kid`` in their header, so the old key only ever verifies old tokens.
+    jwt_previous_key_id: str | None = None
+    jwt_previous_secret: SecretStr | None = None
+    jwt_previous_refresh_secret: SecretStr | None = None
     jwt_algorithm: str = "HS256"
     jwt_issuer: str = "natiqo"
     jwt_audience: str = "natiqo-clients"
@@ -446,6 +456,21 @@ class Settings(BaseSettings):
         if self.cors_origins and "*" in self.cors_origins and self.cors_allow_credentials:
             problems.append("CORS_ORIGINS must not contain '*' when CORS_ALLOW_CREDENTIALS is true")
 
+        if not _KEY_ID_PATTERN.fullmatch(self.jwt_key_id):
+            problems.append("JWT_KEY_ID must be 1-32 characters of letters, digits, '_' or '-'")
+        if self.jwt_previous_key_id is not None:
+            if not _KEY_ID_PATTERN.fullmatch(self.jwt_previous_key_id):
+                problems.append(
+                    "JWT_PREVIOUS_KEY_ID must be 1-32 characters of letters, digits, '_' or '-'"
+                )
+            if self.jwt_previous_key_id == self.jwt_key_id:
+                problems.append("JWT_PREVIOUS_KEY_ID must differ from JWT_KEY_ID")
+            if self.jwt_previous_secret is None or self.jwt_previous_refresh_secret is None:
+                problems.append(
+                    "JWT_PREVIOUS_KEY_ID requires both JWT_PREVIOUS_SECRET and "
+                    "JWT_PREVIOUS_REFRESH_SECRET, otherwise the old key cannot be verified"
+                )
+
         if not self.is_production:
             return problems
 
@@ -455,6 +480,16 @@ class Settings(BaseSettings):
         ):
             if secret.get_secret_value() in _PLACEHOLDER_SECRETS:
                 problems.append(f"{name} still holds a development placeholder")
+        if self.jwt_previous_secret is not None:
+            if self.jwt_previous_secret.get_secret_value() in _PLACEHOLDER_SECRETS:
+                problems.append("JWT_PREVIOUS_SECRET still holds a development placeholder")
+            if len(self.jwt_previous_secret.get_secret_value()) < 32:
+                problems.append("JWT_PREVIOUS_SECRET must be at least 32 characters")
+        if self.jwt_previous_refresh_secret is not None:
+            if self.jwt_previous_refresh_secret.get_secret_value() in _PLACEHOLDER_SECRETS:
+                problems.append("JWT_PREVIOUS_REFRESH_SECRET still holds a development placeholder")
+            if len(self.jwt_previous_refresh_secret.get_secret_value()) < 32:
+                problems.append("JWT_PREVIOUS_REFRESH_SECRET must be at least 32 characters")
         if self.jwt_secret.get_secret_value() == self.jwt_refresh_secret.get_secret_value():
             problems.append("JWT_SECRET and JWT_REFRESH_SECRET must be different values")
         if len(self.jwt_secret.get_secret_value()) < 32:

@@ -11,6 +11,15 @@ Token model
 
 The two secrets are separate on purpose: a leaked access-signing key must not let an
 attacker mint refresh tokens.
+
+Rotation (F25)
+--------------
+Every token carries a ``kid`` header naming the key that signed it. The current key is
+``JWT_KEY_ID``; ``JWT_PREVIOUS_KEY_ID`` plus the two previous secrets keep tokens minted
+before a rotation verifiable for one access/refresh lifetime. Rotation is then: set the
+current pair as "previous", publish a new current pair, deploy. Tokens without a ``kid``
+predate rotation and are still verified against both keys so an upgrade is not a forced
+logout.
 """
 
 from __future__ import annotations
@@ -59,16 +68,82 @@ class TokenClaims:
         return UserId(self.subject)
 
 
-def _secret_for(token_type: TokenType) -> str:
+def _key_ring(token_type: TokenType) -> list[tuple[str, str]]:
+    """``(kid, secret)`` pairs, current first, then the previous key during rotation."""
     settings = get_settings()
     if token_type == "access":  # noqa: S105 - comparing a token type, not a secret
-        return settings.jwt_secret.get_secret_value()
-    return settings.jwt_refresh_secret.get_secret_value()
+        current = settings.jwt_secret.get_secret_value()
+        previous = (
+            settings.jwt_previous_secret.get_secret_value()
+            if settings.jwt_previous_secret is not None
+            else None
+        )
+    else:
+        current = settings.jwt_refresh_secret.get_secret_value()
+        previous = (
+            settings.jwt_previous_refresh_secret.get_secret_value()
+            if settings.jwt_previous_refresh_secret is not None
+            else None
+        )
+    ring = [(settings.jwt_key_id, current)]
+    if previous is not None and settings.jwt_previous_key_id is not None:
+        ring.append((settings.jwt_previous_key_id, previous))
+    return ring
 
 
 def _encode(payload: dict[str, Any]) -> str:
     settings = get_settings()
-    return jwt.encode(payload, _secret_for(payload["typ"]), algorithm=settings.jwt_algorithm)
+    kid, secret = _key_ring(payload["typ"])[0]
+    return jwt.encode(
+        payload,
+        secret,
+        algorithm=settings.jwt_algorithm,
+        headers={"kid": kid},
+    )
+
+
+def _decode_with_ring(token: str, expected_type: TokenType) -> dict[str, Any]:
+    """Verify a token against the key ring, selecting by ``kid`` when present.
+
+    Selecting by ``kid`` is what makes rotation safe: without it a token signed with the
+    old key would be rejected the moment the current key changes, or worse, accepted
+    indefinitely if every key were tried without bound.
+    """
+    settings = get_settings()
+    ring = _key_ring(expected_type)
+    try:
+        header = jwt.get_unverified_header(token)
+    except jwt.InvalidTokenError as exc:
+        raise UnauthorizedError("The token is invalid.", code=ErrorCode.AUTH_TOKEN_INVALID) from exc
+
+    kid = header.get("kid")
+    candidates = ring
+    if isinstance(kid, str):
+        candidates = [pair for pair in ring if pair[0] == kid]
+        if not candidates:
+            raise UnauthorizedError("The token is invalid.", code=ErrorCode.AUTH_TOKEN_INVALID)
+
+    last_error: Exception | None = None
+    for _kid, secret in candidates:
+        try:
+            return jwt.decode(
+                token,
+                secret,
+                algorithms=[settings.jwt_algorithm],
+                audience=settings.jwt_audience,
+                issuer=settings.jwt_issuer,
+                options={"require": ["exp", "iat", "sub", "jti"]},
+            )
+        except jwt.ExpiredSignatureError as exc:
+            # Expiry is key-independent: no point trying the other key for the same token.
+            raise UnauthorizedError(
+                "The token has expired.", code=ErrorCode.AUTH_TOKEN_EXPIRED
+            ) from exc
+        except jwt.InvalidTokenError as exc:
+            last_error = exc
+    raise UnauthorizedError(
+        "The token is invalid.", code=ErrorCode.AUTH_TOKEN_INVALID
+    ) from last_error
 
 
 def create_access_token(
@@ -147,22 +222,7 @@ def decode_token(token: str, expected_type: TokenType) -> TokenClaims:
     Raises :class:`UnauthorizedError` with a precise machine-readable code so the
     client knows whether to refresh (``AUTH_TOKEN_EXPIRED``) or re-authenticate.
     """
-    settings = get_settings()
-    try:
-        payload = jwt.decode(
-            token,
-            _secret_for(expected_type),
-            algorithms=[settings.jwt_algorithm],
-            audience=settings.jwt_audience,
-            issuer=settings.jwt_issuer,
-            options={"require": ["exp", "iat", "sub", "jti"]},
-        )
-    except jwt.ExpiredSignatureError as exc:
-        raise UnauthorizedError(
-            "The token has expired.", code=ErrorCode.AUTH_TOKEN_EXPIRED
-        ) from exc
-    except jwt.InvalidTokenError as exc:
-        raise UnauthorizedError("The token is invalid.", code=ErrorCode.AUTH_TOKEN_INVALID) from exc
+    payload = _decode_with_ring(token, expected_type)
 
     if payload.get("typ") != expected_type:
         raise UnauthorizedError("Unexpected token type.", code=ErrorCode.AUTH_TOKEN_INVALID)
