@@ -29,6 +29,15 @@ on:
         description: "Progress reads per second"
         required: false
         default: "12"
+      chaos_restart:
+        description: "Restart the API once mid-run (chaos drill)"
+        type: boolean
+        required: false
+        default: false
+      chaos_after_seconds:
+        description: "Seconds to wait before restarting the API"
+        required: false
+        default: "60"
   schedule:
     # Mondays 02:00 UTC, before the working week in Baghdad.
     - cron: "0 2 * * 1"
@@ -132,6 +141,7 @@ jobs:
         uses: grafana/setup-k6-action@v1
 
       - name: Run k6
+        if: ${{ github.event.inputs.chaos_restart != 'true' }}
         env:
           DURATION: ${{ github.event.inputs.duration || '5m' }}
           BROWSE_RPS: ${{ github.event.inputs.browse_rps || '80' }}
@@ -146,6 +156,44 @@ jobs:
             -e LEARN_RPS="$LEARN_RPS" \
             -e PROGRESS_RPS="$PROGRESS_RPS" \
             --summary-export loadtest/summary.json
+
+      - name: Run k6 with a mid-run restart
+        if: ${{ github.event.inputs.chaos_restart == 'true' }}
+        env:
+          DURATION: ${{ github.event.inputs.duration || '5m' }}
+          BROWSE_RPS: ${{ github.event.inputs.browse_rps || '80' }}
+          LEARN_RPS: ${{ github.event.inputs.learn_rps || '8' }}
+          PROGRESS_RPS: ${{ github.event.inputs.progress_rps || '12' }}
+          CHAOS_AFTER: ${{ github.event.inputs.chaos_after_seconds || '60' }}
+        run: |
+          set -euo pipefail
+          # A deliberate restart makes in-flight requests fail; the relaxed threshold is
+          # the point of the drill. What must not happen is a request that fails *after*
+          # the restarted API is ready again, which a sustained error rate would show.
+          MAX_FAIL_RATE=0.05 k6 run loadtest/k6/natiqo-mixed.js \
+            -e BASE_URL=http://127.0.0.1:8000 \
+            -e TOKENS_FILE="$PWD/loadtest/tokens.json" \
+            -e DURATION="$DURATION" \
+            -e BROWSE_RPS="$BROWSE_RPS" \
+            -e LEARN_RPS="$LEARN_RPS" \
+            -e PROGRESS_RPS="$PROGRESS_RPS" \
+            -e MAX_FAIL_RATE=0.05 \
+            --summary-export loadtest/summary.json &
+          K6_PID=$!
+          echo "Restarting the API after ${CHAOS_AFTER}s"
+          sleep "$CHAOS_AFTER"
+          kill -TERM "$(cat /tmp/natiqo-api.pid)" || true
+          sleep 2
+          nohup uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1 \
+            > /tmp/natiqo-api-chaos.log 2>&1 &
+          echo $! > /tmp/natiqo-api.pid
+          for attempt in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:8000/ready >/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          wait "$K6_PID"
 
       - name: Upload the summary
         if: always()

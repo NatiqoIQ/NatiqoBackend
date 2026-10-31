@@ -31,6 +31,7 @@
 // HTTP requests/second; the 2,000 RPS target in the plan is
 // BROWSE_RPS=400 LEARN_RPS=50 PROGRESS_RPS=66 (~1,400 reads + ~600 writes).
 //   DURATION              default 10m
+//   MAX_FAIL_RATE         default 0.005; raise it only for a deliberate chaos run
 //   ANSWERS_PER_SESSION   default 0 = answer every question in the sitting
 //   THINK_TIME_MS         default 0 = no pause between answers
 //   LESSON_IDS            optional comma-separated ids; otherwise the first
@@ -50,6 +51,7 @@ const USE_DEV_LOGIN = (__ENV.DEV_LOGIN || 'true') === 'true';
 const ANSWERS_PER_SESSION = Number(__ENV.ANSWERS_PER_SESSION || 0);
 const THINK_TIME_MS = Number(__ENV.THINK_TIME_MS || 0);
 const DURATION = __ENV.DURATION || '10m';
+const MAX_FAIL_RATE = Number(__ENV.MAX_FAIL_RATE || 0.005);
 
 const tokens = TOKENS_FILE
   ? new SharedArray('tokens', () => JSON.parse(open(TOKENS_FILE)))
@@ -95,7 +97,7 @@ export const options = {
     },
   },
   thresholds: {
-    http_req_failed: ['rate<0.005'],
+    http_req_failed: [`rate<${MAX_FAIL_RATE}`],
     'http_req_duration{kind:read}': ['p(95)<200', 'p(99)<500'],
     'http_req_duration{kind:write}': ['p(95)<300', 'p(99)<800'],
     checks: ['rate>0.99'],
