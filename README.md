@@ -40,6 +40,11 @@ worker, and is requeued if the claim outlives its 5-minute visibility timeout. A
 therefore execute a job twice, so handlers must be idempotent. A durable dead-letter queue
 is not implemented yet; an exhausted job is acknowledged and logged.
 
+The worker's scheduler enqueues two jobs a day, each deduplicated by date: expired refresh
+tokens, and AI usage rows older than `AI_USAGE_RETENTION_DAYS` (default 180; `0` disables
+the purge). Both delete in 5,000-row batches and commit between them, so neither holds a
+long lock or writes one unbounded WAL record.
+
 In Compose the schema is migrated by a one-shot `migrate` service before the API and worker
 start; the web image deliberately no longer runs `alembic upgrade head` on boot, so a
 rolling deploy cannot have several replicas racing the same DDL.

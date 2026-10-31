@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from app.core.logging import get_logger
 from app.core.time import utc_now
@@ -35,6 +35,8 @@ class WorkerContext:
     uow_factory: UowFactory
     #: Injected so a test can pin "now" instead of writing rows relative to real time.
     now: Callable[[], datetime] = utc_now
+    #: How long AI usage rows are kept. Zero disables the purge.
+    ai_usage_retention_days: int = 180
 
 
 def build_handlers(ctx: WorkerContext) -> dict[JobName, JobHandler]:
@@ -46,6 +48,7 @@ def build_handlers(ctx: WorkerContext) -> dict[JobName, JobHandler]:
     """
     return {
         JobName.CLEANUP_EXPIRED_TOKENS: _cleanup_expired_tokens(ctx),
+        JobName.PURGE_AI_USAGE: _purge_ai_usage(ctx),
     }
 
 
@@ -92,3 +95,47 @@ def _cleanup_expired_tokens(ctx: WorkerContext) -> JobHandler:
 
 
 __all__ = ["UowFactory", "WorkerContext", "build_handlers"]
+
+
+def _purge_ai_usage(ctx: WorkerContext) -> JobHandler:
+    """Delete AI usage rows older than the retention window, in bounded batches.
+
+    The usage log is append-only and grows with every model call. Its only live reader
+    is the budget check, which looks at today's rows; older rows exist for cost
+    attribution over a rolling window. Keeping them forever turns a small table into
+    one of the largest in the database, and one unbounded DELETE would hold locks and
+    write a single enormous WAL record.
+
+    The window is configuration, and a non-positive value disables the job rather than
+    deleting everything — the safe reading of "0 days" here is "keep", not "purge".
+    """
+
+    async def handle(job: Job) -> None:
+        if ctx.ai_usage_retention_days <= 0:
+            logger.info("worker.ai_usage_purge_disabled", job_id=str(job.job_id))
+            return
+
+        cutoff = ctx.now() - timedelta(days=ctx.ai_usage_retention_days)
+        batch_size = 5000
+        total = 0
+        async with ctx.uow_factory() as uow:
+            for _ in range(200):  # poison-loop guard, not a business limit
+                removed = await uow.ai_usage.purge_before(before=cutoff, limit=batch_size)
+                await uow.commit()
+                total += removed
+                if removed < batch_size:
+                    break
+            else:  # pragma: no cover - only if deletes stop taking effect
+                logger.warning(
+                    "worker.ai_usage_purge_truncated",
+                    removed=total,
+                    job_id=str(job.job_id),
+                )
+        logger.info(
+            "worker.ai_usage_purged",
+            removed=total,
+            older_than_days=ctx.ai_usage_retention_days,
+            job_id=str(job.job_id),
+        )
+
+    return handle

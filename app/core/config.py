@@ -236,6 +236,8 @@ class Settings(BaseSettings):
     ai_max_input_chars: int = 4000
     ai_max_output_tokens: int = 800
     ai_daily_user_budget_usd: float = 0.50
+    #: Days of AI usage kept for cost attribution. Zero disables the purge job.
+    ai_usage_retention_days: int = 180
     #: Bulkhead: the most upstream model calls one process will run at once. Beyond this
     #: the service falls back immediately instead of queueing behind a slow provider.
     ai_max_concurrent_requests: int = 20

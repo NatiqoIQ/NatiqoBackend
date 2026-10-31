@@ -175,12 +175,19 @@ async def schedule_daily_cleanup(
     """
     while not stop.is_set():
         today = clock()
-        job = Job(
-            name=JobName.CLEANUP_EXPIRED_TOKENS,
-            dedupe_key=f"{JobName.CLEANUP_EXPIRED_TOKENS}:{today.date().isoformat()}",
-        )
-        queued = await queue.enqueue(job)
-        logger.info("worker.cleanup_scheduled", queued=queued, job_id=str(job.job_id))
+        #: Two independent daily jobs. Both carry the date in their dedupe key, so a
+        #: restart re-presents the same key instead of enqueueing the work twice.
+        for name in (JobName.CLEANUP_EXPIRED_TOKENS, JobName.PURGE_AI_USAGE):
+            if stop.is_set():
+                break
+            job = Job(name=name, dedupe_key=f"{name}:{today.date().isoformat()}")
+            queued = await queue.enqueue(job)
+            logger.info(
+                "worker.cleanup_scheduled",
+                job=str(name),
+                queued=queued,
+                job_id=str(job.job_id),
+            )
         with contextlib.suppress(TimeoutError):
             await asyncio.wait_for(stop.wait(), timeout=interval_seconds)
 
@@ -222,7 +229,15 @@ async def main() -> None:
     queue = get_queue()
     stop = asyncio.Event()
     _install_stop_handlers(stop)
-    worker = Worker(queue, build_handlers(WorkerContext(uow_factory=make_uow)))
+    worker = Worker(
+        queue,
+        build_handlers(
+            WorkerContext(
+                uow_factory=make_uow,
+                ai_usage_retention_days=settings.ai_usage_retention_days,
+            )
+        ),
+    )
 
     try:
         await asyncio.gather(
