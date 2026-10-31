@@ -14,6 +14,7 @@ Guarantees, in order of importance:
 from __future__ import annotations
 
 import asyncio
+import time
 import weakref
 from collections.abc import Callable, Sequence
 from typing import Any
@@ -55,6 +56,66 @@ UsageRecorder = Callable[[AIUsage], None]
 _SHARED_BULKHEADS: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Semaphore] = (
     weakref.WeakKeyDictionary()
 )
+
+
+class _CircuitBreaker:
+    """Stop calling a provider that is failing, for a bounded cooldown.
+
+    The bulkhead bounds *concurrency*; this bounds *waste*. During a provider outage every
+    request would otherwise spend the whole timeout before falling back, which is exactly
+    when latency matters most and when the fallback text is already known to be good.
+
+    One breaker per event loop, like the bulkhead, because the service is request-scoped:
+    a per-instance breaker would reset on every request and never open.
+    """
+
+    def __init__(self) -> None:
+        self._failures = 0
+        self._opened_at: float | None = None
+
+    def allow(self, *, threshold: int, reset_seconds: float, now: float) -> bool:
+        if self._opened_at is None:
+            return True
+        if now - self._opened_at >= reset_seconds:
+            # Half-open: let the next call through as the probe. A success closes the
+            # breaker; a failure re-opens it immediately (see ``record_failure``).
+            self._opened_at = now
+            return True
+        return False
+
+    def record_success(self) -> None:
+        self._failures = 0
+        self._opened_at = None
+
+    def record_failure(self, *, threshold: int, now: float) -> None:
+        self._failures += 1
+        if self._opened_at is not None or self._failures >= threshold:
+            # Re-open on a failed half-open probe, or open on the threshold-th failure.
+            self._opened_at = now
+
+    @property
+    def is_open(self) -> bool:
+        return self._opened_at is not None
+
+
+#: One breaker per event loop, for the same reason as the bulkhead above.
+_SHARED_BREAKERS: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, _CircuitBreaker] = (
+    weakref.WeakKeyDictionary()
+)
+
+
+def _shared_breaker() -> _CircuitBreaker:
+    loop = asyncio.get_running_loop()
+    breaker = _SHARED_BREAKERS.get(loop)
+    if breaker is None:
+        breaker = _CircuitBreaker()
+        _SHARED_BREAKERS[loop] = breaker
+    return breaker
+
+
+def reset_circuit_breakers() -> None:
+    """Drop every breaker. Tests need a known state; a live process never calls this."""
+    _SHARED_BREAKERS.clear()
 
 
 def _shared_bulkhead() -> asyncio.Semaphore:
@@ -278,18 +339,46 @@ class AIService(AIServicePort):
         the deadline passes, so the provider connection is closed rather than left to
         finish invisibly.
         """
+        breaker = _shared_breaker()
+        now = time.monotonic()
+        if not breaker.allow(
+            threshold=self._settings.ai_circuit_failure_threshold,
+            reset_seconds=self._settings.ai_circuit_reset_seconds,
+            now=now,
+        ):
+            # No slot is taken and no HTTP call is made: the fallback is already known.
+            raise AIProviderError("ai circuit open after repeated provider failures")
+
         slots = self._slots()
         try:
             await asyncio.wait_for(slots.acquire(), timeout=0.05)
         except TimeoutError as exc:
+            # Saturation is our own bulkhead, not evidence that the provider is down.
             raise AIProviderError("ai provider saturated: too many concurrent requests") from exc
         try:
-            return await asyncio.wait_for(
-                self._provider.complete(request, context=context),
-                timeout=self._settings.ai_timeout_seconds,
-            )
-        except TimeoutError as exc:
-            raise AIProviderError("ai provider timed out") from exc
+            try:
+                response = await asyncio.wait_for(
+                    self._provider.complete(request, context=context),
+                    timeout=self._settings.ai_timeout_seconds,
+                )
+            except AIQuotaExceeded:
+                # A quota answer is a working provider telling us "no", not an outage.
+                breaker.record_success()
+                raise
+            except TimeoutError as exc:
+                breaker.record_failure(
+                    threshold=self._settings.ai_circuit_failure_threshold,
+                    now=time.monotonic(),
+                )
+                raise AIProviderError("ai provider timed out") from exc
+            except AIProviderError:
+                breaker.record_failure(
+                    threshold=self._settings.ai_circuit_failure_threshold,
+                    now=time.monotonic(),
+                )
+                raise
+            breaker.record_success()
+            return response
         finally:
             slots.release()
 

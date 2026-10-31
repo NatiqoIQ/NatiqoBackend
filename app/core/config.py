@@ -272,6 +272,11 @@ class Settings(BaseSettings):
     #: Bulkhead: the most upstream model calls one process will run at once. Beyond this
     #: the service falls back immediately instead of queueing behind a slow provider.
     ai_max_concurrent_requests: int = 20
+    #: Consecutive provider failures before the process stops calling the provider at all
+    #: for ``AI_CIRCUIT_RESET_SECONDS``. Without this, every request pays the full timeout
+    #: again during an outage; with it, the deterministic fallback answers immediately.
+    ai_circuit_failure_threshold: int = 5
+    ai_circuit_reset_seconds: float = 30.0
 
     # ---------------------------------------------------------- payments
     payment_provider: Literal["none", "stripe"] = "none"
