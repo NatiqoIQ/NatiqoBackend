@@ -5177,3 +5177,35 @@ async def test_a_question_with_learner_history_is_not_hard_deleted(
         .where(QuizAnswerModel.question_id == uuid.UUID(question["id"]))
     )
     assert remaining == 1, "the learner's answer must survive the refusal"
+
+
+@pytest.mark.asyncio
+async def test_publishing_invalidates_the_cached_catalogue_tree(
+    client: AsyncClient, content_db: AsyncSession
+) -> None:
+    """A publish must be visible on the next public read, not after the cache TTL.
+
+    The tree is cached for 30 seconds. Without an explicit invalidation an editor would
+    press publish and see the old catalogue, which reads as a broken button. The admin
+    router drops the key after any unsafe content write; this test warms the cache with
+    an empty tree first, then authors and publishes, and expects the lesson to appear.
+    """
+    headers = await _grant_admin(client, content_db)
+
+    empty = await client.get("/api/v1/content/tree")
+    assert empty.status_code == 200
+    assert empty.json()["items"] == []
+
+    ids = await _published_lesson(client, headers)
+    published = await client.post(
+        f"/api/v1/admin/content/lessons/{ids['lesson']}/publish", headers=headers
+    )
+    assert published.status_code == 200, published.text
+
+    tree = await client.get("/api/v1/content/tree")
+
+    assert tree.status_code == 200
+    levels = tree.json()["items"]
+    assert [level["id"] for level in levels] == [ids["level"]]
+    assert [unit["id"] for unit in levels[0]["units"]] == [ids["unit"]]
+    assert [lesson["id"] for lesson in levels[0]["units"][0]["lessons"]] == [ids["lesson"]]

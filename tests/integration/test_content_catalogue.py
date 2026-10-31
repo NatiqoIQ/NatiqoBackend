@@ -727,3 +727,68 @@ async def test_the_tree_costs_a_fixed_number_of_queries(
     assert tree[0].units[0].lesson_count == 3
     assert len(tree[0].units[0].lessons) == 3
     assert tree[0].units[0].lessons[0].question_count == 1
+
+
+@pytest.mark.asyncio
+async def test_a_second_tree_read_is_served_without_touching_the_database(
+    uow: SqlAlchemyUnitOfWork, session: AsyncSession
+) -> None:
+    """The cache is what turns four queries per launch into zero for the next request.
+
+    The first read assembles and stores the tree; the second must return an equal tree
+    without issuing a single statement. Equality matters as much as the count: a cache
+    that changes a title or drops a lesson is worse than no cache.
+    """
+    from sqlalchemy import event
+
+    from app.platform.cache.memory import InMemoryCache
+
+    level = _level_row(session, code="A1", position=1)
+    unit = _unit_row(session, level.id, position=1)
+    lesson = _lesson_row(session, unit.id, position=1)
+    _question_row(session, lesson.id)
+    await session.commit()
+
+    cache = InMemoryCache()
+    cached_service = CatalogueService(uow, cache, ttl_seconds=60)
+
+    statements: list[str] = []
+
+    def _record(conn: object, cursor: object, statement: str, *args: object) -> None:
+        statements.append(statement)
+
+    sync_engine = session.bind.sync_engine  # type: ignore[union-attr]
+    event.listen(sync_engine, "before_cursor_execute", _record)
+    try:
+        first = await cached_service.tree()
+        after_first = len(statements)
+        second = await cached_service.tree()
+    finally:
+        event.remove(sync_engine, "before_cursor_execute", _record)
+
+    assert after_first == 4
+    assert len(statements) == after_first, "the second read must not query"
+    assert second == first
+    assert second[0].units[0].lessons[0].title == "Greetings"
+
+
+@pytest.mark.asyncio
+async def test_a_malformed_cache_payload_falls_back_to_the_database(
+    uow: SqlAlchemyUnitOfWork, session: AsyncSession
+) -> None:
+    """A cache is an optimisation; a corrupt value must not be a 500 on the first screen."""
+    from app.platform.cache.memory import InMemoryCache
+
+    level = _level_row(session, code="A1", position=1)
+    unit = _unit_row(session, level.id, position=1)
+    lesson = _lesson_row(session, unit.id, position=1)
+    _question_row(session, lesson.id)
+    await session.commit()
+
+    cache = InMemoryCache()
+    await cache.set(cache.build_key("catalogue", "tree", "v1"), "{not json")
+
+    tree = await CatalogueService(uow, cache, ttl_seconds=60).tree()
+
+    assert len(tree) == 1
+    assert tree[0].units[0].lessons[0].title == "Greetings"

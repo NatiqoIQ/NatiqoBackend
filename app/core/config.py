@@ -92,6 +92,10 @@ class Settings(BaseSettings):
     #: both. Empty means "reuse REDIS_URL" for development only.
     queue_redis_url: str | None = None
     cache_ttl_seconds: int = 300
+    #: How long the assembled catalogue tree may be served from the cache. Short on
+    #: purpose: publishing is rare but an editor expects to see it, and 30s of staleness
+    #: costs one rebuild while a longer TTL would make "I published it" look broken.
+    catalogue_cache_ttl_seconds: int = 30
     queue_enabled: bool = False
 
     # ----------------------------------------------------------- security

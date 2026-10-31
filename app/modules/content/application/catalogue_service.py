@@ -21,10 +21,12 @@ by a single grouped aggregate regardless of page size.
 
 from __future__ import annotations
 
+import json
 import uuid
 from collections import defaultdict
 
 from app.core.errors import ErrorCode, NotFoundError, ValidationFailed
+from app.core.logging import get_logger
 from app.core.pagination import (
     InvalidCursor,
     PageResult,
@@ -53,6 +55,18 @@ from app.modules.content.domain.entities import (
     UnitPlacement,
 )
 from app.modules.content.domain.policy import pre_attempt_choices, pre_attempt_prompts
+from app.platform.cache.port import CachePort
+
+logger = get_logger("catalogue.service")
+
+#: Cache format version. Bump when a view gains or renames a field so an old payload is
+#: a miss rather than a KeyError on the read path.
+_TREE_CACHE_VERSION = "v1"
+
+
+def tree_cache_key(cache: CachePort) -> str:
+    """The one key the tree is stored under, and the one the editor invalidates."""
+    return cache.build_key("catalogue", "tree", _TREE_CACHE_VERSION)
 
 
 def _key(row: Level | Unit | Lesson) -> tuple[int, uuid.UUID]:
@@ -60,8 +74,17 @@ def _key(row: Level | Unit | Lesson) -> tuple[int, uuid.UUID]:
 
 
 class CatalogueService:
-    def __init__(self, uow: UnitOfWorkProtocol) -> None:
+    def __init__(
+        self,
+        uow: UnitOfWorkProtocol,
+        cache: CachePort | None = None,
+        *,
+        ttl_seconds: int = 30,
+    ) -> None:
         self._uow = uow
+        self._cache = cache
+        self._ttl_seconds = ttl_seconds
+        self._tree_key = tree_cache_key(cache) if cache is not None else ""
 
     # ------------------------------------------------------------------ levels
     async def list_levels(self, *, limit: int, cursor: str | None = None) -> PageResult[LevelView]:
@@ -199,6 +222,10 @@ class CatalogueService:
         that is truncated, not paged: this endpoint is a single cached document, and the
         real catalogue is far below the cap.
         """
+        cached = await self._cached_tree()
+        if cached is not None:
+            return cached
+
         levels = await self._uow.levels.list_published(limit=MAX_PAGE_SIZE, after=None)
         level_codes = {level.code for level in levels}
         units = [
@@ -252,10 +279,138 @@ class CatalogueService:
                     units=tuple(unit_nodes),
                 )
             )
-        return tuple(nodes)
+        tree = tuple(nodes)
+        await self._store_tree(tree)
+        return tree
+
+    # ------------------------------------------------------------ tree cache
+    async def _cached_tree(self) -> tuple[LevelNodeView, ...] | None:
+        """The tree from the shared cache, or ``None`` to rebuild.
+
+        A cache is an optimisation on a read, never a precondition for one: a Redis
+        outage, a malformed payload or a container change must all fall through to the
+        database rather than become a 500 on the first screen of the app. That is why
+        every failure here is logged and swallowed.
+        """
+        if self._cache is None or self._ttl_seconds <= 0:
+            return None
+        try:
+            raw = await self._cache.get(self._tree_key)
+        except Exception as exc:  # noqa: BLE001 - a cache outage must not fail the read
+            logger.warning("catalogue.cache_read_failed", error=str(exc)[:200])
+            return None
+        if not raw:
+            return None
+        try:
+            return _decode_tree(raw)
+        except (KeyError, TypeError, ValueError):
+            # A payload written by an older shape, or a truncated value. Rebuilding is
+            # cheap and correct; serving half a tree is neither.
+            logger.warning("catalogue.cache_payload_invalid")
+            return None
+
+    async def _store_tree(self, tree: tuple[LevelNodeView, ...]) -> None:
+        if self._cache is None or self._ttl_seconds <= 0:
+            return
+        try:
+            await self._cache.set(self._tree_key, _encode_tree(tree), ttl_seconds=self._ttl_seconds)
+        except Exception as exc:  # noqa: BLE001 - a failed write is just a miss next time
+            logger.warning("catalogue.cache_write_failed", error=str(exc)[:200])
 
 
 # ------------------------------------------------------------------- internals
+def _encode_tree(tree: tuple[LevelNodeView, ...]) -> str:
+    """JSON for the cache.
+
+    UTF-8 rather than ASCII escapes: Arabic titles are the common case, and escaping
+    every letter triples the payload for no reason.
+    """
+    return json.dumps(
+        [
+            {
+                "id": str(level.id),
+                "code": level.code,
+                "title": level.title,
+                "description": level.description,
+                "position": level.position,
+                "unit_count": level.unit_count,
+                "units": [
+                    {
+                        "id": str(unit.id),
+                        "level_code": unit.level_code,
+                        "title": unit.title,
+                        "description": unit.description,
+                        "position": unit.position,
+                        "lesson_count": unit.lesson_count,
+                        "lessons": [
+                            {
+                                "id": str(lesson.id),
+                                "unit_id": str(lesson.unit_id),
+                                "title": lesson.title,
+                                "summary": lesson.summary,
+                                "position": lesson.position,
+                                "estimated_minutes": lesson.estimated_minutes,
+                                "question_count": lesson.question_count,
+                            }
+                            for lesson in unit.lessons
+                        ],
+                    }
+                    for unit in level.units
+                ],
+            }
+            for level in tree
+        ],
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+
+
+def _decode_tree(raw: str) -> tuple[LevelNodeView, ...]:
+    """Rebuild the views from :func:`_encode_tree`.
+
+    Kept next to the encoder so the two cannot drift. Any shape mismatch raises and the
+    caller falls back to the database; this is validation by construction, not a second
+    schema to maintain.
+    """
+    payload = json.loads(raw)
+    if not isinstance(payload, list):
+        raise TypeError("catalogue payload is not a list")
+    return tuple(
+        LevelNodeView(
+            id=uuid.UUID(level["id"]),
+            code=str(level["code"]),
+            title=str(level["title"]),
+            description=level["description"],
+            position=int(level["position"]),
+            unit_count=int(level["unit_count"]),
+            units=tuple(
+                UnitNodeView(
+                    id=uuid.UUID(unit["id"]),
+                    level_code=str(unit["level_code"]),
+                    title=str(unit["title"]),
+                    description=unit["description"],
+                    position=int(unit["position"]),
+                    lesson_count=int(unit["lesson_count"]),
+                    lessons=tuple(
+                        LessonSummaryView(
+                            id=uuid.UUID(lesson["id"]),
+                            unit_id=uuid.UUID(lesson["unit_id"]),
+                            title=str(lesson["title"]),
+                            summary=str(lesson["summary"]),
+                            position=int(lesson["position"]),
+                            estimated_minutes=int(lesson["estimated_minutes"]),
+                            question_count=int(lesson["question_count"]),
+                        )
+                        for lesson in unit["lessons"]
+                    ),
+                )
+                for unit in level["units"]
+            ),
+        )
+        for level in payload
+    )
+
+
 def _parse_code(code: str | CEFRLevel) -> CEFRLevel | None:
     """A code that is not CEFR is treated as *absent* rather than *invalid*.
 

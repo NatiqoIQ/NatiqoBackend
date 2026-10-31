@@ -29,7 +29,7 @@ from app.modules.admin.application.content_service import AdminContentService
 from app.modules.admin.application.stats_service import AdminStatsService
 from app.modules.admin.application.users_service import AdminUserService
 from app.modules.ai.application.tutor_service import AiTutorService
-from app.modules.content.application.catalogue_service import CatalogueService
+from app.modules.content.application.catalogue_service import CatalogueService, tree_cache_key
 from app.modules.gamification.application.handlers import build_gamification_bus
 from app.modules.gamification.application.service import GamificationService
 from app.modules.media.application.service import MediaService
@@ -296,19 +296,42 @@ AiTutorServiceDep = Annotated[AiTutorService, Depends(get_ai_tutor_service)]
 
 
 # ------------------------------------------------------------------- catalogue
-def get_catalogue_service(uow: UowDep) -> CatalogueService:
+def get_catalogue_service(uow: UowDep, cache: CacheDep, settings: SettingsDep) -> CatalogueService:
     """Build a request-scoped :class:`CatalogueService`.
 
     Bound to the request's unit of work, like every other service, so the four read
-    endpoints share one session and one transaction. It takes no cache: the catalogue is
-    public data that changes only when an editor publishes, and an HTTP cache header is
-    the right place for that decision, not a process-wide ``lru_cache`` that would keep
-    serving a retired level to the next process to start.
+    endpoints share one session and one transaction. The shared cache is passed because
+    the tree is the one response every cold start downloads: four queries and a full
+    nesting pass per launch, for a document that changes only when an editor publishes.
+    Its TTL is deliberately short (``CATALOGUE_CACHE_TTL_SECONDS``); a cache failure
+    falls through to the database rather than failing the read.
     """
-    return CatalogueService(uow)
+    return CatalogueService(uow, cache, ttl_seconds=settings.catalogue_cache_ttl_seconds)
 
 
 CatalogueServiceDep = Annotated[CatalogueService, Depends(get_catalogue_service)]
+
+
+async def invalidate_catalogue_tree(request: Request, cache: CacheDep) -> AsyncIterator[None]:
+    """Drop the cached tree after an editorial write.
+
+    The TTL alone would leave an editor staring at the old catalogue for up to 30
+    seconds after pressing publish. Hanging this off the admin router rather than every
+    service method means a write path added later cannot forget it: any successful
+    unsafe request under ``/admin/content`` invalidates the one key.
+
+    Runs after the response, and swallows its own failure: failing to invalidate is a
+    staleness bug bounded by the TTL, while a 500 after a successful publish is not.
+    """
+    yield
+    if request.method not in {"POST", "PUT", "PATCH", "DELETE"}:
+        return
+    if not request.url.path.startswith("/api/v1/admin/content"):
+        return
+    try:
+        await cache.delete(tree_cache_key(cache))
+    except Exception as exc:  # noqa: BLE001 - TTL is the backstop
+        logger.warning("catalogue.cache_invalidate_failed", error=str(exc)[:200])
 
 
 # ------------------------------------------------------------------------ quiz

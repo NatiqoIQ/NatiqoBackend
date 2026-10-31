@@ -30,6 +30,7 @@ from app.api.deps import (
     AdminRateLimitDep,
     AdminStatsServiceDep,
     AdminUserServiceDep,
+    invalidate_catalogue_tree,
 )
 from app.core.responses import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, Page, build_page
 from app.modules.admin.application.dto import (
@@ -89,7 +90,7 @@ from app.modules.admin.presentation.schemas import (
 from app.modules.users.domain.entities import User
 from app.modules.users.presentation.routes import require_admin
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(invalidate_catalogue_tree)])
 
 Limit = Annotated[int, Query(ge=1, le=MAX_PAGE_SIZE)]
 Cursor = Annotated[str | None, Query(description="Opaque. Pass back meta.nextCursor verbatim.")]
