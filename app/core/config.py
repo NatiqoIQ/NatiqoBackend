@@ -108,11 +108,19 @@ class Settings(BaseSettings):
 
     # -------------------------------------------------------------- redis
     redis_url: str | None = None
+    #: A cache is optional, but a *hung* cache is not: without a socket timeout a
+    #: Redis that accepts connections and stops answering holds an API request open
+    #: for as long as the client will wait. Half a second is longer than any healthy
+    #: GET/SET and short enough that the request falls through to the database.
+    redis_cache_timeout_seconds: float = 0.5
     #: Optional second Redis for background jobs. Separate on purpose: the cache needs
     #: ``allkeys-lru`` so memory pressure evicts the least useful entry, while the queue
     #: needs ``noeviction`` so a job is never silently discarded. One instance cannot be
     #: both. Empty means "reuse REDIS_URL" for development only.
     queue_redis_url: str | None = None
+    #: Must exceed the worker's blocking ``BLMOVE`` (1 s) or every idle poll would
+    #: time out. Five seconds still bounds a hung queue server.
+    redis_queue_timeout_seconds: float = 5.0
     cache_ttl_seconds: int = 300
     #: How long the assembled catalogue tree may be served from the cache. Short on
     #: purpose: publishing is rare but an editor expects to see it, and 30s of staleness

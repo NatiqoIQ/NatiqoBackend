@@ -139,6 +139,19 @@ def _extra_gauges() -> list[str]:
         lines.append(f"natiqo_ai_circuit_open {1 if circuit_open() else 0}")
     except Exception:  # noqa: BLE001, S110 - the AI module may not be loaded
         pass
+    try:
+        from app.platform.cache import stats as cache_stats
+
+        counters = cache_stats.snapshot()
+        if counters:
+            lines.append("# HELP natiqo_cache_requests_total Cache reads by area and result.")
+            lines.append("# TYPE natiqo_cache_requests_total counter")
+            for (area, result), count in sorted(counters.items()):
+                lines.append(
+                    f"natiqo_cache_requests_total{{{_labels(area=area, result=result)}}} {count}"
+                )
+    except Exception:  # noqa: BLE001, S110 - a scrape must never fail because a gauge failed
+        pass
     return lines
 
 

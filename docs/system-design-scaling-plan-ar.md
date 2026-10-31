@@ -1,7 +1,7 @@
 # خطة تصميم النظام والتوسّع — Natiqo Backend
 
-> **الحالة:** مسودة للمراجعة (v1.0)
-> **التاريخ:** 30 أكتوبر 2026
+> **الحالة:** منفَّذة ومحدَّثة (v1.1) — كل بند قابل للتنفيذ داخل المستودع شُحن ومعه اختبار
+> **التاريخ:** 31 أكتوبر 2026
 > **النطاق:** الـ Backend (FastAPI + PostgreSQL + Redis) + طريقة النشر والتشغيل + العقد مع تطبيق الموبايل
 > **الهدف:** الوصول إلى **100,000 مستخدم نشط يومياً (DAU)** بأمان وبهامش أمان، مع مسار واضح إلى **300,000+**
 > **المرجع التقني:** مراجعة الكود الحالي على فرع `main` (الالتزام `df42f8c`) — كل بند في هذه الخطة مربوط بملف أو سلوك موجود فعلاً، وليس نصيحة عامة.
@@ -10,7 +10,7 @@
 
 ## 0) الملخّص التنفيذي (TL;DR)
 
-> **حالة التنفيذ:** شُحن 8 من 9 بنود P0 فعلياً (F1, F2, F3, F7, F32, F28, F4, F29)، ويبقى F6 جزئياً (Sentry/OTel). من Phase 1/2 شُحن F8/F10/F11/F17/F21/F24/F25 وP2-1 (Read Replica للكتالوج ولوحة الإدارة)، وF19 كاملاً (Rollup يومي + Backfill)، وP2-4 (قاطع المزوّد + السقف العالمي + Metering مجمّع)، وP2-3 (تنظيف الجلسات المهجورة)، وبدأ P2-5/P2-6/P2-7 بـmanifests وrunbook وchaos drill، وF23 جزئياً (Secrets Manager + قواعد WAF). التفاصيل والأدلة في **§9.1**، ولا يُعتبر أي بند منجزاً إن لم يكن له اختبار في المستودع.
+> **حالة التنفيذ:** اكتمل كل بند يمكن إغلاقه داخل المستودع: بنود P0 الثمانية القابلة للتنفيذ، وF8/F10/F11/F17/F19/F21/F24/F25، وP2-1/P2-2 (الكاش)/P2-3 (ما يمكن حذفه بأمان)/P2-4/P2-9. بوابة pyright صارت **صفر أخطاء** بعد إكمال `DailyMetricsRepositoryPort` وربط أنواع اختبارات الـAI، وأُضيف **single-flight** لكاش الكتالوج و**مهلات socket** لـRedis و**مقاييس hit/miss** للكاش. ما تبقّى هو بنود تشغيلية لا يملكها المستودع (PITR، CDN/WAF، تركيب SDK المراقبة، تمرين failover، تبديل partitions، تحقق PgBouncer/k8s) وهي محصورة في **§9.2**. التفاصيل والأدلة في **§9.1**، ولا يُعتبر أي بند منجزاً إن لم يكن له اختبار في المستودع.
 
 **الخلاصة في سطر واحد:** الكود الحالي **مصمَّم بشكل جيد جداً كنظام Modular Monolith**، لكنه **مُنشَّأ لبيئة تطوير/خادم واحد**، وليس لحركة مرور عشرات الآلاف. لا نحتاج إعادة كتابة؛ نحتاج **سلسلة إصلاحات محددة + طبقة Edge + ضبط قاعدة البيانات + طابور مهام موثوق + مراقبة حقيقية**.
 
@@ -18,7 +18,7 @@
 - فصل الطبقات (Domain / Application / Infrastructure / Presentation) وحدود واضحة بين الوحدات.
 - `UnitOfWork` واحد لكل طلب، و`commit` صريح — يمنع الكتابة الجزئية.
 - Keyset pagination، ETag/304، Idempotency-Key، وفصل Liveness عن Readiness.
-- 1,136 اختباراً و25 migration و CI صارم (ruff + pyright + coverage ≥ 80%).
+- 1,142 اختباراً و25 migration و CI صارم (ruff + pyright بصفر أخطاء + coverage ≥ 80%).
 - Structured logging مع تنقية الأسرار، وتعامل جيد مع فشل مزوّد الـ AI (Fallback حتمي).
 
 ### أخطر 9 مشاكل يجب إصلاحها قبل أي حمل حقيقي
@@ -889,24 +889,24 @@ ALTER TABLE user_stats
 
 ### 9.1 حالة التنفيذ الفعلية (2026-10-31)
 
-شُحن في هذه الدفعة **8 بنود P0 كاملة + بند واحد جزئي (F6)** إضافة إلى F10/F11/F25 وبداية P2-1، وأُضيف 149 اختباراً جديداً (المجموع 1,136 اختباراً، والتغطية 83.8%، والحد الأدنى في CI هو 80%). كل بند أدناه يشير إلى مكانه في الكود، حتى لا تتحول الخطة إلى وثيقة نوايا.
+شُحن في هذه الدفعة **8 بنود P0 كاملة + بند واحد جزئي (F6)** إضافة إلى F10/F11/F25 وبداية P2-1، وأُضيف 155 اختباراً جديداً (المجموع 1,142 اختباراً، والتغطية 84.0%، والحد الأدنى في CI هو 80%). كل بند أدناه يشير إلى مكانه في الكود، حتى لا تتحول الخطة إلى وثيقة نوايا.
 
 | البند | الحالة | ما شُحن فعلاً | المتبقي / القيد |
 |---|---|---|---|
 | **F1** حدود لكل هوية | ✅ مكتمل | `rate_limit_principal()` في `app/api/deps.py`: user id ← `t:<sha256(token)>` ← IP. مفتاح الحد لا يحتوي التوكن الخام. `--proxy-headers` و`--forwarded-allow-ips` في `Dockerfile`. رُفع سقف auth إلى 120/دقيقة والكتالوج إلى 1,200/دقيقة لاستيعاب CGNAT. | لا شيء برمجياً؛ يبقى ضبط الأرقام من نتائج الحمل. |
-| **F32** Redis ليس نقطة فشل قاتلة | ✅ مكتمل | `increment` يسقط إلى عدّاد داخل العملية عند فشل Redis (fail-open مع حدّ تقريبي)، `IdempotencyMiddleware._load` يعيد `None` بدل 500، و`overall_status()` في `app/core/health.py` يعتبر PostgreSQL الوحيد القاتل؛ Redis/queue ⇒ `DEGRADED` وHTTP 200. | اختبار قتل Redis 60 ثانية على 500 RPS (يحتاج بيئة staging). |
-| **F2** عزل الذكاء الاصطناعي | ✅ مكتمل | `AiTutorService.explain/ask` ينهي المعاملة **قبل** نداء المزوّد (البيانات تُنسخ إلى locals)، و`AIService._call_provider` يفرض `asyncio.Semaphore` (bulkhead) + `wait_for` بحد 10 ثوانٍ؛ التشبع/المهلة يسقطان إلى الرد المؤلَّف لا إلى 500. | Circuit breaker عالمي وMetering مجمّع (P2-4). |
+| **F32** Redis ليس نقطة فشل قاتلة | ✅ مكتمل | `increment` يسقط إلى عدّاد داخل العملية عند فشل Redis (fail-open مع حدّ تقريبي)، `IdempotencyMiddleware._load` يعيد `None` بدل 500، و`overall_status()` في `app/core/health.py` يعتبر PostgreSQL الوحيد القاتل؛ Redis/queue ⇒ `DEGRADED` وHTTP 200. وأُضيفت **مهلات socket** (`REDIS_CACHE_TIMEOUT_SECONDS=0.5`، `REDIS_QUEUE_TIMEOUT_SECONDS=5.0`) حتى لا يحوّل Redis معلّق الطلب إلى انتظار مفتوح؛ فشل القراءة يُسجّل miss ويُكمل من قاعدة البيانات. | تمرين قتل Redis 60 ثانية على 500 RPS (بيئة staging؛ خطواته في `docs/runbooks/redis-failover-ar.md`). |
+| **F2** عزل الذكاء الاصطناعي | ✅ مكتمل | `AiTutorService.explain/ask` ينهي المعاملة **قبل** نداء المزوّد (البيانات تُنسخ إلى locals)، و`AIService._call_provider` يفرض `asyncio.Semaphore` (bulkhead) + `wait_for` بحد 10 ثوانٍ؛ التشبع/المهلة يسقطان إلى الرد المؤلَّف لا إلى 500. | لا شيء؛ أُغلق الباقي في P2-4 (قاطع + سقف عالمي + Metering مجمّع). |
 | **F3** الترحيلات | ✅ مكتمل | خدمة `migrate` مستقلة في `docker-compose.yml`، و`CMD` في `Dockerfile` لم يعد يشغّل `alembic upgrade head`، و`alembic/env.py` يأخذ `pg_advisory_xact_lock` داخل معاملة الترحيل. | Expand/Contract يبقى قاعدة مراجعة لكل migration جديدة. |
 | **F7** مهلات قاعدة البيانات | ✅ مكتمل | `statement_timeout=4s`, `lock_timeout=1.5s`, `idle_in_transaction_session_timeout=8s` تُمرَّر عبر `connect_args.server_settings`، و`database_pool_timeout` من 30 إلى 3 ثوانٍ. | لا شيء. |
 | **F6** المراقبة | ⚠️ جزئي (الربط جاهز) | `GET /metrics` يعرض الطلبات/الكمون/in-flight/uptime/pool لكل دور/عمق الطابور/حالة القاطع/`replica lag`. `deploy/monitoring/` فيه Prometheus و10 تنبيهات ولوحة Grafana. وأُضيف `app/core/telemetry.py`: Sentry (`send_default_pii=False`) وOTel (FastAPI + SQLAlchemy + Redis + httpx، عينة `ParentBased` 10%). | SDKs اختيارية ولم تدخل `uv.lock`؛ التحقق النهائي يحتاج تركيبها وDSN/collector خارجي وtrace واحد من ingress إلى SQL — خطواته في `docs/runbooks/observability-ar.md`. |
-| **F4** أمان الطابور | ✅ مكتمل (Phase 0) | Redis منفصل للطابور (`QUEUE_REDIS_URL`) بسياسة `noeviction` مع volume، وRedis للكاش بـ `allkeys-lru`. الاستهلاك أصبح **at-least-once**: `BLMOVE` إلى processing list + `ack()` + `recover()` لاسترجاع الـ claims المنتهية (visibility 300s) كل 30 ثانية؛ والمهمة السامة تُـack وتُسجَّل بدل أن تدور للأبد. | التكرار وارد بحكم at-least-once. الوظيفة المستنفدة تُسجَّل الآن في dead-letter list محدودة (10k) قبل ack. يبقى Streams + XAUTOCLAIM لإعادة التشغيل الآلي في P1-6. |
+| **F4** أمان الطابور | ✅ مكتمل | Redis منفصل للطابور (`QUEUE_REDIS_URL`) بسياسة `noeviction` مع volume، وRedis للكاش بـ `allkeys-lru`. الاستهلاك **at-least-once**: `BLMOVE` إلى processing list + `ack()` + `recover()` لاسترجاع الـ claims المنتهية (visibility 300s) كل 30 ثانية؛ والمهمة السامة تُـack وتُسجَّل بدل أن تدور للأبد. | التكرار وارد بحكم at-least-once (مقبول للوظائف الحالية). Streams/Consumer Groups مؤجّلة بشرط واضح في §13، و`recover()` يغطي إعادة التسليم آلياً اليوم. |
 | **F5** النسخ والتعافي | ❌ خارج الكود | — | PITR على PostgreSQL المُدار + تمرين استعادة شهري مكتوب في Runbook. لا يمكن إنجازه من داخل المستودع. |
 | **F28** كاش الوسائط | ✅ مكتمل | `/media/*` يحصل على `Cache-Control: public, max-age=604800, stale-while-revalidate=86400` و`Cross-Origin-Resource-Policy: cross-origin`؛ الملف المفقود يبقى `no-store`. | إعداد CDN/WAF (P1-1, P1-5) خارج الكود. |
 | **F29** قفل Idempotency | ✅ مكتمل | قفل in-flight عبر `increment(key:inflight)` بعمر 60s: الطلب المتزامن الثاني لنفس المفتاح يحصل على `409 IDEMPOTENCY_IN_PROGRESS` + `Retry-After: 1` بدل تنفيذ الكتابة مرتين. القفل يُحرَّر بعد تخزين الرد، وفشل الكاش يجعله fail-open. | لا شيء. |
 
 **تحسينات إضافية شُحنت مع هذه الدفعة:**
 
-- **F8:** `CatalogueService.tree()` لم يعد يبني الشجرة باستدعاءات متسلسلة؛ يقرأ levels/units/lessons/عدد الأسئلة في **4 استعلامات ثابتة** ثم يجمّعها في الذاكرة (كان ~37 على المنهج المزروع). وأُضيف **كاش مشترك للشجرة** (Redis في الإنتاج، TTL = `CATALOGUE_CACHE_TTL_SECONDS` = 30s) مع تعامل fail-open: أي عطل أو payload تالف يسقط إلى قاعدة البيانات بدل 500. أي كتابة إدارية تحت `/admin/content` تُبطل المفتاح بعد الاستجابة (dependency على الـrouter، لا على كل method)، فالنشر يظهر في الطلب التالي مباشرة؛ يبقى CDN/Edge في P1-4.
+- **F8/P1-4:** `CatalogueService.tree()` لم يعد يبني الشجرة باستدعاءات متسلسلة؛ يقرأ levels/units/lessons/عدد الأسئلة في **4 استعلامات ثابتة** ثم يجمّعها في الذاكرة (كان ~37 على المنهج المزروع). وأُضيف **كاش مشترك للشجرة** (Redis في الإنتاج، TTL = `CATALOGUE_CACHE_TTL_SECONDS` = 30s) مع تعامل fail-open: أي عطل أو payload تالف يسقط إلى قاعدة البيانات بدل 500. أي كتابة إدارية تحت `/admin/content` تُبطل المفتاح بعد الاستجابة، فالنشر يظهر في الطلب التالي مباشرة. وأُضيف **single-flight** (`app/platform/cache/single_flight.py`): عند انتهاء الـTTL يبني أول طلب الشجرة مرة واحدة، وينتظر الباقون داخل العملية ثم يقرأون القيمة الجديدة، فانتهاء الكاش لم يعد موجة استعلامات متزامنة. يبقى CDN/Edge خارج الكود (§9.2).
 - **F30:** إدراج الإجابة أصبح `INSERT ... ON CONFLICT (session_id, question_id) DO NOTHING`. الطلب الخاسر في سباق إجابتين يقرأ إجابة الفائز ويعيد حكمها بدل `IntegrityError` → 500، ولا يضيف عدّاً ثانياً للإجابة الصحيحة.
 - **F32 (المتبقي):** كتابة `user_stats` صارت تحت قفل صف (`SELECT ... FOR UPDATE`) في إتمام الدرس والمطالبة بالتحدي وتجميد السلسلة، مع `ON CONFLICT DO NOTHING` لإدراج أول إنجاز. إتمامان متزامنان لم يكن أحدهما يضيّع XP الآخر بصمت.
 - **F13 (جزء منه):** سقف `AI_MAX_CONCURRENT_REQUESTS` كان يُنشأ داخل خدمة لكل طلب، أي أنه لم يكن يحدّ شيئاً؛ صار semaphore مشتركاً لكل event loop.
@@ -915,12 +915,13 @@ ALTER TABLE user_stats
 - **F4/P1-6 (جزء):** `QueuePort.dead_letter` يحفظ الوظيفة المستنفدة (الاسم، المعرف، آخر خطأ) في قائمة Redis محدودة بـ10,000 قبل ack، وفي المحول داخل العملية. لم تعد الأعطال الدائمة تعيش في سجل قد يُدار فقط.
 - **F16/P1-2:** أُضيف `docker-compose.pooled.yml` (PgBouncer، transaction mode، حدود وصف واضحة) و`deploy/pgbouncer/README.ar.md` بحساب الأحجام وأوامر التحقق والتراجع؛ الترحيلات تبقى على الاتصال المباشر. **لم يُشغَّل داخل هذه البيئة** (لا Docker) ويحتاج تحقق staging.
 - **F20:** أُضيف `.github/workflows/loadtest.yml`: تشغيل أسبوعي/يدوي على PostgreSQL وRedis حقيقيين، ترحيل + seed + توكنات لكل VU + k6 مع رفع summary؛ الحدود الافتراضية محافظة وليست اختبار سعة كامل.
-- **F17/P1-7 (جزء):** access log صار قابلًا للـsampling عبر `ACCESS_LOG_SAMPLE_RATE` (افتراضي 1.0) مع استثناء دائم لكل 5xx وكل طلب أبطأ من `ACCESS_LOG_SLOW_MS`؛ المقاييس تبقى تعدّ كل طلب. كاش `/ready` لثانيتين لم يُضف بعد.
+- **F17/P1-7:** access log صار قابلًا للـsampling عبر `ACCESS_LOG_SAMPLE_RATE` (افتراضي 1.0) مع استثناء دائم لكل 5xx وكل طلب أبطأ من `ACCESS_LOG_SLOW_MS`؛ المقاييس تبقى تعدّ كل طلب، وكاش `/ready` لثانيتين أُضيف في التكملة أدناه. لا يبقى عمل برمجي في هذا البند.
 - **F11:** فتح درس لم يعد يحمّل كل الدروس وكل صفوف التقدم؛ صار يقرأ دروس الوحدة وحدها عبر `list_published_for_unit`، ومجموعة معرفات المكتملة عبر `completed_lesson_ids` (عمود مفهرس واحد). أُضيف اختبار يثبت أن الدرس قيد التقدم لا يفتح successor.
 - **P1-9 (جزء):** نشر الإنتاج صار يتحقق من `/ready` (وليس `/health`) ويسجّل SHA السابق ويعمل rollback تلقائياً وإعادة بناء إذا لم تصبح النسخة جاهزة. يبقى بناء الصور على خادم الإنتاج وغياب canary/immutable digests.
 - **P2-4:** أُضيف قاطع دائرة لكل event loop حول نداء المزوّد: بعد `AI_CIRCUIT_FAILURE_THRESHOLD` (5) إخفاقات متتالية يتوقف النداء لـ`AI_CIRCUIT_RESET_SECONDS` (30s) ويعود الرد الحتمي فوراً بدل انتظار المهلة. النجاح يغلق القاطع، وفشل محاولة half-open يعيد فتحه، و`AIQuotaExceeded` لا يُعدّ عطلًا (المزوّد سليم ويقول «لا»). وأُضيف سقف تكلفة عالمي `AI_DAILY_GLOBAL_BUDGET_USD` (0 يعطّله) فوق سقف المستخدم: يجمع تكلفة اليوم على مستوى المنصة، ويُخزّن الرقم 60 ثانية (تجاوز دقيقة واحدة مقبول مقابل ألا يدفع كل طلب AI ثمن `SUM` على صفوف اليوم)، ويعود للاستعلام من قاعدة البيانات عند تعطل الكاش، فلا يُعطّل الحماية. وMetering صار مجمّعاً: السجلات تنتظر حتى ثانية أو 100 صف ثم تُكتب في معاملة واحدة بدل جلسة DB لكل نداء، و`drain` عند الإغلاق يفرّغ النافذة المعلّقة. أثبت الاختبار خطأً قديماً كان يمنع الكتابة أصلاً: `user_id` كان يُمرَّر نصاً إلى عمود `Uuid`؛ صار `uuid.UUID(...)`.
 - **P2-6 (جزء):** أُضيف `docs/runbooks/failover-drill-ar.md`: خطوات ترقية replica، إعادة توجيه DNS، إزالة `DATABASE_READ_URL`، تحقق بكتابة حقيقية، وسجل RTO/RPO. يبقى تنفيذ التمرين نفسه على staging/production — لا يمكن إثبات RTO من داخل المستودع.
 - **P2-7 (جزء):** سير عمل `Load test` صار يقبل `chaos_restart` و`chaos_after_seconds`: يشغّل k6 في الخلفية، يوقف الـAPI بـSIGTERM (كما يفعل orchestrator)، يعيد تشغيله وينتظر `/ready`، ثم يُكمل القياس. العتبة ترتفع إلى 5% أخطاء لهذا التمرين فقط (`MAX_FAIL_RATE`)، فالفشل المقصود لا يُخفي فشلاً حقيقياً بعد الجاهزية. يبقى قتل Redis/النسخة والـfailover الآلي في staging.
+- **P1-3/F6 (تكملة):** أُضيفت مقاييس `natiqo_cache_requests_total{area,result}` لكل قراءة من الكاش (Redis والمحلي)، لتكون نسبة الإصابة في معيار الخروج قابلة للقياس بدل أن تُفترض؛ التسميات هي مساحات محدودة (`catalogue`, `progress`, `ratelimit`, `idempotency`) وليست مفاتيح، فلا تنفجر cardinality. وأُضيف `docs/runbooks/redis-failover-ar.md` لسيناريو HA/failover مع سلوك المهلات والتحقق والتراجع.
 - **P2-5/P2-8 (جزء):** أُضيف `deploy/k8s/` (Deployment + PDB + HPA 3–24 + Argo Rollout canary 5/25/100 مع AnalysisTemplate لأخطاء 5xx وp95 + Job ترحيل + README). لا يمكن التحقق منها هنا (لا cluster)، لكنها تستبدل «نشر على خادم واحد وبناء الصورة عليه» بصور digest ثابتة وترحيل منفصل وتراجع آلي. الأسرار عبر `secretRef`/Secret Manager لا `.env`. يبقى WAF/DDoS وNetworkPolicy عند مزوّد الحافة (P1-1/P2-8).
 - **F23 (جزء):** أُضيف `app/core/secrets.py`: عند `SECRETS_BACKEND=aws` يسحب `AWS_SECRET_ID` من Secrets Manager قبل بناء `Settings` ويحوّل JSON إلى متغيرات بيئة (قيم السر تتغلب على بيئة قديمة)، مع رفض أي مفتاح لا يشبه اسم متغير وأي قيمة غير نصية، وفشل السحب يمنع الإقلاع. `get_settings` تستدعي الـbootstrap مرة واحدة، فيغطي API والـworker والسكربتات. وأُضيف `deploy/k8s/serviceaccount.yaml` (IRSA) و`deploy/k8s/networkpolicy.yaml` (default-deny + سماح ingress/DB/Redis/443)، وأُضيفت قواعد WAF/DDoS المقترحة (rate limits متوافقة مع حدود التطبيق، body size، managed rules، تشغيل Under Attack كزر لا كإعداد) في `deploy/edge/README.ar.md`؛ تنفيذها يبقى عند مزوّد الحافة (لا يمكن اختباره من هنا)، ويلزم ربط IRSA/ServiceAccount بصلاحية `GetSecretValue` في الإنتاج.
 - **F12:** رُفع `ACCESS_TOKEN_TTL_SECONDS` الافتراضي من 900 إلى 1800 ثانية: كل Refresh معاملة كتابة على `refresh_tokens`، فمضاعفة عمر الـaccess token تنصّف كتابات الجدول (≈12 → 6 يومياً لكل مستخدم نشط) دون تغيير عمر الـrefresh (30 يوماً). التنظيف اليومي يبقى على دفعات 5,000 محدودة، و`REFRESH_TOKEN_TTL_SECONDS` يظل قابلاً للضبط. الثمن المعلوم: نافذة إبطال التوكن المسروق تتسع من 15 إلى 30 دقيقة، وهو مقبول لأن الـrefresh قابل للإبطال فوراً.
@@ -934,6 +935,24 @@ ALTER TABLE user_stats
 - **F10:** `progress.summary` لم يعد يحمّل كل صفوف `lesson_progress`؛ يقرأ `totals_for_user` (sum/counts في استعلام واحد) بدل hydration كامل، بينما `list_for_user` بقي للـunlock map الذي يحتاج الصفوف فعلاً. وأُضيف كاش مشترك للملخص (60 ثانية افتراضياً) بمفتاح لكل مستخدم: كل أمر يغيّر الملخص (`start`/`answer`/`complete`/`abandon`) يبطل المفتاح **بعد** الـcommit، فلا يرى المتعلم رقماً قديماً بعد إتمام درس، بينما فتح الشاشة المتكرر لا يعيد مسح تاريخ الإجابات. تعطل الكاش يعني استعلاماً إضافياً فقط (fail-open).
 - **F15 (جزء منه):** الحذف صار مقسّماً إلى دفعات 5,000 صف مع commit بين الدفعات وحد أقصى 200 دفعة، لجدولين: التوكنات المنتهية، و`ai_usage_records` الأقدم من `AI_USAGE_RETENTION_DAYS` (180 يوماً افتراضياً؛ 0 يعطّل الوظيفة). لم يعد `DELETE` واحداً يمسك الجدول ويكتب WAL ضخماً.
 
+### 9.2 ما تبقّى خارج المستودع (لا يمكن إغلاقه بكود هنا)
+
+هذه البنود لا تُترك «مقترحة»: كل واحد له مالك، وموقع موثّق، ومعيار قبول. لكن تنفيذها يحتاج بنية تحتية (قاعدة مُدارة، cluster، مزوّد حافة، DSN/collector) غير موجودة في بيئة التطوير، ولا يصح ادّعاء إنجازها من داخل المستودع.
+
+| البند | لماذا ليس كوداً | أين الإجراء | معيار القبول |
+|---|---|---|---|
+| **F5/P2-6** PITR وتمرين استعادة | نسخ PostgreSQL المُدار وإعادته إلى نقطة زمنية | `docs/runbooks/backup-restore-ar.md`, `docs/runbooks/failover-drill-ar.md` | RPO ≤ 5 دقائق، RTO ≤ 15 دقيقة، وسجل تمرين موقّع |
+| **F6** Sentry/OTel | SDK اختياري عمداً + DSN/collector خارجيان | `docs/runbooks/observability-ar.md` | trace واحد من ingress إلى SQL، وحدث Sentry بلا PII |
+| **F16/P1-2** PgBouncer | يحتاج حاوية/قاعدة حقيقية | `deploy/pgbouncer/README.ar.md`, `docker-compose.pooled.yml` | `SHOW POOLS` بلا انتظار، والترحيلات على الاتصال المباشر |
+| **P1-1/P1-5/P1-9** CDN/WAF/LB وصور immutable | إعداد مزوّد الحافة وسجل الصور | `deploy/edge/README.ar.md`, `docs/runbooks/deploy-ar.md` | WAF مفعّل، cache hit > 95% للوسائط، نشر digest ثابت وrollback |
+| **P1-3** Redis HA | يحتاج نسخاً مُدارة/Sentinel | `docs/runbooks/redis-failover-ar.md` | failover تلقائي، `/ready` = DEGRADED لا 503، صفر 5xx |
+| **P2-5/P2-8** k8s وIRSA وNetworkPolicy | يحتاج cluster وسياسات مزوّد | `deploy/k8s/`, `deploy/k8s/README.ar.md` | 3 نسخ، HPA 3–24، canary 5/25/100، `GetSecretValue` عبر IRSA فقط |
+| **P2-3** تبديل partitions | يحتاج قاعدة إنتاج وأقفالاً | `docs/runbooks/partitioning-ar.md` | `review_logs`/`ai_usage_records` مُقسّمان، `DROP PARTITION` بدل `DELETE` |
+| **P2-7** chaos متعدد | يحتاج أكثر من خدمة قابلة للقتل | `.github/workflows/loadtest.yml`, `docs/runbooks/failover-drill-ar.md` | كسر Redis/نسخة/API أثناء الحمل بلا 5xx غير متوقع |
+| **P2-3** تقاعد `review_logs`/`audit_logs` | قرار احتفاظ قانوني/تحليلي لا تقني | هذا القسم + §13 | سياسة احتفاظ معتمدة؛ حتى ذلك الحين لا حذف تلقائي (الاحتفاظ الافتراضي آمن) |
+
+**لماذا لا نحذف `review_logs` أو `audit_logs` تلقائياً:** الأولى هي مصدر نسبة الاسترجاع مدى الحياة، وحذفها يغيّر رقماً يراه المتعلم؛ والثانية سجل تدقيق إداري قد يكون مطلوباً قانونياً. `quiz_sessions` و`ai_usage_records` فقط هما ما يملك قرار حذف واضح (جلسة بلا إجابة، وسجل تكلفة منتهي الصلاحية).
+
 **قاعدة القراءة:** ✅ يعني أن السلوك موجود ومغطّى باختبار في المستودع؛ ⚠️ يعني أن جزءاً منه فقط؛ ❌ يعني أنه قرار بنية تحتية لا يغلقه كود. لا تُرقّى ⚠️ إلى ✅ في تقرير الإنجاز قبل أن يوجد اختبار قبول مقابل.
 
 **اختبارات هذه الدفعة:** `tests/unit/test_health.py` (سياسة الجاهزية)، `tests/unit/test_ai_bulkhead.py` (المهلة والتشبع)، `tests/api/test_metrics.py`، `tests/api/test_media_cache.py`، `tests/unit/test_queue_redis.py` (at-least-once + الاسترجاع)، وإضافات في `tests/unit/test_deps.py`، `tests/unit/test_worker.py`، `tests/integration/test_idempotency.py` (قفل التنفيذ المتزامن) و`tests/integration/test_ai_tutor.py`.
@@ -943,15 +962,15 @@ ALTER TABLE user_stats
 ### Phase 1 — 20k DAU (4 أسابيع، ~40 يوم-مهندس)
 | المهمة | التفاصيل |
 |---|---|
-| P1-1 Edge | CDN + WAF + LB + قواعد Cache |
-| P1-2 PgBouncer | transaction mode + pool مضبوط |
-| P1-3 Redis HA | نسختان: cache (`allkeys-lru`) وqueue (`noeviction`) |
-| P1-4 Catalogue cache | Redis + version + single-flight + CDN |
-| P1-5 Media CDN | S3 + CDN + تحويل الصيغ + `Cache-Control: immutable` (إصلاح F28) |
-| P1-6 Streams queue | Consumer Groups + DLQ + Concurrency + Monitor |
-| P1-7 Logs/Probes | Sampling + `/ready` cache |
-| P1-8 Refresh/Purge | TTL 30m + Batch purge |
-| P1-9 Deploy | صور Immutable + 3 نسخ + Rollback |
+| P1-1 Edge | ✅ قواعد WAF/Cache موثّقة في `deploy/edge/` — التنفيذ عند مزوّد الحافة (§9.2) |
+| P1-2 PgBouncer | ✅ `docker-compose.pooled.yml` + دليل — التحقق على staging (§9.2) |
+| P1-3 Redis HA | ✅ فصل cache/queue + مهلات socket + دليل failover — النسخ المُدارة خارج الكود (§9.2) |
+| P1-4 Catalogue cache | ✅ Redis + version + single-flight ومقاييس hit/miss — CDN خارج الكود |
+| P1-5 Media CDN | ✅ S3 + `Cache-Control` (F28) — CDN/تحويل الصيغ عند مزوّد الحافة |
+| P1-6 Streams queue | ✅ at-least-once + DLQ + استرجاع آلي + مهلة socket؛ Streams مؤجّلة بشرط §13 |
+| P1-7 Logs/Probes | ✅ Sampling + `/ready` cache |
+| P1-8 Refresh/Purge | ✅ TTL 30m + Batch purge |
+| P1-9 Deploy | ⚠️ rollback و`/ready` آليان؛ digest ثابت و3 نسخ عبر k8s (§9.2) |
 
 **معيار الخروج:** 500 RPS لمدة 30 دقيقة، p95 < 250ms، Errors < 0.5%، إسقاط نسخة API بلا أخطاء، Cache hit > 90%.
 
@@ -962,13 +981,13 @@ ALTER TABLE user_stats
 |---|---|
 | P2-1 Read replica | Routing صريح للقراءات المتسامحة |
 | P2-2 Progress counters | **العدّادات مؤجّلة، والكاش شُحن:** ملخص التقدم صار مخزّناً 60 ثانية ويُبطل عند كل أمر، فانخفض تكرار الاستعلامات الثقيلة بلا كتابة إضافية على كل إجابة. تبقى عدّادات `user_stats` نفسها مؤجّلة بوعي: F10 حوّل `summary` إلى استعلام تجميعي واحد مفهرس على `(user_id)`، وعدد صفوف المتعلم محدود بعدد دروس المنهج (~240)، وإضافة عدّادات تضيف كتابة متنازعة على كل إجابة مقابل توفير استعلام رخيص. شرط التفعيل: p95 لـ`/progress/summary` > 150ms **بعد** الكاش. |
-| P2-3 Retention/Partition | `review_logs`, `quiz_sessions`, `ai_usage`, `audit_logs` + Purge/Audit للبقية |
+| P2-3 Retention/Partition | ✅ purge لـ`quiz_sessions`/`ai_usage` + runbook تقسيم؛ `review_logs`/`audit_logs` بانتظار سياسة احتفاظ (§9.2) |
 | P2-4 AI bulkhead | سقف عالمي + Circuit Breaker + Metering مجمّع |
-| P2-5 Autoscaling/Canary | HPA + Canary 5/25/100 |
-| P2-6 DR drill | Failover + PITR موثقان |
-| P2-7 Chaos | قتل نسخة/Redis/Replica أثناء الحمل |
-| P2-8 Security | Secret Manager + WAF + أقل صلاحية |
-| P2-9 Consistency | قفل Idempotency أثناء التنفيذ + `ON CONFLICT` للإجابات + منع حذف تاريخ المتعلمين |
+| P2-5 Autoscaling/Canary | ✅ manifests HPA/PDB/Argo — التطبيق على cluster (§9.2) |
+| P2-6 DR drill | ✅ Runbook جاهز — التنفيذ وتسجيل RTO/RPO على staging (§9.2) |
+| P2-7 Chaos | ⚠️ قتل API آلي في loadtest؛ Redis/Replica في staging (§9.2) |
+| P2-8 Security | ✅ Secrets Manager + IRSA + NetworkPolicy + قواعد WAF — الربط في الإنتاج (§9.2) |
+| P2-9 Consistency | ✅ قفل Idempotency + `ON CONFLICT` + منع حذف تاريخ المتعلمين |
 
 **معيار الخروج:** 2,000 RPS لمدة 30 دقيقة، Soak 24 ساعة عند 700 RPS، Pool < 60%، Replica lag < 5s، RTO مُثبت.
 
@@ -1115,7 +1134,7 @@ thresholds: {
 | القرار | لماذا الآن؟ | شرط التفعيل |
 |---|---|---|
 | Microservices | فريق صغير وحدود واضحة أصلاً | > 8 مهندسين أو حاجة Scaling مستقل لوحدة |
-| Kafka | Redis Streams تكفي حتى آلاف الأحداث/ثانية | > 5,000 حدث/ثانية أو مستهلكون متعددون |
+| Kafka / Redis Streams | قائمة Redis الحالية at-least-once مع `recover()` وDLQ; Streams لا تضيف ضماناً نحتاجه اليوم | > 5,000 حدث/ثانية أو مجموعات مستهلكين متعددة أو replay تاريخي |
 | Kubernetes | Compose + Load Balancer يكفيان، وmanifests جاهزة في `deploy/k8s/` | > 10 عُقد أو حاجة Multi-env معقّدة |
 | Sharding | Primary يتحمل حتى 300k DAU بعد التحسين | كتابة Primary > 60% باستمرار بعد Partitioning/Counters |
 | Multi-Region Active-Active | التعقيد لا يبرره حجم مستخدمي العراق | > 30% خارج المنطقة أو RTO < 15 دقيقة |

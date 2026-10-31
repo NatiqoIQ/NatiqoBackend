@@ -15,6 +15,7 @@ the public catalogue becomes a map of the editorial pipeline.
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from collections.abc import AsyncIterator
 
@@ -770,6 +771,46 @@ async def test_a_second_tree_read_is_served_without_touching_the_database(
     assert len(statements) == after_first, "the second read must not query"
     assert second == first
     assert second[0].units[0].lessons[0].title == "Greetings"
+
+
+@pytest.mark.asyncio
+async def test_concurrent_misses_rebuild_the_tree_once(
+    uow: SqlAlchemyUnitOfWork, session: AsyncSession
+) -> None:
+    """A cache expiry must not turn into a thundering herd.
+
+    Eight requests miss the same empty key at once. Without single-flight each one
+    builds the tree, so the first screen after every TTL expiry costs eight times the
+    queries — and each concurrent build would also share one ORM session, which is not
+    safe. With it, exactly one builder issues the four reads and the other seven wait
+    for the freshly stored value.
+    """
+    from sqlalchemy import event
+
+    from app.platform.cache.memory import InMemoryCache
+
+    level = _level_row(session, code="A1", position=1)
+    unit = _unit_row(session, level.id, position=1)
+    lesson = _lesson_row(session, unit.id, position=1)
+    _question_row(session, lesson.id)
+    await session.commit()
+
+    service = CatalogueService(uow, InMemoryCache(), ttl_seconds=60)
+    statements: list[str] = []
+
+    def _record(conn: object, cursor: object, statement: str, *args: object) -> None:
+        statements.append(statement)
+
+    sync_engine = session.bind.sync_engine  # type: ignore[union-attr]
+    event.listen(sync_engine, "before_cursor_execute", _record)
+    try:
+        trees = await asyncio.gather(*(service.tree() for _ in range(8)))
+    finally:
+        event.remove(sync_engine, "before_cursor_execute", _record)
+
+    assert len(statements) == 4, "only the first caller may touch the database"
+    assert all(tree == trees[0] for tree in trees)
+    assert trees[0][0].units[0].lessons[0].title == "Greetings"
 
 
 @pytest.mark.asyncio

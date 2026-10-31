@@ -72,7 +72,11 @@ def _build_cache() -> CachePort:
         from app.platform.cache.redis import RedisCache
 
         logger.info("deps.cache_adapter", adapter="redis")
-        return RedisCache.from_url(settings.redis_url or "", namespace="natiqo")
+        return RedisCache.from_url(
+            settings.redis_url or "",
+            namespace="natiqo",
+            socket_timeout=settings.redis_cache_timeout_seconds,
+        )
     logger.info("deps.cache_adapter", adapter="memory")
     from app.platform.cache.memory import InMemoryCache
 
@@ -108,7 +112,10 @@ def _build_queue() -> QueuePort:
         logger.info("deps.queue_adapter", adapter="redis")
         #: Jobs live in their own instance when one is configured: the cache can evict
         #: under memory pressure, a queued job must not be evicted with it.
-        return RedisQueue.from_url(settings.queue_redis_url or settings.redis_url or "")
+        return RedisQueue.from_url(
+            settings.queue_redis_url or settings.redis_url or "",
+            socket_timeout=settings.redis_queue_timeout_seconds,
+        )
     logger.info("deps.queue_adapter", adapter="memory")
     from app.platform.queue.memory import InMemoryQueue
 

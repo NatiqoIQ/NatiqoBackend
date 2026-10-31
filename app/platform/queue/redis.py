@@ -64,11 +64,22 @@ class RedisQueue:
 
     @classmethod
     def from_url(
-        cls, url: str, *, visibility_seconds: int = DEFAULT_VISIBILITY_SECONDS
+        cls,
+        url: str,
+        *,
+        visibility_seconds: int = DEFAULT_VISIBILITY_SECONDS,
+        socket_timeout: float = 5.0,
     ) -> RedisQueue:
         from redis.asyncio import Redis
 
-        client = Redis.from_url(url, encoding="utf-8", decode_responses=True)
+        client = Redis.from_url(
+            url,
+            encoding="utf-8",
+            decode_responses=True,
+            socket_timeout=socket_timeout,
+            socket_connect_timeout=min(socket_timeout, 1.0),
+            health_check_interval=30,
+        )
         logger.info("queue.redis_initialised")
         return cls(client, visibility_seconds=visibility_seconds)
 

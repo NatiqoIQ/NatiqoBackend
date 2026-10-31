@@ -10,6 +10,8 @@ import asyncio
 import time
 from dataclasses import dataclass
 
+from app.platform.cache import stats
+
 
 def _expiry(ttl_seconds: int | None) -> float | None:
     """Absolute expiry for a TTL, or ``None`` when there is none.
@@ -54,8 +56,10 @@ class InMemoryCache:
             entry = self._live(key)
             if entry is None:
                 self.misses += 1
+                stats.record(key, hit=False)
                 return None
             self.hits += 1
+            stats.record(key, hit=True)
             return entry.value
 
     async def set(self, key: str, value: str, *, ttl_seconds: int | None = None) -> None:

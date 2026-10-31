@@ -56,6 +56,7 @@ from app.modules.content.domain.entities import (
 )
 from app.modules.content.domain.policy import pre_attempt_choices, pre_attempt_prompts
 from app.platform.cache.port import CachePort
+from app.platform.cache.single_flight import flight_lock
 
 logger = get_logger("catalogue.service")
 
@@ -225,7 +226,23 @@ class CatalogueService:
         cached = await self._cached_tree()
         if cached is not None:
             return cached
+        if self._cache is None or self._ttl_seconds <= 0:
+            # No shared cache means no cache stampede either: every caller must build.
+            return await self._build_tree()
 
+        async with flight_lock(self._tree_key):
+            # Another request may have filled the key while this one waited. Re-check
+            # inside the lock; without this second read every waiter would rebuild the
+            # same tree in turn, which is the herd with extra steps.
+            cached = await self._cached_tree()
+            if cached is not None:
+                return cached
+            tree = await self._build_tree()
+            await self._store_tree(tree)
+            return tree
+
+    async def _build_tree(self) -> tuple[LevelNodeView, ...]:
+        """Read the four facts and assemble the nested tree (no cache access)."""
         levels = await self._uow.levels.list_published(limit=MAX_PAGE_SIZE, after=None)
         level_codes = {level.code for level in levels}
         units = [
@@ -279,9 +296,7 @@ class CatalogueService:
                     units=tuple(unit_nodes),
                 )
             )
-        tree = tuple(nodes)
-        await self._store_tree(tree)
-        return tree
+        return tuple(nodes)
 
     # ------------------------------------------------------------ tree cache
     async def _cached_tree(self) -> tuple[LevelNodeView, ...] | None:
