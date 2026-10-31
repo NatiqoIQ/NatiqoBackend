@@ -85,6 +85,15 @@ class QueuePort(Protocol):
         """
         ...
 
+    async def dead_letter(self, job: Job, *, error: str) -> None:
+        """Keep a job whose attempts are exhausted, with the last error.
+
+        The worker acknowledges it after this call, so it can no longer poison the
+        queue. The record is for an operator: without it the only trace of a job that
+        failed every attempt is a log line that may have rotated away.
+        """
+        ...
+
     async def size(self) -> int: ...
 
     async def ping(self) -> bool: ...

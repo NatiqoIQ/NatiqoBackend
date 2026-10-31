@@ -23,6 +23,9 @@ class InMemoryQueue:
         self._queue: asyncio.Queue[Job] = asyncio.Queue()
         self._dedupe: set[str] = set()
         self._inflight: set[str] = set()
+        #: Bounded for the same reason the Redis list is trimmed: a development process
+        #: must not grow without limit because a handler is broken.
+        self.dead_letters: list[dict[str, Any]] = []
 
     async def enqueue(self, job: Job) -> bool:
         key = job.dedupe_key
@@ -61,6 +64,12 @@ class InMemoryQueue:
     async def recover(self) -> int:
         """Nothing can be recovered: the queue dies with the process."""
         return 0
+
+    async def dead_letter(self, job: Job, *, error: str) -> None:
+        self.dead_letters.append(
+            {"job_id": str(job.job_id), "name": str(job.name), "error": error[:500]}
+        )
+        del self.dead_letters[:-1000]
 
     async def size(self) -> int:
         return self._queue.qsize()

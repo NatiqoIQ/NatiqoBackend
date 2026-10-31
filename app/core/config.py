@@ -265,6 +265,13 @@ class Settings(BaseSettings):
     # ----------------------------------------------------- observability
     log_level: str = "INFO"
     log_format: Literal["json", "console"] = "json"
+    #: Fraction of successful requests that produce an access-log line. Errors and slow
+    #: requests are always logged; metrics carry the full traffic picture, so at 2,000
+    #: RPS a full log is bytes with no reader. 1.0 keeps every line (development).
+    access_log_sample_rate: float = 1.0
+    #: A request slower than this is logged regardless of sampling. This is the line an
+    #: operator actually searches for during an incident.
+    access_log_slow_ms: int = 500
     #: Prometheus exposition at ``/metrics``. Off would make an orchestrator scrape
     #: nothing; the flag exists for an environment that has no scraper and would rather
     #: not publish the route at all.

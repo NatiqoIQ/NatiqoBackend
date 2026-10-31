@@ -10,8 +10,10 @@ cleanup, notifications, analytics — a duplicate is recoverable and a loss is n
 
 The queue still does not track attempts or backoff; that is the worker's contract, and
 the same ``max_attempts`` ceiling applies whether a job was retried in-process or after
-a crash. A durable dead-letter list is deliberately still absent: an exhausted job is
-acknowledged and logged, so it cannot poison the queue forever.
+a crash. An exhausted job is pushed to a bounded dead-letter list with its last error
+before it is acknowledged, so it cannot poison the queue and an operator can still see
+what failed. The list is a Redis list, not a Stream: it is an inspection aid, not a
+replay protocol.
 """
 
 from __future__ import annotations
@@ -29,6 +31,10 @@ logger = get_logger("queue.redis")
 _QUEUE_KEY = "natiqo:jobs"
 _DEDUPE_KEY = "natiqo:jobs:dedupe"
 _DEDUPE_TTL_SECONDS = 3600
+
+#: Bounded dead-letter list. Ten thousand entries is days of failures at a healthy
+#: rate and small enough that inspecting the whole list is practical.
+DEAD_LETTER_LIMIT = 10_000
 
 #: How long a worker may hold a job before it is considered abandoned. Five minutes is
 #: comfortably longer than any current handler and short enough that a crash is noticed
@@ -48,6 +54,7 @@ class RedisQueue:
         self._queue_key = queue_key
         self._processing_key = f"{queue_key}:processing"
         self._deadlines_key = f"{queue_key}:deadlines"
+        self._dead_letter_key = f"{queue_key}:dead"
         self._dedupe_key = _DEDUPE_KEY
         self._visibility_seconds = max(1, visibility_seconds)
         #: job id -> exact serialized payload. Holding the payload rather than
@@ -131,6 +138,17 @@ class RedisQueue:
         if moved:
             logger.warning("queue.jobs_recovered", count=moved)
         return moved
+
+    async def dead_letter(self, job: Job, *, error: str) -> None:
+        record = {
+            "job": job.to_dict(),
+            "error": error[:500],
+            "failed_at": time.time(),
+        }
+        pipe = self._redis.pipeline()
+        pipe.lpush(self._dead_letter_key, json.dumps(record))
+        pipe.ltrim(self._dead_letter_key, 0, DEAD_LETTER_LIMIT - 1)
+        await pipe.execute()
 
     async def size(self) -> int:
         return int(await self._redis.llen(self._queue_key))

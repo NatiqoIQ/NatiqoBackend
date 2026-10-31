@@ -79,18 +79,31 @@ class Worker:
             return False
 
         attempts = max(1, job.max_attempts)
+        last_error = ""
         for attempt in range(1, attempts + 1):
             try:
                 await handler(job)
             except Exception as exc:  # noqa: BLE001 — one bad job must not stop the loop
+                last_error = str(exc)
                 if attempt >= attempts:
                     logger.error(
                         "worker.job_dead",
                         job=str(job.name),
                         job_id=str(job.job_id),
                         attempt=attempt,
-                        error=str(exc)[:300],
+                        error=last_error[:300],
                     )
+                    # Before the ack in ``run_once``: a failure to record must not
+                    # keep a poison job cycling, so this is best-effort.
+                    try:
+                        await self._queue.dead_letter(job, error=last_error)
+                    except Exception as record_error:  # noqa: BLE001
+                        logger.error(
+                            "worker.dead_letter_failed",
+                            job=str(job.name),
+                            job_id=str(job.job_id),
+                            error=str(record_error)[:200],
+                        )
                     return False
                 delay = min(2 ** (attempt - 1), self._max_backoff_seconds)
                 logger.warning(

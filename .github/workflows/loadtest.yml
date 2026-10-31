@@ -1,0 +1,164 @@
+# Nightly-ish load test against a disposable stack.
+#
+# It is deliberately not part of CI on every push: a capacity run costs ten minutes and
+# measures a whole system, not a diff. The weekly schedule catches drift (a new query,
+# a lost index, a pool regression); workflow_dispatch runs it before a release.
+#
+# The stack is the real API against a real PostgreSQL and Redis, with the real migrations
+# and the real seed. k6 gets one minted account per virtual user, because a per-user rate
+# limit measured through one shared account measures the limit, not the server.
+
+name: Load test
+
+on:
+  workflow_dispatch:
+    inputs:
+      duration:
+        description: "k6 run duration (e.g. 5m, 15m)"
+        required: false
+        default: "5m"
+      browse_rps:
+        description: "Browse iterations per second"
+        required: false
+        default: "80"
+      learn_rps:
+        description: "Lesson sittings per second (one sitting is ~12 requests)"
+        required: false
+        default: "8"
+      progress_rps:
+        description: "Progress reads per second"
+        required: false
+        default: "12"
+  schedule:
+    # Mondays 02:00 UTC, before the working week in Baghdad.
+    - cron: "0 2 * * 1"
+
+concurrency:
+  group: loadtest-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  k6:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: natiqo
+          POSTGRES_PASSWORD: natiqo-loadtest
+          POSTGRES_DB: natiqo
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U natiqo -d natiqo"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+
+    env:
+      APP_ENV: staging
+      DATABASE_URL: postgresql+asyncpg://natiqo:natiqo-loadtest@127.0.0.1:5432/natiqo
+      REDIS_URL: redis://127.0.0.1:6379/0
+      QUEUE_REDIS_URL: redis://127.0.0.1:6379/1
+      QUEUE_ENABLED: "false"
+      AI_ENABLED: "false"
+      AI_PROVIDER: "none"
+      DEV_LOGIN_ENABLED: "true"
+      # The load test is about capacity, not abuse control. Rate limits are exercised
+      # by their own tests; leaving them on would make every VU share one budget.
+      RATE_LIMIT_ENABLED: "false"
+      METRICS_ENABLED: "true"
+      JWT_SECRET: "loadtest-access-secret-0000000000000000000000000000"
+      JWT_REFRESH_SECRET: "loadtest-refresh-secret-1111111111111111111111111"
+      LOG_LEVEL: WARNING
+      LOG_FORMAT: console
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Sync dependencies
+        run: uv sync --frozen
+
+      - name: Migrate
+        run: uv run alembic upgrade head
+
+      - name: Seed the catalogue
+        run: uv run python -m scripts.seed_content --yes
+
+      - name: Mint one account per virtual user
+        run: |
+          uv run python -m scripts.mint_loadtest_tokens \
+            --count 300 \
+            --ttl-seconds 7200 \
+            --concurrency 8 \
+            --output loadtest/tokens.json
+
+      - name: Start the API
+        run: |
+          nohup uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1 \
+            > /tmp/natiqo-api.log 2>&1 &
+          echo $! > /tmp/natiqo-api.pid
+          for attempt in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:8000/ready >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "API did not become ready" >&2
+          tail -n 100 /tmp/natiqo-api.log >&2
+          exit 1
+
+      - name: Install k6
+        uses: grafana/setup-k6-action@v1
+
+      - name: Run k6
+        env:
+          DURATION: ${{ github.event.inputs.duration || '5m' }}
+          BROWSE_RPS: ${{ github.event.inputs.browse_rps || '80' }}
+          LEARN_RPS: ${{ github.event.inputs.learn_rps || '8' }}
+          PROGRESS_RPS: ${{ github.event.inputs.progress_rps || '12' }}
+        run: |
+          k6 run loadtest/k6/natiqo-mixed.js \
+            -e BASE_URL=http://127.0.0.1:8000 \
+            -e TOKENS_FILE="$PWD/loadtest/tokens.json" \
+            -e DURATION="$DURATION" \
+            -e BROWSE_RPS="$BROWSE_RPS" \
+            -e LEARN_RPS="$LEARN_RPS" \
+            -e PROGRESS_RPS="$PROGRESS_RPS" \
+            --summary-export loadtest/summary.json
+
+      - name: Upload the summary
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: k6-summary
+          path: loadtest/summary.json
+          if-no-files-found: warn
+
+      - name: Stop the API
+        if: always()
+        run: |
+          if [ -f /tmp/natiqo-api.pid ]; then
+            kill "$(cat /tmp/natiqo-api.pid)" || true
+          fi
+          tail -n 50 /tmp/natiqo-api.log || true

@@ -889,7 +889,7 @@ ALTER TABLE user_stats
 
 ### 9.1 حالة التنفيذ الفعلية (2026-10-31)
 
-شُحن في هذه الدفعة **8 بنود P0 كاملة + بند واحد جزئي (F6)**، وأُضيف 46 اختباراً جديداً (المجموع 1,033 اختباراً، والتغطية 83.1%، والحد الأدنى في CI هو 80%). كل بند أدناه يشير إلى مكانه في الكود، حتى لا تتحول الخطة إلى وثيقة نوايا.
+شُحن في هذه الدفعة **8 بنود P0 كاملة + بند واحد جزئي (F6)**، وأُضيف 54 اختباراً جديداً (المجموع 1,041 اختباراً، والتغطية 83.1%، والحد الأدنى في CI هو 80%). كل بند أدناه يشير إلى مكانه في الكود، حتى لا تتحول الخطة إلى وثيقة نوايا.
 
 | البند | الحالة | ما شُحن فعلاً | المتبقي / القيد |
 |---|---|---|---|
@@ -899,7 +899,7 @@ ALTER TABLE user_stats
 | **F3** الترحيلات | ✅ مكتمل | خدمة `migrate` مستقلة في `docker-compose.yml`، و`CMD` في `Dockerfile` لم يعد يشغّل `alembic upgrade head`، و`alembic/env.py` يأخذ `pg_advisory_xact_lock` داخل معاملة الترحيل. | Expand/Contract يبقى قاعدة مراجعة لكل migration جديدة. |
 | **F7** مهلات قاعدة البيانات | ✅ مكتمل | `statement_timeout=4s`, `lock_timeout=1.5s`, `idle_in_transaction_session_timeout=8s` تُمرَّر عبر `connect_args.server_settings`، و`database_pool_timeout` من 30 إلى 3 ثوانٍ. | لا شيء. |
 | **F6** المراقبة | ⚠️ جزئي | `GET /metrics` (خارج نسخة الـ API) يعرض: عدد الطلبات حسب route/status، histogram للكمون، in-flight، uptime، حجم/إشغال pool قاعدة البيانات، وعمق الطابور. أُضيف `deploy/monitoring/`: إعداد Prometheus، **10 قواعد تنبيه**، ولوحة Grafana جاهزة للاستيراد بثلاثة أقسام. | **لم يُشحن بعد:** Sentry، OTel traces. `SENTRY_DSN`/`OTEL_*` ما زالت غير موصولة وتحتاج SDK + `uv.lock`؛ ولا يمكن إغلاق F6 قبل trace واحد من الـ ingress إلى SQL. |
-| **F4** أمان الطابور | ✅ مكتمل (Phase 0) | Redis منفصل للطابور (`QUEUE_REDIS_URL`) بسياسة `noeviction` مع volume، وRedis للكاش بـ `allkeys-lru`. الاستهلاك أصبح **at-least-once**: `BLMOVE` إلى processing list + `ack()` + `recover()` لاسترجاع الـ claims المنتهية (visibility 300s) كل 30 ثانية؛ والمهمة السامة تُـack وتُسجَّل بدل أن تدور للأبد. | التكرار وارد بحكم at-least-once، ولا DLQ دائم بعد — Streams + XAUTOCLAIM + DLQ في P1-6. |
+| **F4** أمان الطابور | ✅ مكتمل (Phase 0) | Redis منفصل للطابور (`QUEUE_REDIS_URL`) بسياسة `noeviction` مع volume، وRedis للكاش بـ `allkeys-lru`. الاستهلاك أصبح **at-least-once**: `BLMOVE` إلى processing list + `ack()` + `recover()` لاسترجاع الـ claims المنتهية (visibility 300s) كل 30 ثانية؛ والمهمة السامة تُـack وتُسجَّل بدل أن تدور للأبد. | التكرار وارد بحكم at-least-once. الوظيفة المستنفدة تُسجَّل الآن في dead-letter list محدودة (10k) قبل ack. يبقى Streams + XAUTOCLAIM لإعادة التشغيل الآلي في P1-6. |
 | **F5** النسخ والتعافي | ❌ خارج الكود | — | PITR على PostgreSQL المُدار + تمرين استعادة شهري مكتوب في Runbook. لا يمكن إنجازه من داخل المستودع. |
 | **F28** كاش الوسائط | ✅ مكتمل | `/media/*` يحصل على `Cache-Control: public, max-age=604800, stale-while-revalidate=86400` و`Cross-Origin-Resource-Policy: cross-origin`؛ الملف المفقود يبقى `no-store`. | إعداد CDN/WAF (P1-1, P1-5) خارج الكود. |
 | **F29** قفل Idempotency | ✅ مكتمل | قفل in-flight عبر `increment(key:inflight)` بعمر 60s: الطلب المتزامن الثاني لنفس المفتاح يحصل على `409 IDEMPOTENCY_IN_PROGRESS` + `Retry-After: 1` بدل تنفيذ الكتابة مرتين. القفل يُحرَّر بعد تخزين الرد، وفشل الكاش يجعله fail-open. | لا شيء. |
@@ -912,6 +912,10 @@ ALTER TABLE user_stats
 - **F13 (جزء منه):** سقف `AI_MAX_CONCURRENT_REQUESTS` كان يُنشأ داخل خدمة لكل طلب، أي أنه لم يكن يحدّ شيئاً؛ صار semaphore مشتركاً لكل event loop.
 - **F18 (جزء منه):** لا تُخزَّن استجابة idempotency أكبر من 64KB، فلا يزيح تصديرٌ ضخم مفاتيح الكاش الصغيرة لليوم كله.
 - **F31:** حذف سؤال له تاريخ إجابات صار مرفوضاً بـ409 بدل أن يمحو `quiz_answers` عبر `ON DELETE CASCADE`؛ المعلم يُبقي الدرس غير منشور لإخفائه. الفحص على مستوى قاعدة البيانات (exists) لا على حالة الدرس وحدها.
+- **F4/P1-6 (جزء):** `QueuePort.dead_letter` يحفظ الوظيفة المستنفدة (الاسم، المعرف، آخر خطأ) في قائمة Redis محدودة بـ10,000 قبل ack، وفي المحول داخل العملية. لم تعد الأعطال الدائمة تعيش في سجل قد يُدار فقط.
+- **F16/P1-2:** أُضيف `docker-compose.pooled.yml` (PgBouncer، transaction mode، حدود وصف واضحة) و`deploy/pgbouncer/README.ar.md` بحساب الأحجام وأوامر التحقق والتراجع؛ الترحيلات تبقى على الاتصال المباشر. **لم يُشغَّل داخل هذه البيئة** (لا Docker) ويحتاج تحقق staging.
+- **F20:** أُضيف `.github/workflows/loadtest.yml`: تشغيل أسبوعي/يدوي على PostgreSQL وRedis حقيقيين، ترحيل + seed + توكنات لكل VU + k6 مع رفع summary؛ الحدود الافتراضية محافظة وليست اختبار سعة كامل.
+- **F17/P1-7 (جزء):** access log صار قابلًا للـsampling عبر `ACCESS_LOG_SAMPLE_RATE` (افتراضي 1.0) مع استثناء دائم لكل 5xx وكل طلب أبطأ من `ACCESS_LOG_SLOW_MS`؛ المقاييس تبقى تعدّ كل طلب. كاش `/ready` لثانيتين لم يُضف بعد.
 - **F15 (جزء منه):** الحذف صار مقسّماً إلى دفعات 5,000 صف مع commit بين الدفعات وحد أقصى 200 دفعة، لجدولين: التوكنات المنتهية، و`ai_usage_records` الأقدم من `AI_USAGE_RETENTION_DAYS` (180 يوماً افتراضياً؛ 0 يعطّل الوظيفة). لم يعد `DELETE` واحداً يمسك الجدول ويكتب WAL ضخماً.
 
 **قاعدة القراءة:** ✅ يعني أن السلوك موجود ومغطّى باختبار في المستودع؛ ⚠️ يعني أن جزءاً منه فقط؛ ❌ يعني أنه قرار بنية تحتية لا يغلقه كود. لا تُرقّى ⚠️ إلى ✅ في تقرير الإنجاز قبل أن يوجد اختبار قبول مقابل.

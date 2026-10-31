@@ -12,6 +12,7 @@ Installed in this order (outermost first):
 from __future__ import annotations
 
 import json
+import random
 import time
 import uuid
 from collections.abc import Awaitable, Callable
@@ -35,6 +36,29 @@ REQUEST_ID_HEADER = "X-Request-ID"
 
 #: Endpoints excluded from access logging noise (health probes).
 _QUIET_PATHS = frozenset({"/health", "/ready", "/live", "/metrics"})
+
+
+def should_log_access(
+    *,
+    status_code: int,
+    duration_ms: float,
+    sample_rate: float,
+    slow_ms: float,
+    roll: float,
+) -> bool:
+    """Whether one request deserves a log line.
+
+    Sampling is only safe because metrics still count every request and every status.
+    What must never be sampled away is the evidence of a problem: a 5xx and a request
+    slower than ``slow_ms`` are always written, whatever the rate. A rate of 1.0 keeps
+    everything, which is what development and the test suite use.
+    """
+    if status_code >= 500:
+        return True
+    if duration_ms >= slow_ms:
+        return True
+    return roll < max(0.0, min(1.0, sample_rate))
+
 
 #: Policy for JSON API responses. ``default-src 'none'`` is the right default here
 #: because nothing in the API is ever loaded as a document.
@@ -169,7 +193,14 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
         response.headers[REQUEST_ID_HEADER] = request_id
 
         path = request.url.path
-        if path not in _QUIET_PATHS:
+        settings = get_settings()
+        if path not in _QUIET_PATHS and should_log_access(
+            status_code=response.status_code,
+            duration_ms=duration_ms,
+            sample_rate=settings.access_log_sample_rate,
+            slow_ms=settings.access_log_slow_ms,
+            roll=random.random(),  # noqa: S311 - sampling, not crypto
+        ):
             log = logger.info if response.status_code < 500 else logger.warning
             log(
                 "http.request",

@@ -78,18 +78,22 @@ async def test_a_transient_failure_is_retried_until_it_succeeds() -> None:
 
 
 @pytest.mark.asyncio
-async def test_a_job_that_keeps_failing_gives_up_after_its_attempts() -> None:
-    """``max_attempts`` is the ceiling, and the job is dropped rather than requeued.
+async def test_a_job_that_keeps_failing_gives_up_and_is_dead_lettered() -> None:
+    """``max_attempts`` is the ceiling; the failed job is kept, not silently dropped.
 
-    Dropping is what keeps one poison job from spending the process's whole day in a
-    retry loop; the durable dead-letter store this deserves does not exist yet, so the
-    error log is the record.
+    Dropping keeps one poison job from spending the process's whole day in a retry
+    loop. Keeping a record is what lets an operator see *what* failed after the log has
+    rotated. The worker acknowledges the job afterwards, so it cannot cycle.
     """
-    handler = _CountingHandler(fail_times=99)
+    queue = InMemoryQueue()
+    worker = Worker(queue, {JobName.CLEANUP_EXPIRED_TOKENS: _CountingHandler(fail_times=99)})
     job = Job(name=JobName.CLEANUP_EXPIRED_TOKENS, max_attempts=3)
 
-    assert await _worker(handler).handle(job) is False
-    assert handler.calls == 3
+    assert await worker.handle(job) is False
+
+    assert len(queue.dead_letters) == 1
+    assert queue.dead_letters[0]["job_id"] == str(job.job_id)
+    assert "attempt 3 failed" in queue.dead_letters[0]["error"]
 
 
 # ------------------------------------------------------------------ consumer loop

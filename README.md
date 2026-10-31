@@ -49,6 +49,12 @@ In Compose the schema is migrated by a one-shot `migrate` service before the API
 start; the web image deliberately no longer runs `alembic upgrade head` on boot, so a
 rolling deploy cannot have several replicas racing the same DDL.
 
+**Pooling.** `docker-compose.pooled.yml` adds an optional PgBouncer in transaction mode so
+API and worker replicas share a bounded set of PostgreSQL backends instead of one connection
+per request. Migrations stay on the direct URL on purpose. The sizing arithmetic, the
+transaction-mode restrictions and the verification queries are in
+[`deploy/pgbouncer/README.ar.md`](deploy/pgbouncer/README.ar.md).
+
 **SQLite (zero external services).** Set `DATABASE_URL=sqlite+aiosqlite:///./local.db` and
 `REDIS_URL=` (empty selects the in-memory cache/queue adapters), then create the schema
 without Alembic — the migrations are PostgreSQL-specific:
