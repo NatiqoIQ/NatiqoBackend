@@ -14,6 +14,8 @@ from datetime import datetime
 from sqlalchemy import DateTime, MetaData, Uuid, func
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
+from app.core.ids import uuid7
+
 # Explicit names keep Alembic autogenerate output stable and make it possible to
 # reference a constraint by name in tests and in `DROP CONSTRAINT` migrations.
 NAMING_CONVENTION: dict[str, str] = {
@@ -43,10 +45,14 @@ class Base(DeclarativeBase):
 
 
 class UUIDPrimaryKeyMixin:
-    """UUID v4 primary key. Non-enumerable by design: sequential IDs leak volume."""
+    """UUIDv7 primary key: time-ordered, non-enumerable, no sequence to coordinate.
+
+    v7 keeps writes at the right edge of the primary-key index, which is what makes
+    append-heavy tables (answers, logs, usage records) cheap to insert at scale.
+    """
 
     id: Mapped[uuid.UUID] = mapped_column(
-        Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4, nullable=False
+        Uuid(as_uuid=True), primary_key=True, default=uuid7, nullable=False
     )
 
 
