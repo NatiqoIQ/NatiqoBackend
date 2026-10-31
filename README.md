@@ -112,8 +112,8 @@ must be set, and a request to a provider with no configured client ids answers `
 
 An email is only used to *link* a second provider to an existing account, and only when
 the provider asserts the address is verified — otherwise an unverified address could be
-used to take the account over. See the
-[Mobile integration guide](docs/mobile-integration-ar.md) for the client side.
+used to take the account over. The generated OpenAPI document at `/openapi.json` is the
+client-side reference for the auth contract.
 
 ## Quality gates
 
@@ -124,10 +124,8 @@ uv run pyright
 uv run pytest
 ```
 
-The suite includes a drift check on the client guides: every payload example in
-[docs/client-contract.md](docs/client-contract.md) and the two mobile guides is compared
-against the component schema it documents, so a field that reaches the schema without
-reaching the guide — or a field renamed in an example — fails the build.
+The API contract is the generated OpenAPI document at `/openapi.json`, and
+`tests/api/test_endpoints.py` fails the build when a published operation has no HTTP test.
 
 ## Demo data
 
@@ -302,14 +300,11 @@ route is added without one.
 
 Client-facing documentation:
 
-- **[Mobile integration guide (Arabic)](docs/mobile-integration-ar.md)** — the reference
-  for building the phone app: every endpoint, auth and token lifecycle, the single-flight
-  refresh requirement, error codes, caching, rate limits, and what does not exist yet.
-- **[Backend roadmap (Arabic)](docs/backend-roadmap-ar.md)** — the phased plan for the
-  missing API, ordered by what unblocks the app first, with the schema and endpoints each
-  phase adds and the product decisions it waits on.
-- [Client contract (English)](docs/client-contract.md) — the wire-level contract, naming
-  and error conventions.
+- **[System design and scaling plan (Arabic)](docs/system-design-scaling-plan-ar.md)** —
+  the capacity model, the phased backlog, and the evidence for every item already shipped.
+- **[Mobile app architecture](docs/mobile-app-architecture.md)** — how the client is
+  organised around this API.
+- **[Runbooks](docs/runbooks/)** — backup/restore and operational procedures.
 - `GET /openapi.json` — machine-readable schema for client generation. Every versioned
   operation publishes the real `{ "error": { code, message, details, requestId } }`
   envelope for 400/401/403/404/409/422/429/500, so generated clients match the wire.
@@ -327,20 +322,17 @@ Client-facing documentation:
 | `POST` | `/api/v1/auth/logout` | refresh token | Revoke this device, or `all_devices: true` |
 | `DELETE` | `/api/v1/me` | Bearer | Close the caller's own account and revoke every session |
 | `GET` | `/api/v1/me` | Bearer | Current profile and settings |
-| `PATCH` | `/api/v1/me` | Bearer | PATCH semantics — omit a field to leave it alone. Accepts profile and settings fields under either spelling (see [Client contract](docs/client-contract.md)); deliberately refuses `currentLevel` so a learner cannot bypass the placement test |
+| `PATCH` | `/api/v1/me` | Bearer | PATCH semantics — omit a field to leave it alone. Accepts profile and settings fields under either spelling (see the OpenAPI schema); deliberately refuses `currentLevel` so a learner cannot bypass the placement test |
 | `GET` | `/api/v1/me/devices` | Bearer | List the caller's devices |
 | `DELETE` | `/api/v1/me/devices/{device_id}` | Bearer | Revoke one of the caller's devices |
-| `GET` | `/api/v1/content/levels` | — | Published CEFR levels, each with its unit count. Cacheable |
-| `GET` | `/api/v1/content/levels/{level_code}/units` | — | Published units of one level. Cacheable |
-| `GET` | `/api/v1/content/units/{unit_id}/lessons` | — | Published lessons of one unit. Cacheable |
-| `GET` | `/api/v1/content/lessons/{lesson_id}` | — | A lesson and its questions, with **no answer key**. Cacheable |
-| `GET` | `/api/v1/content/questions/{question_id}/explanation` | — | A single question's rationale, asked for after the learner has answered. Cacheable |
+| `GET` | `/api/v1/content/tree` | — | The whole published catalogue, levels down to question counts. Cacheable |
+| `GET` | `/api/v1/content/lessons/{lesson_id}` | — | One lesson and its questions, with **no answer key**. Cacheable |
 
-The five catalogue routes are deliberately unauthenticated: an app shell has to be able to
+Both catalogue routes are deliberately unauthenticated: an app shell has to be able to
 show that a beginner course exists before anyone signs in. That is safe only because the
 question schema withholds `correct_index`, `accepted_answers` and `explanation` — the
-practisable question is readable before an attempt, and the graded feedback, served only
-by the standalone explanation route, after one.
+practisable question is readable before an attempt, and the graded feedback is earned by
+answering it.
 
 Populate them with `uv run python -m scripts.seed_content --yes` (see `scripts/`).
 

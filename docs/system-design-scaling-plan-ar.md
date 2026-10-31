@@ -18,7 +18,7 @@
 - فصل الطبقات (Domain / Application / Infrastructure / Presentation) وحدود واضحة بين الوحدات.
 - `UnitOfWork` واحد لكل طلب، و`commit` صريح — يمنع الكتابة الجزئية.
 - Keyset pagination، ETag/304، Idempotency-Key، وفصل Liveness عن Readiness.
-- 935 اختباراً و23 migration و CI صارم (ruff + pyright + coverage ≥ 80%).
+- 1,090 اختباراً و24 migration و CI صارم (ruff + pyright + coverage ≥ 80%).
 - Structured logging مع تنقية الأسرار، وتعامل جيد مع فشل مزوّد الـ AI (Fallback حتمي).
 
 ### أخطر 9 مشاكل يجب إصلاحها قبل أي حمل حقيقي
@@ -49,7 +49,7 @@
 | **Phase 3 — 300k+** | 8–12 أسبوعاً | Cells/Sharding عند الحاجة + CDC + تحسين التكلفة | 5,000 RPS، تكلفة/1k طلب محددة |
 
 ### ما لن نفعله الآن (وهذا قرار هندسي، لا تقصير)
-لن ننتقل إلى **Microservices**، ولا **Kafka**، ولا **Kubernetes**، ولا **Sharding**، ولا **Multi-Region Active-Active** في هذه المرحلة. كل واحدة منها لها **شرط تفعيل قابل للقياس** مذكور في §13. الانتقال المبكر يضاعف التعقيد ويستهلك الفريق دون فائدة.
+لن ننتقل إلى **Microservices**، ولا **Kafka**، ولا **Sharding**، ولا **Multi-Region Active-Active** في هذه المرحلة. **Kubernetes** يبقى اختيارياً: أُضيفت manifests جاهزة في `deploy/k8s/` (P2-5)، لكن Compose يبقى الافتراضي حتى يتجاوز النشر 10 عُقد أو يحتاج بيئات متعددة معقّدة. كل واحدة منها لها **شرط تفعيل قابل للقياس** مذكور في §13. الانتقال المبكر يضاعف التعقيد ويستهلك الفريق دون فائدة.
 
 ---
 
@@ -99,7 +99,7 @@
 | Liveness/Readiness منفصلان | `app/core/health.py` | يمنع crash loops عند تعطّل القاعدة |
 | Structured logs + Redaction | `app/core/logging.py` | جاهز للـ aggregation |
 | AI اختياري مع Fallback | `app/platform/ai/service.py` | تعطّل المزوّد لا يوقف التعلم |
-| 935 اختبار + CI صارم | `tests/`, `.github/workflows/ci.yml` | يسمح بالتحسين بثقة |
+| 1,090 اختبار + CI صارم | `tests/`, `.github/workflows/ci.yml` | يسمح بالتحسين بثقة |
 
 ---
 
@@ -1112,7 +1112,7 @@ thresholds: {
 |---|---|---|
 | Microservices | فريق صغير وحدود واضحة أصلاً | > 8 مهندسين أو حاجة Scaling مستقل لوحدة |
 | Kafka | Redis Streams تكفي حتى آلاف الأحداث/ثانية | > 5,000 حدث/ثانية أو مستهلكون متعددون |
-| Kubernetes | Compose + Load Balancer يكفيان | > 10 عُقد أو حاجة Multi-env معقّدة |
+| Kubernetes | Compose + Load Balancer يكفيان، وmanifests جاهزة في `deploy/k8s/` | > 10 عُقد أو حاجة Multi-env معقّدة |
 | Sharding | Primary يتحمل حتى 300k DAU بعد التحسين | كتابة Primary > 60% باستمرار بعد Partitioning/Counters |
 | Multi-Region Active-Active | التعقيد لا يبرره حجم مستخدمي العراق | > 30% خارج المنطقة أو RTO < 15 دقيقة |
 | UUIDv7 للجداول القديمة | الترحيل مكلف | Bloat مقاس > 30% أو إدراج > 5k/ثانية |
@@ -1147,7 +1147,7 @@ thresholds: {
 
 ## 15) ملاحظات جانبية مهمة
 
-1. **README متأخر عن الكود:** يذكر مسارات `/api/v1/content/levels` و`/content/units/...` التي استُبدلت بـ `/content/tree`، ويشير إلى `docs/mobile-integration-ar.md` و`docs/backend-roadmap-ar.md` غير الموجودين. يجب تحديثه لأن الفريق والعميل يعتمدان عليه.
+1. **README:** كان متأخراً عن الكود (مسارات `/content/levels` المحذوفة وروابط `docs/mobile-integration-ar.md` و`docs/backend-roadmap-ar.md` غير الموجودة). حُدِّث: جدول المسارات صار `/content/tree` و`/content/lessons/{id}`، والروابط تشير إلى `docs/mobile-app-architecture.md` و`docs/system-design-scaling-plan-ar.md` و`docs/runbooks/`.
 2. **`/metrics` كان مذكوراً في `_QUIET_PATHS` وغير موجود** — أُضيف في Phase 0 (انظر §9.1)؛ لم يبقَ من هذه الملاحظة إلا أن Sentry/OTel ما زالا غير موصولين.
 3. **`SENTRY_DSN` و`OTEL_*` إعدادات ميتة** — إما تُنفَّذ أو تُحذف؛ الإعدادات غير المستخدمة خطأ تشغيلي.
 4. **`AI_TIMEOUT_SECONDS=20`** أطول من أي SLO واقعي؛ اخفضه.
@@ -1157,7 +1157,7 @@ thresholds: {
 8. **`StaticFiles`** لا يدعم Range بشكل مثالي للصوت؛ CDN يحل ذلك.
 9. **الوسائط حالياً `no-store`**: `SecurityHeadersMiddleware` يضع `Cache-Control: no-store` لكل استجابة لا تحمل `@cacheable`، و`StaticFiles` لا يستثني. أي أن كل تشغيل لملف صوت يعيد التحميل. هذا شرحٌ مباشر لبطء محتمل في الدروس الصوتية، ويُصلَح قبل أي CDN (F28).
 10. **`Job.run_at` غير منفَّذ**: الحقل موجود في الـ Port ويوحي بجدولة، لكن `to_dict()` لا يمرّره و`RedisQueue` لا يؤجّل شيئاً. أي وظيفة تعتمد عليه ستُنفَّذ فوراً. إما يُنفَّذ (Delayed Set / Streams) أو يُحذف من الـ Port.
-11. **أسماء وظائف بلا Handler**: `JobName` يعلن 9 وظائف، والمسجّل منها اثنتان فقط (`CLEANUP_EXPIRED_TOKENS`, `PURGE_AI_USAGE`). أي وظيفة أخرى تُسحب وتُسجَّل كخطأ ثم تُهمَل. عند إضافة الإشعارات/التحليلات، أضف الـ Handler واختباراً يفشل إذا أُعلن اسم بلا معالجة.
+11. **أسماء وظائف بلا Handler**: `JobName` يعلن 9 وظائف، والمسجّل منها ثلاث فقط (`CLEANUP_EXPIRED_TOKENS`, `PURGE_AI_USAGE`, `PURGE_ABANDONED_SESSIONS`). أي وظيفة أخرى تُسحب وتُسجَّل كخطأ ثم تُهمَل. عند إضافة الإشعارات/التحليلات، أضف الـ Handler واختباراً يفشل إذا أُعلن اسم بلا معالجة.
 
 ---
 
