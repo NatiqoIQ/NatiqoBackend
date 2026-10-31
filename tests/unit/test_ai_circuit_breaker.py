@@ -8,6 +8,7 @@ matters most. These tests pin when it opens, what it refuses, and how it closes 
 
 from __future__ import annotations
 
+import uuid
 from typing import Any
 
 import pytest
@@ -17,6 +18,7 @@ from app.platform.ai import service as service_module
 from app.platform.ai.port import (
     AIFeature,
     AIProviderError,
+    AIProviderName,
     AIQuotaExceeded,
     AIRequest,
     AIResponse,
@@ -26,7 +28,7 @@ from app.platform.ai.port import (
 from app.platform.ai.service import AIService, reset_circuit_breakers
 
 _CONTEXT = TutorContext(
-    user_id=UserId("11111111-1111-1111-1111-111111111111"),
+    user_id=UserId(uuid.UUID("11111111-1111-1111-1111-111111111111")),
     level=CEFRLevel.A1,
     explanation_language=ContentLanguage.EN,
 )
@@ -34,7 +36,7 @@ _REQUEST = AIRequest(system_prompt="system", user_prompt="hello", feature=AIFeat
 
 
 class _FlakyProvider:
-    name = "openai"
+    name: AIProviderName = AIProviderName.OPENAI
 
     def __init__(self, *, failures: int = 0, error: type[Exception] = AIProviderError) -> None:
         self.calls = 0
@@ -50,11 +52,11 @@ class _FlakyProvider:
             usage=AIUsage(
                 user_id=context.user_id,
                 feature=request.feature,
-                provider="openai",
+                provider=AIProviderName.OPENAI,
                 model="test-model",
             ),
             model="test-model",
-            provider="openai",
+            provider=AIProviderName.OPENAI,
         )
 
     async def ping(self) -> bool:

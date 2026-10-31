@@ -9,6 +9,7 @@ reached. These tests pin the failure mode as a *fast fallback*, not a hang and n
 from __future__ import annotations
 
 import asyncio
+import uuid
 
 import pytest
 
@@ -16,6 +17,7 @@ from app.core.types import CEFRLevel, ContentLanguage, UserId
 from app.platform.ai.port import (
     AIFeature,
     AIProviderError,
+    AIProviderName,
     AIRequest,
     AIResponse,
     AIUsage,
@@ -24,7 +26,7 @@ from app.platform.ai.port import (
 from app.platform.ai.service import AIService
 
 _CONTEXT = TutorContext(
-    user_id=UserId("11111111-1111-1111-1111-111111111111"),
+    user_id=UserId(uuid.UUID("11111111-1111-1111-1111-111111111111")),
     level=CEFRLevel.A1,
     explanation_language=ContentLanguage.EN,
 )
@@ -32,7 +34,7 @@ _REQUEST = AIRequest(system_prompt="system", user_prompt="hello", feature=AIFeat
 
 
 class _Provider:
-    name = "openai"
+    name: AIProviderName = AIProviderName.OPENAI
 
     def __init__(self, *, delay: float = 0.0) -> None:
         self.delay = delay
@@ -47,11 +49,11 @@ class _Provider:
             usage=AIUsage(
                 user_id=context.user_id,
                 feature=request.feature,
-                provider="openai",
+                provider=AIProviderName.OPENAI,
                 model="test-model",
             ),
             model="test-model",
-            provider="openai",
+            provider=AIProviderName.OPENAI,
         )
 
     async def ping(self) -> bool:

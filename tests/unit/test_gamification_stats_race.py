@@ -10,6 +10,7 @@ surface an IntegrityError.
 
 from __future__ import annotations
 
+import uuid
 from datetime import UTC, datetime
 
 import pytest
@@ -71,9 +72,9 @@ class _Uow:
 
 @pytest.mark.asyncio
 async def test_a_lost_first_insert_keeps_both_awards() -> None:
-    user_id = UserId("11111111-1111-1111-1111-111111111111")
+    user_id = UserId(uuid.UUID("11111111-1111-1111-1111-111111111111"))
     stats = _Stats(winner_xp=50)
-    service = GamificationService(_Uow(stats), get_settings())
+    service = GamificationService(_Uow(stats), get_settings())  # type: ignore[arg-type]
 
     await service.apply_lesson_completed(
         user_id,

@@ -31,7 +31,7 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
-from alembic import command
+from alembic import command  # pyright: ignore[reportAttributeAccessIssue]
 from alembic.config import Config
 from alembic.script import ScriptDirectory
 from sqlalchemy import create_engine

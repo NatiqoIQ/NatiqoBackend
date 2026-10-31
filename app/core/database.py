@@ -105,10 +105,12 @@ def _create_engine(*, read: bool = False) -> AsyncEngine:
 def get_engine() -> AsyncEngine:
     """Process-wide async engine. Created lazily so import stays side-effect free."""
     global _engine
-    if _engine is None:
-        _engine = _create_engine()
-        logger.debug("database.engine_created", dialect=_engine.dialect.name)
-    return _engine
+    engine = _engine
+    if engine is None:
+        engine = _create_engine()
+        _engine = engine
+        logger.debug("database.engine_created", dialect=engine.dialect.name)
+    return engine
 
 
 def get_read_engine() -> AsyncEngine:
@@ -121,10 +123,12 @@ def get_read_engine() -> AsyncEngine:
     settings = get_settings()
     if not settings.database_read_url or settings.read_sqlalchemy_dsn == settings.sqlalchemy_dsn:
         return get_engine()
-    if _read_engine is None:
-        _read_engine = _create_engine(read=True)
-        logger.info("database.read_engine_created", dialect=_read_engine.dialect.name)
-    return _read_engine
+    read_engine = _read_engine
+    if read_engine is None:
+        read_engine = _create_engine(read=True)
+        _read_engine = read_engine
+        logger.info("database.read_engine_created", dialect=read_engine.dialect.name)
+    return read_engine
 
 
 def get_read_session_factory() -> async_sessionmaker[AsyncSession]:

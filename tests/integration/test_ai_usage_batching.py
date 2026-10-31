@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.modules.ai.infrastructure.models import AiUsageRecord
 from app.modules.ai.infrastructure.usage import drain, flush, record_ai_usage
 from app.modules.users.infrastructure.models import UserModel
-from app.platform.ai.port import AIFeature, AIUsage
+from app.platform.ai.port import AIFeature, AIProviderName, AIUsage
 
 
 async def _user(session: AsyncSession) -> UserModel:
@@ -31,7 +31,7 @@ def _usage(user_id: uuid.UUID, *, cost: str = "0.01", status: str = "ok") -> AIU
     return AIUsage(
         user_id=user_id,  # type: ignore[arg-type]
         feature=AIFeature.TUTOR_CHAT,
-        provider="openai",
+        provider=AIProviderName.OPENAI,
         model="test-model",
         input_tokens=10,
         output_tokens=5,

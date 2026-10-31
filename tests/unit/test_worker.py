@@ -275,7 +275,7 @@ async def test_the_abandoned_session_handler_uses_the_configured_retention() -> 
     repo = _FakeSessionRepo(removed=3)
     uow = _FakeUow(repo)
     ctx = WorkerContext(
-        uow_factory=lambda: uow,
+        uow_factory=lambda: uow,  # type: ignore[arg-type]
         now=lambda: _NOW,
         abandoned_session_retention_days=7,
     )
@@ -292,7 +292,7 @@ async def test_the_abandoned_session_handler_uses_the_configured_retention() -> 
 async def test_zero_retention_disables_the_purge() -> None:
     repo = _FakeSessionRepo(removed=3)
     ctx = WorkerContext(
-        uow_factory=lambda: _FakeUow(repo),
+        uow_factory=lambda: _FakeUow(repo),  # type: ignore[arg-type]
         now=lambda: _NOW,
         abandoned_session_retention_days=0,
     )
