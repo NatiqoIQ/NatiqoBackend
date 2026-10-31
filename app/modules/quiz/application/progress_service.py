@@ -20,6 +20,7 @@ import uuid
 from datetime import datetime
 
 from app.core.errors import ErrorCode, NotFoundError, ValidationFailed
+from app.core.logging import get_logger
 from app.core.pagination import (
     InvalidCursor,
     PageResult,
@@ -32,6 +33,11 @@ from app.core.time import local_date, streak_runs, utc_now
 from app.core.types import ContentId, UserId
 from app.core.uow import UnitOfWorkProtocol
 from app.modules.content.domain.entities import LessonPlacement
+from app.modules.quiz.application.progress_cache import (
+    decode_summary,
+    encode_summary,
+    progress_summary_key,
+)
 from app.modules.quiz.application.progress_dto import (
     LessonProgressView,
     ProgressSummaryView,
@@ -41,13 +47,24 @@ from app.modules.quiz.application.progress_dto import (
 )
 from app.modules.quiz.domain.entities import LessonProgress, ProgressState, QuizSession
 from app.modules.quiz.domain.unlock import lesson_locked, unit_locked
+from app.platform.cache.port import CachePort
+
+logger = get_logger("quiz.progress")
 
 __all__ = ["ProgressService"]
 
 
 class ProgressService:
-    def __init__(self, uow: UnitOfWorkProtocol) -> None:
+    def __init__(
+        self,
+        uow: UnitOfWorkProtocol,
+        *,
+        cache: CachePort | None = None,
+        cache_ttl_seconds: int = 60,
+    ) -> None:
         self._uow = uow
+        self._cache = cache
+        self._cache_ttl_seconds = cache_ttl_seconds
 
     # ================================================================ summary
     async def summary(self, user_id: UserId) -> ProgressSummaryView:
@@ -59,6 +76,19 @@ class ProgressService:
         missing profile falls back to the default zone rather than UTC — the product
         default is Asia/Baghdad.
         """
+        key = progress_summary_key(self._cache, user_id) if self._cache is not None else None
+        if self._cache is not None and key is not None:
+            try:
+                cached = await self._cache.get(key)
+            except Exception as exc:  # noqa: BLE001 - a cache outage costs one query
+                logger.warning("quiz.progress_cache_read_failed", error=str(exc)[:200])
+                cached = None
+            if cached:
+                try:
+                    return decode_summary(cached)
+                except (ValueError, TypeError, KeyError) as exc:
+                    logger.warning("quiz.progress_cache_corrupt", error=str(exc)[:200])
+
         totals = await self._uow.lesson_progress.totals_for_user(user_id)
         tally = await self._uow.quiz_answers.tally_for_user(user_id)
         completion_times = await self._uow.quiz_sessions.list_completion_times(user_id)
@@ -67,7 +97,7 @@ class ProgressService:
 
         current_streak, longest_streak = _streaks(completion_times, timezone)
 
-        return ProgressSummaryView(
+        view = ProgressSummaryView(
             total_xp=totals.xp_total,
             lessons_completed=totals.lessons_completed,
             lessons_in_progress=totals.lessons_in_progress,
@@ -80,6 +110,14 @@ class ProgressService:
             last_activity_at=completion_times[0] if completion_times else None,
             words_learned=words_learned,
         )
+        if self._cache is not None and key is not None:
+            try:
+                await self._cache.set(
+                    key, encode_summary(view), ttl_seconds=self._cache_ttl_seconds
+                )
+            except Exception as exc:  # noqa: BLE001 - a failed write is just a miss next time
+                logger.warning("quiz.progress_cache_write_failed", error=str(exc)[:200])
+        return view
 
     # ============================================================ one lesson
     async def lesson_progress(self, user_id: UserId, lesson_id: uuid.UUID) -> LessonProgressView:

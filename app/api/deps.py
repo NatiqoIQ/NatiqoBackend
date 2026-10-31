@@ -390,7 +390,9 @@ async def invalidate_catalogue_tree(request: Request, cache: CacheDep) -> AsyncI
 
 
 # ------------------------------------------------------------------------ quiz
-def get_quiz_service(uow: UowDep, settings: SettingsDep, bus: EventBusDep) -> QuizService:
+def get_quiz_service(
+    uow: UowDep, settings: SettingsDep, bus: EventBusDep, cache: CacheDep
+) -> QuizService:
     """Build a request-scoped :class:`QuizService`.
 
     Bound to the request's unit of work, so starting a session, grading an answer and
@@ -402,7 +404,7 @@ def get_quiz_service(uow: UowDep, settings: SettingsDep, bus: EventBusDep) -> Qu
     this same unit of work — otherwise the XP a completion earns could be committed without
     the completion, or vice versa.
     """
-    return QuizService(uow, settings, bus=bus)
+    return QuizService(uow, settings, bus=bus, cache=cache)
 
 
 QuizServiceDep = Annotated[QuizService, Depends(get_quiz_service)]
@@ -476,14 +478,18 @@ MediaServiceDep = Annotated[MediaService, Depends(get_media_service)]
 
 
 # -------------------------------------------------------------------- progress
-def get_progress_service(uow: UowDep) -> ProgressService:
+def get_progress_service(uow: UowDep, cache: CacheDep, settings: SettingsDep) -> ProgressService:
     """Build a request-scoped :class:`ProgressService`.
 
     Bound to the request's unit of work like every other service. It is read-only, so it
     never commits: the session is opened and rolled back by the dependency's ``__aexit__``,
     which is exactly what a pure read should do.
     """
-    return ProgressService(uow)
+    return ProgressService(
+        uow,
+        cache=cache,
+        cache_ttl_seconds=settings.progress_summary_cache_ttl_seconds,
+    )
 
 
 ProgressServiceDep = Annotated[ProgressService, Depends(get_progress_service)]

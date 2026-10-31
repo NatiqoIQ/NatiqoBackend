@@ -51,6 +51,7 @@ from app.modules.quiz.application.dto import (
     SessionDetailView,
     SessionView,
 )
+from app.modules.quiz.application.progress_cache import invalidate_progress_summary
 from app.modules.quiz.domain.entities import (
     LessonProgress,
     ProgressState,
@@ -87,6 +88,7 @@ from app.modules.quiz.domain.unlock import (
     next_unit_id,
     unit_locked,
 )
+from app.platform.cache.port import CachePort
 
 __all__ = ["QuizService"]
 
@@ -98,9 +100,11 @@ class QuizService:
         settings: Settings,
         *,
         bus: EventBus | None = None,
+        cache: CachePort | None = None,
     ) -> None:
         self._uow = uow
         self._settings = settings
+        self._cache = cache
         #: Optional on purpose: the event bus is a *side channel*, not a dependency of the
         #: engine. A completion is a complete unit of work with or without a subscriber, so a
         #: test (or a future worker) can construct the service with no bus and the lesson
@@ -181,6 +185,7 @@ class QuizService:
         await self._uow.quiz_sessions.add(session)
         await self._start_progress(user_id, lesson.id)
         await self._uow.commit()
+        await self._invalidate_progress(user_id)
 
         return SessionDetailView(
             session=_session_view(session, answered_question_ids=()),
@@ -310,6 +315,7 @@ class QuizService:
             await self._ensure_review_card(user_id, question_id)
         await self._uow.quiz_sessions.save(session)
         await self._uow.commit()
+        await self._invalidate_progress(user_id)
 
         answered_count = await self._uow.quiz_answers.count_for_session(session.id)
         return GradedAnswerView(
@@ -436,6 +442,7 @@ class QuizService:
             is_retry=is_retry,
         )
         await self._uow.commit()
+        await self._invalidate_progress(user_id)
 
         return CompletedSessionView(
             session=_session_view(
@@ -470,6 +477,7 @@ class QuizService:
             session.abandon()
             await self._uow.quiz_sessions.save(session)
             await self._uow.commit()
+            await self._invalidate_progress(user_id)
 
         answers = await self._uow.quiz_answers.list_for_session(session.id)
         return _session_view(
@@ -477,6 +485,15 @@ class QuizService:
         )
 
     # ============================================================= internals
+    async def _invalidate_progress(self, user_id: UserId) -> None:
+        """Drop the cached progress summary after a command commits.
+
+        Every mutation that can change a summary figure goes through here. Failures are
+        already swallowed inside the helper: a cache outage must not fail a completion.
+        """
+        if self._cache is not None:
+            await invalidate_progress_summary(self._cache, user_id)
+
     async def _assert_unit_open(self, user_id: UserId, unit_id: uuid.UUID) -> None:
         """Refuse a sitting in a unit the sequential-unlock rule has not reached.
 

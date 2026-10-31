@@ -117,6 +117,10 @@ class Settings(BaseSettings):
     #: How long the assembled catalogue tree may be served from the cache. Short on
     #: purpose: publishing is rare but an editor expects to see it, and 30s of staleness
     #: costs one rebuild while a longer TTL would make "I published it" look broken.
+    #: A progress screen is opened repeatedly inside one session; a minute of staleness is
+    #: invisible while it saves two lifetime scans per open. Mutations invalidate the key
+    #: immediately, so a learner never sees an old number after finishing something.
+    progress_summary_cache_ttl_seconds: int = 60
     catalogue_cache_ttl_seconds: int = 30
     flags_cache_ttl_seconds: int = 30
     #: The dashboard runs nineteen aggregates per load; a dashboard that is 30 seconds
