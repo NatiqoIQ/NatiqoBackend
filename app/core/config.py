@@ -39,6 +39,15 @@ _PLACEHOLDER_SECRETS = {
 DEV_CORS_ORIGIN_REGEX = r"https?://(?:localhost|127\.0\.0\.1|\[::1\])(?::\d{1,5})?"
 
 
+def _async_dsn(url: str) -> str:
+    """Normalise a PostgreSQL URL to SQLAlchemy's asyncpg dialect."""
+    if url.startswith("postgresql://"):
+        return url.replace("postgresql://", "postgresql+asyncpg://", 1)
+    if url.startswith("postgres://"):
+        return url.replace("postgres://", "postgresql+asyncpg://", 1)
+    return url
+
+
 class Settings(BaseSettings):
     """Typed application settings."""
 
@@ -68,6 +77,9 @@ class Settings(BaseSettings):
     postgres_password: SecretStr = SecretStr("change-me")
     postgres_db: str = "natiqo"
     database_url: str | None = None
+    #: Optional read-only replica. Only reads that tolerate replication lag may use it
+    #: (the public catalogue). Empty means "use the primary".
+    database_read_url: str | None = None
 
     database_pool_size: int = 10
     database_max_overflow: int = 20
@@ -374,17 +386,20 @@ class Settings(BaseSettings):
     def sqlalchemy_dsn(self) -> str:
         """Async SQLAlchemy DSN. Never log this value."""
         if self.database_url:
-            url = self.database_url
-            if url.startswith("postgresql://"):
-                return url.replace("postgresql://", "postgresql+asyncpg://", 1)
-            if url.startswith("postgres://"):
-                return url.replace("postgres://", "postgresql+asyncpg://", 1)
-            return url
+            return _async_dsn(self.database_url)
         password = self.postgres_password.get_secret_value()
         return (
             f"postgresql+asyncpg://{self.postgres_user}:{password}"
             f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
         )
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def read_sqlalchemy_dsn(self) -> str:
+        """DSN for the read replica, or the primary when none is configured."""
+        if self.database_read_url:
+            return _async_dsn(self.database_read_url)
+        return self.sqlalchemy_dsn
 
     @computed_field  # type: ignore[prop-decorator]
     @property

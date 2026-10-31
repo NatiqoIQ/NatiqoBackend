@@ -31,11 +31,13 @@ logger = get_logger(__name__)
 
 _engine: AsyncEngine | None = None
 _session_factory: async_sessionmaker[AsyncSession] | None = None
+_read_engine: AsyncEngine | None = None
+_read_session_factory: async_sessionmaker[AsyncSession] | None = None
 
 
-def _create_engine() -> AsyncEngine:
+def _create_engine(*, read: bool = False) -> AsyncEngine:
     settings = get_settings()
-    url = settings.sqlalchemy_dsn
+    url = settings.read_sqlalchemy_dsn if read else settings.sqlalchemy_dsn
     is_sqlite = url.startswith("sqlite")
     #: An in-memory SQLite database exists only inside the connection that opened it.
     #: With the default pool, the next checkout gets a *different* empty database, so
@@ -67,7 +69,7 @@ def _create_engine() -> AsyncEngine:
             #: database outage to everyone queued behind it.
             connect_args={
                 "server_settings": {
-                    "application_name": "natiqo-api",
+                    "application_name": "natiqo-api-read" if read else "natiqo-api",
                     "statement_timeout": str(settings.database_statement_timeout_ms),
                     "lock_timeout": str(settings.database_lock_timeout_ms),
                     "idle_in_transaction_session_timeout": str(
@@ -98,6 +100,37 @@ def get_engine() -> AsyncEngine:
     return _engine
 
 
+def get_read_engine() -> AsyncEngine:
+    """Engine for lag-tolerant reads, or the primary when no replica is configured.
+
+    Sharing the primary when the DSNs are equal is not an optimisation detail: a second
+    pool against the same database would double the connection count for no benefit.
+    """
+    global _read_engine
+    settings = get_settings()
+    if not settings.database_read_url or settings.read_sqlalchemy_dsn == settings.sqlalchemy_dsn:
+        return get_engine()
+    if _read_engine is None:
+        _read_engine = _create_engine(read=True)
+        logger.info("database.read_engine_created", dialect=_read_engine.dialect.name)
+    return _read_engine
+
+
+def get_read_session_factory() -> async_sessionmaker[AsyncSession]:
+    global _read_session_factory
+    settings = get_settings()
+    if not settings.database_read_url or settings.read_sqlalchemy_dsn == settings.sqlalchemy_dsn:
+        return get_session_factory()
+    if _read_session_factory is None:
+        _read_session_factory = async_sessionmaker(
+            bind=get_read_engine(),
+            expire_on_commit=False,
+            autoflush=False,
+            class_=AsyncSession,
+        )
+    return _read_session_factory
+
+
 def get_session_factory() -> async_sessionmaker[AsyncSession]:
     global _session_factory
     if _session_factory is None:
@@ -112,12 +145,17 @@ def get_session_factory() -> async_sessionmaker[AsyncSession]:
 
 async def dispose_engine() -> None:
     """Close pooled connections. Called on application shutdown."""
-    global _engine, _session_factory
+    global _engine, _session_factory, _read_engine, _read_session_factory
+    if _read_engine is not None and _read_engine is not _engine:
+        await _read_engine.dispose()
+        logger.info("database.read_engine_disposed")
     if _engine is not None:
         await _engine.dispose()
         logger.info("database.engine_disposed")
     _engine = None
     _session_factory = None
+    _read_engine = None
+    _read_session_factory = None
 
 
 async def create_all() -> None:
@@ -165,3 +203,14 @@ def make_uow() -> SqlAlchemyUnitOfWork:
     from app.core.uow_sqlalchemy import SqlAlchemyUnitOfWork
 
     return SqlAlchemyUnitOfWork(get_session_factory())
+
+
+def make_read_uow() -> SqlAlchemyUnitOfWork:
+    """Build a read-only unit of work, on the replica when one is configured.
+
+    Only lag-tolerant reads may use this. A learner's own progress must never be read
+    here: a replica that is a second behind would hide the lesson they just finished.
+    """
+    from app.core.uow_sqlalchemy import SqlAlchemyUnitOfWork
+
+    return SqlAlchemyUnitOfWork(get_read_session_factory())

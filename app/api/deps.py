@@ -20,7 +20,7 @@ from typing import Annotated
 from fastapi import Depends, Request
 
 from app.core.config import Settings, get_settings
-from app.core.database import make_uow
+from app.core.database import make_read_uow, make_uow
 from app.core.errors import RateLimitedError
 from app.core.events import InProcessEventBus
 from app.core.logging import get_logger
@@ -218,6 +218,28 @@ async def uow_dep() -> AsyncIterator[SqlAlchemyUnitOfWork]:
 UowDep = Annotated[SqlAlchemyUnitOfWork, Depends(uow_dep)]
 
 
+async def read_uow_dep() -> AsyncIterator[SqlAlchemyUnitOfWork]:
+    """Request-scoped unit of work on the replica, when one is configured.
+
+    Reserved for reads that tolerate replication lag. Learner state is deliberately not
+    routed here: seeing your own lesson as unfinished a second after you finished it is a
+    bug users report, not a scaling win.
+    """
+    uow = make_read_uow()
+    await uow.__aenter__()
+    exc_info: tuple[type[BaseException] | None, BaseException | None, object] = (None, None, None)
+    try:
+        yield uow
+    except BaseException as exc:
+        exc_info = (type(exc), exc, exc.__traceback__)
+        raise
+    finally:
+        await uow.__aexit__(*exc_info)
+
+
+ReadUowDep = Annotated[SqlAlchemyUnitOfWork, Depends(read_uow_dep)]
+
+
 # ------------------------------------------------------------------- event bus
 def get_bus(uow: UowDep, settings: SettingsDep) -> InProcessEventBus:
     """Build a request-scoped event bus bound to **this request's** unit of work.
@@ -296,11 +318,15 @@ AiTutorServiceDep = Annotated[AiTutorService, Depends(get_ai_tutor_service)]
 
 
 # ------------------------------------------------------------------- catalogue
-def get_catalogue_service(uow: UowDep, cache: CacheDep, settings: SettingsDep) -> CatalogueService:
+def get_catalogue_service(
+    uow: ReadUowDep, cache: CacheDep, settings: SettingsDep
+) -> CatalogueService:
     """Build a request-scoped :class:`CatalogueService`.
 
     Bound to the request's unit of work, like every other service, so the four read
-    endpoints share one session and one transaction. The shared cache is passed because
+    endpoints share one session and one transaction. It is the one service routed to
+    ``ReadUowDep``: the catalogue is identical for every learner, so a replica that is a
+    second behind costs nothing, while it takes the heaviest reads off the primary. The shared cache is passed because
     the tree is the one response every cold start downloads: four queries and a full
     nesting pass per launch, for a document that changes only when an editor publishes.
     Its TTL is deliberately short (``CATALOGUE_CACHE_TTL_SECONDS``); a cache failure
