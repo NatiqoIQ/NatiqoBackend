@@ -266,6 +266,10 @@ class Settings(BaseSettings):
     ai_max_input_chars: int = 4000
     ai_max_output_tokens: int = 800
     ai_daily_user_budget_usd: float = 0.50
+    #: Platform-wide daily ceiling across every learner. Zero disables it. This is the
+    #: breaker for a runaway prompt or a bug that fans out calls: a per-user limit cannot
+    #: stop ten thousand users each spending their own allowance.
+    ai_daily_global_budget_usd: float = 0.0
     #: Days of AI usage kept for cost attribution. Zero disables the purge job.
     ai_usage_retention_days: int = 180
     abandoned_session_retention_days: int = 7

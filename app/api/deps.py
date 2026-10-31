@@ -281,7 +281,7 @@ def _build_ai_provider() -> AIProvider:
     return provider
 
 
-def get_ai_service(uow: UowDep) -> AIService:
+def get_ai_service(uow: UowDep, cache: CacheDep) -> AIService:
     """Build a request-scoped :class:`AIService`.
 
     The provider is process-cached (it owns an HTTP client pool), but the service is
@@ -294,7 +294,7 @@ def get_ai_service(uow: UowDep) -> AIService:
     return AIService(
         _build_ai_provider(),
         usage_recorder=record_ai_usage,
-        budget=budget_for(uow.session, get_settings()),
+        budget=budget_for(uow.session, get_settings(), cache=cache),
     )
 
 
@@ -302,7 +302,7 @@ AIServiceDep = Annotated[AIService, Depends(get_ai_service)]
 
 
 # ------------------------------------------------------------------ ai tutor
-def get_ai_tutor_service(uow: UowDep, settings: SettingsDep) -> AiTutorService:
+def get_ai_tutor_service(uow: UowDep, cache: CacheDep, settings: SettingsDep) -> AiTutorService:
     """Build a request-scoped :class:`AiTutorService`.
 
     Bound to the request's unit of work, so a stored thread and the AI usage it produced
@@ -312,7 +312,9 @@ def get_ai_tutor_service(uow: UowDep, settings: SettingsDep) -> AiTutorService:
     """
     from app.modules.ai.infrastructure.budget import budget_for
 
-    return AiTutorService(uow, get_ai_service(uow), budget_for(uow.session, settings))
+    return AiTutorService(
+        uow, get_ai_service(uow, cache), budget_for(uow.session, settings, cache=cache)
+    )
 
 
 AiTutorServiceDep = Annotated[AiTutorService, Depends(get_ai_tutor_service)]

@@ -26,6 +26,7 @@ from app.api.deps import (
     _build_storage,
     client_ip,
     get_ai_service,
+    get_cache,
     rate_limit,
     rate_limit_principal,
 )
@@ -292,7 +293,7 @@ class TestAIProviderSelection:
 
         uow = cast("SqlAlchemyUnitOfWork", FakeUow(session=session))
 
-        assert get_ai_service(uow) is not None
+        assert get_ai_service(uow, get_cache()) is not None
 
 
 class TestTrustDefaults:
