@@ -12,17 +12,22 @@ coordinating that through Redis would add a round-trip and a failure mode to a p
 whose entire purpose is to be optional. Per-process coalescing plus a short TTL turns
 a thundering herd into at most one query per worker.
 
-Locks are kept per loop in a ``WeakKeyDictionary``: an ``asyncio.Lock`` binds to the
-loop that first waits on it, and the test suite creates a fresh loop per test. Keying
-by loop keeps a lock from a finished loop out of the next one's way.
+Locks are kept per loop in a ``WeakKeyDictionary``, and the locks themselves are held
+weakly. An ``asyncio.Lock`` binds to the loop that first *waits* on it, so keeping a
+strong reference in a loop-keyed registry would make the value reference its own key
+and the loop could never be collected — one leaked loop per test is not acceptable.
+While any task is inside the lock it holds it strongly; once the last one leaves, the
+lock is disposable and the next rebuild gets a fresh one.
 """
 
 from __future__ import annotations
 
 import asyncio
-from weakref import WeakKeyDictionary
+from weakref import WeakKeyDictionary, WeakValueDictionary
 
-_locks: WeakKeyDictionary[asyncio.AbstractEventLoop, dict[str, asyncio.Lock]] = WeakKeyDictionary()
+_locks: WeakKeyDictionary[asyncio.AbstractEventLoop, WeakValueDictionary[str, asyncio.Lock]] = (
+    WeakKeyDictionary()
+)
 
 
 def flight_lock(key: str) -> asyncio.Lock:
@@ -30,7 +35,7 @@ def flight_lock(key: str) -> asyncio.Lock:
     loop = asyncio.get_running_loop()
     keys = _locks.get(loop)
     if keys is None:
-        keys = {}
+        keys = WeakValueDictionary()
         _locks[loop] = keys
     lock = keys.get(key)
     if lock is None:
