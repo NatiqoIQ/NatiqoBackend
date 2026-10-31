@@ -27,6 +27,7 @@ from app.core.pagination import (
     decode_time_cursor,
     paginate_time,
 )
+from app.core.responses import MAX_PAGE_SIZE
 from app.core.time import local_date, streak_runs, utc_now
 from app.core.types import ContentId, UserId
 from app.core.uow import UnitOfWorkProtocol
@@ -104,12 +105,17 @@ class ProgressService:
             )
         row = await self._uow.lesson_progress.get(user_id, lesson_id)
         ordered_units, passed_units = await self._unlock_inputs(user_id)
-        all_placements = await self._uow.lessons.list_published_ordered()
+        #: One unit's lessons, not the whole catalogue. Opening a lesson used to read every
+        #: published lesson and every progress row to decide whether its predecessor was
+        #: completed; the unlock rule only ever needs this unit's order and a set of
+        #: completed ids, both of which are cheap indexed reads.
         unit_lessons = [
-            p.lesson.id for p in all_placements if p.lesson.unit_id == placement.lesson.unit_id
+            lesson.id
+            for lesson in await self._uow.lessons.list_published_for_unit(
+                ContentId(placement.lesson.unit_id), limit=MAX_PAGE_SIZE, after=None
+            )
         ]
-        rows = await self._uow.lesson_progress.list_for_user(user_id)
-        completed_lessons = {r.lesson_id for r in rows if r.state is ProgressState.COMPLETED}
+        completed_lessons = await self._uow.lesson_progress.completed_lesson_ids(user_id)
         is_u_locked = unit_locked(placement.lesson.unit_id, ordered_units, passed_units)
         l_locked = lesson_locked(
             placement.lesson.id,

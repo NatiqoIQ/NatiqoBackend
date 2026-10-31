@@ -27,6 +27,7 @@ from app.modules.quiz.domain.entities import (
     AnswerHistory,
     AnswerTally,
     LessonProgress,
+    ProgressState,
     QuizAnswer,
     QuizSession,
     SessionStatus,
@@ -340,6 +341,13 @@ class SqlAlchemyLessonProgressRepository(LessonProgressRepositoryPort):
         )
         models = (await self._session.execute(stmt)).scalars().all()
         return [to_progress(model) for model in models]
+
+    async def completed_lesson_ids(self, user_id: UserId) -> set[uuid.UUID]:
+        stmt = select(LessonProgressModel.lesson_id).where(
+            LessonProgressModel.user_id == user_id,
+            LessonProgressModel.state == ProgressState.COMPLETED.value,
+        )
+        return set((await self._session.execute(stmt)).scalars().all())
 
 
 class SqlAlchemyUnitProgressRepository(UnitProgressRepositoryPort):

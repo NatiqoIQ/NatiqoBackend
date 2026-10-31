@@ -184,6 +184,15 @@ class LessonProgressRepositoryPort(Protocol):
         """
         ...
 
+    async def completed_lesson_ids(self, user_id: UserId) -> set[uuid.UUID]:
+        """Just the ids of lessons the learner has completed.
+
+        The unlock check needs a membership test, not a history: hydrating every progress
+        row to ask "is this predecessor completed?" made opening one lesson cost the
+        learner's whole record. This returns one indexed column instead.
+        """
+        ...
+
 
 @runtime_checkable
 class UnitProgressRepositoryPort(Protocol):

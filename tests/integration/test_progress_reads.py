@@ -628,3 +628,39 @@ class TestXpHistory:
 
         with pytest.raises(ValidationFailed):
             await service.xp_history(UserId(user.id), limit=10, cursor="not-a-real-cursor")
+
+
+@pytest.mark.asyncio
+async def test_completed_lesson_ids_is_a_membership_read(uow: SqlAlchemyUnitOfWork) -> None:
+    """The unlock check needs a set of ids, not every progress row.
+
+    Opening one lesson used to hydrate the learner's whole record just to ask whether a
+    predecessor was completed. This read returns one indexed column and only the rows
+    that are actually completed; a lesson in progress must not unlock its successor.
+    """
+    from app.modules.quiz.domain.entities import LessonProgress, ProgressState
+
+    user = _user_row(uow.session)
+    finished, started = _unit_with_lessons(
+        uow.session, code="A1", lessons=[(1, "Finished"), (2, "Started")]
+    )
+    await uow.session.flush()
+    await uow.lesson_progress.save(
+        LessonProgress(
+            id=uuid.uuid4(),
+            user_id=UserId(user.id),
+            lesson_id=finished.id,
+            state=ProgressState.COMPLETED,
+        )
+    )
+    await uow.lesson_progress.save(
+        LessonProgress(
+            id=uuid.uuid4(),
+            user_id=UserId(user.id),
+            lesson_id=started.id,
+            state=ProgressState.IN_PROGRESS,
+        )
+    )
+    await uow.commit()
+
+    assert await uow.lesson_progress.completed_lesson_ids(UserId(user.id)) == {finished.id}
