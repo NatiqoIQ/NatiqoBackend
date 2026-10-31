@@ -135,6 +135,7 @@ def _extra_gauges() -> list[str]:
     try:
         from app.platform.ai.service import circuit_open
 
+        lines.append(f"natiqo_replica_lag_seconds {getattr(database, '_lag_seconds', 0.0):.3f}")
         lines.append(f"natiqo_ai_circuit_open {1 if circuit_open() else 0}")
     except Exception:  # noqa: BLE001, S110 - the AI module may not be loaded
         pass
@@ -144,6 +145,8 @@ def _extra_gauges() -> list[str]:
 def render_prometheus() -> str:
     """Render every series in the 0.0.4 text exposition format."""
     lines: list[str] = [
+        "# HELP natiqo_replica_lag_seconds Replica replay delay, from the cached probe.",
+        "# TYPE natiqo_replica_lag_seconds gauge",
         "# HELP natiqo_ai_circuit_open 1 when the AI provider breaker is open.",
         "# TYPE natiqo_ai_circuit_open gauge",
         "# HELP natiqo_db_pool_checked_out Connections currently checked out, per role.",

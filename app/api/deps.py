@@ -20,7 +20,12 @@ from typing import Annotated
 from fastapi import Depends, Request
 
 from app.core.config import Settings, get_settings
-from app.core.database import get_session_factory, make_read_uow, make_uow
+from app.core.database import (
+    get_session_factory,
+    make_read_uow,
+    make_uow,
+    replica_is_lagging,
+)
 from app.core.errors import RateLimitedError
 from app.core.events import InProcessEventBus
 from app.core.logging import get_logger
@@ -226,7 +231,10 @@ async def read_uow_dep() -> AsyncIterator[SqlAlchemyUnitOfWork]:
     routed here: seeing your own lesson as unfinished a second after you finished it is a
     bug users report, not a scaling win.
     """
-    uow = make_read_uow()
+    #: A replica that is minutes behind cannot serve the catalogue faithfully either: a
+    #: lesson published after the lag point would be missing, and the client would cache
+    #: that absence. Fall back to the primary until the probe says it has caught up.
+    uow = make_uow() if await replica_is_lagging() else make_read_uow()
     await uow.__aenter__()
     exc_info: tuple[type[BaseException] | None, BaseException | None, object] = (None, None, None)
     try:

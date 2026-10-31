@@ -83,6 +83,13 @@ class Settings(BaseSettings):
     #: Optional read-only replica. Only reads that tolerate replication lag may use it
     #: (the public catalogue). Empty means "use the primary".
     database_read_url: str | None = None
+    #: Above this replay delay, lag-tolerant reads fall back to the primary. Five seconds
+    #: is longer than a dashboard refresh and shorter than a learner noticing missing
+    #: content; the point is to stop serving visibly stale data, not to chase milliseconds.
+    replica_max_lag_seconds: float = 5.0
+    #: The lag probe costs a query, so its answer is reused for a few seconds. Every read
+    #: request must not pay for a measurement that changes slowly.
+    replica_lag_cache_seconds: float = 5.0
 
     database_pool_size: int = 10
     database_max_overflow: int = 20
@@ -326,7 +333,11 @@ class Settings(BaseSettings):
     otel_enabled: bool = False
     otel_service_name: str = "natiqo-api"
     otel_exporter_otlp_endpoint: str | None = None
+    #: Head sampling. One in ten requests is enough to see the shape of p95; errors are
+    #: always visible in Sentry separately, so they do not need a 100% trace rate.
+    otel_traces_sample_rate: float = 0.1
     sentry_dsn: str | None = None
+    sentry_traces_sample_rate: float = 0.05
 
     # ---------------------------------------------------------- testing
     allow_sqlite_tests: bool = False

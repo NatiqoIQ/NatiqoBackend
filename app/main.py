@@ -29,6 +29,7 @@ from app.core.idempotency import IdempotencyMiddleware
 from app.core.logging import configure_logging, get_logger
 from app.core.middleware import register_middleware
 from app.core.registry import import_all_models
+from app.core.telemetry import init_observability
 
 
 async def drain_ai_usage() -> None:
@@ -165,6 +166,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         prefix=app_settings.api_v1_prefix,
         responses=ERROR_RESPONSES,
     )
+    init_observability(app, app_settings)
+
     # The development sign-in is mounted here rather than on ``api_router`` because
     # the flag is read from this app's own settings, so the route can be omitted from
     # the router and the OpenAPI document entirely — not merely refused at request

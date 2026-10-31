@@ -9,6 +9,7 @@ XP, streak and achievements inconsistent (plan §53).
 
 from __future__ import annotations
 
+import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any
@@ -33,6 +34,16 @@ _engine: AsyncEngine | None = None
 _session_factory: async_sessionmaker[AsyncSession] | None = None
 _read_engine: AsyncEngine | None = None
 _read_session_factory: async_sessionmaker[AsyncSession] | None = None
+
+#: Last measured replica replay delay and when it was measured (monotonic seconds). Kept
+#: at module level so every request and the ``/metrics`` renderer share one probe.
+_lag_seconds: float = 0.0
+_lag_checked_at: float = float("-inf")
+_lag_known: bool = False
+
+#: PostgreSQL's replay delay. ``pg_last_xact_replay_timestamp()`` is NULL when the replica
+#: has never replayed a transaction, which means "no lag", not "unknown".
+_REPLICA_LAG_SQL = "SELECT EXTRACT(EPOCH FROM (now() - pg_last_xact_replay_timestamp()))"
 
 
 def _create_engine(*, read: bool = False) -> AsyncEngine:
@@ -203,6 +214,64 @@ def make_uow() -> SqlAlchemyUnitOfWork:
     from app.core.uow_sqlalchemy import SqlAlchemyUnitOfWork
 
     return SqlAlchemyUnitOfWork(get_session_factory())
+
+
+async def probe_replica_lag(engine: AsyncEngine) -> float:
+    """Measure how far the replica is behind, in seconds.
+
+    Kept small and separate so a test can exercise the query without a PostgreSQL server.
+    """
+    from sqlalchemy import text
+
+    async with engine.connect() as connection:
+        value = await connection.scalar(text(_REPLICA_LAG_SQL))
+    if value is None:
+        return 0.0
+    return max(float(value), 0.0)
+
+
+async def replica_lag_seconds(*, force: bool = False) -> float:
+    """Cached replica delay. Returns 0 when no replica is configured.
+
+    A probe failure returns ``inf`` rather than 0: an unreachable replica must send reads
+    to the primary, not convince the caller that it is perfectly caught up.
+    """
+    global _lag_seconds, _lag_checked_at, _lag_known
+    settings = get_settings()
+    if not settings.database_read_url or settings.read_sqlalchemy_dsn == settings.sqlalchemy_dsn:
+        return 0.0
+
+    now = time.monotonic()
+    if not force and _lag_known and now - _lag_checked_at < settings.replica_lag_cache_seconds:
+        return _lag_seconds
+
+    engine = get_read_engine()
+    if engine.dialect.name != "postgresql":
+        measured = 0.0
+    else:
+        try:
+            measured = await probe_replica_lag(engine)
+        except Exception as exc:  # noqa: BLE001 - fall back, never fail the read
+            logger.warning("database.replica_lag_probe_failed", error=str(exc)[:200])
+            measured = float("inf")
+    _lag_seconds = measured
+    _lag_checked_at = now
+    _lag_known = True
+    return measured
+
+
+async def replica_is_lagging() -> bool:
+    """Whether the replica is too far behind to serve even lag-tolerant reads."""
+    settings = get_settings()
+    return await replica_lag_seconds() > settings.replica_max_lag_seconds
+
+
+def reset_replica_lag_cache() -> None:
+    """Forget the last probe. Tests only."""
+    global _lag_seconds, _lag_checked_at, _lag_known
+    _lag_seconds = 0.0
+    _lag_checked_at = float("-inf")
+    _lag_known = False
 
 
 def make_read_uow() -> SqlAlchemyUnitOfWork:

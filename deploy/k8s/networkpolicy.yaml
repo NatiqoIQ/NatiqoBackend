@@ -1,0 +1,90 @@
+# Default-deny network policy for the API namespace (P2-8).
+#
+# Kubernetes network policies are allow-lists: once a pod is selected by any policy, every
+# direction not explicitly allowed is denied. The namespace name is matched by the
+# well-known `kubernetes.io/metadata.name` label, so no namespace labels need editing.
+#
+# The egress rules cannot express "the S3 endpoint" or "the AI provider" by hostname —
+# NetworkPolicy works on IPs. Keep 443 open to the internet in the template and tighten it
+# to the VPC endpoint CIDR (S3, Secrets Manager) plus the provider CIDRs in production.
+# The alternative, an egress gateway with FQDN filtering, is a CNI feature, not a policy.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: natiqo-default-deny
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: natiqo-api-ingress
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: natiqo-api
+  policyTypes: [Ingress]
+  ingress:
+    # The ingress controller terminates TLS and forwards to the service port.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+      ports:
+        - protocol: TCP
+          port: 8000
+    # Prometheus scrapes /metrics in-cluster; never expose it through the ingress.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - protocol: TCP
+          port: 8000
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: natiqo-api-egress
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: natiqo-api
+  policyTypes: [Egress]
+  egress:
+    # DNS. Without this rule every other egress rule is unreachable by name.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # PostgreSQL primary and replica. Replace the CIDRs with the database subnet.
+    - to:
+        - ipBlock:
+            cidr: 10.0.0.0/8
+      ports:
+        - protocol: TCP
+          port: 5432
+    # Redis (cache and queue may be separate hosts; same port).
+    - to:
+        - ipBlock:
+            cidr: 10.0.0.0/8
+      ports:
+        - protocol: TCP
+          port: 6379
+    # TLS to S3 / Secrets Manager / AI providers. Tighten to VPC endpoints where possible.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+      ports:
+        - protocol: TCP
+          port: 443

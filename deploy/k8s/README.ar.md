@@ -12,6 +12,8 @@ cluster)، وكل رقم فيها يجب أن يُتحقق منه في staging �
 | `hpa.yaml` | 3–24 نسخة على CPU 60% وMemory 75% | توسّع أفقي سريع، وتقليص بطيء (5 دقائق) حتى لا تُفقد نسخة قبل موجة أخرى |
 | `rollout.yaml` | Argo Rollouts: 5% → 25% → 100% مع تحليل Prometheus | canary حقيقي: 5% من الطلبات على النسخة الجديدة، والتراجع آلي عند تجاوز 1% أخطاء |
 | `migrate-job.yaml` | `alembic upgrade head` مرة واحدة قبل النشر | الترحيل ليس مسؤولية كل pod عند الإقلاع (F3) |
+| `serviceaccount.yaml` | هوية IRSA لـS3 وSecrets Manager | لا مفاتيح AWS داخل الـpods (F23) |
+| `networkpolicy.yaml` | default-deny + سماح للـingress/DB/Redis/443 | تقييد حركة الـpods (P2-8) |
 
 ## قبل أول نشر
 
@@ -38,11 +40,18 @@ cluster)، وكل رقم فيها يجب أن يُتحقق منه في staging �
    بأسماء متغيرات مثل `DATABASE_URL`/`REDIS_URL`/`JWT_SECRET`. تحتاج الـServiceAccount
    صلاحية `secretsmanager:GetSecretValue` على ذلك السر فقط، وفشل السحب يمنع الإقلاع
    عمداً بدل التشغيل بأسرار ناقصة.
-3. **PgBouncer**: اضبط `DATABASE_MAX_OVERFLOW` و`replicas` بحيث
+3. **الشبكة والهوية** (اختياري لكنه مستحسن قبل الإنتاج):
+   ```bash
+   kubectl apply -f deploy/k8s/serviceaccount.yaml
+   kubectl apply -f deploy/k8s/networkpolicy.yaml
+   ```
+   عدّل `eks.amazonaws.com/role-arn` وCIDR قاعدة البيانات/Redis. الـNetworkPolicy تفترض
+   أن ingress-nginx في namespace باسم `ingress-nginx` وأن Prometheus في `monitoring`.
+4. **PgBouncer**: اضبط `DATABASE_MAX_OVERFLOW` و`replicas` بحيث
    `replicas × (pool_size + max_overflow) ≤ max_db_connections × 0.8`. مع 24 نسخة و
    `10 + 5` هذا 360 اتصالاً — أكبر من غالبية قواعد البيانات المُدارة الصغيرة.
    اقرأ `deploy/pgbouncer/README.ar.md` قبل رفع `maxReplicas`.
-4. **الترحيل**:
+5. **الترحيل**:
    ```bash
    kubectl delete job natiqo-migrate --ignore-not-found
    kubectl apply -f deploy/k8s/migrate-job.yaml
@@ -56,7 +65,7 @@ cluster)، وكل رقم فيها يجب أن يُتحقق منه في staging �
    ```
    قبل انتهائه تبقى لوحة الإدارة على الاستعلامات القديمة (صحيحة لكن أبطأ). إن أردت
    تأجيل التفعيل: `--no-mark`. أعد تشغيل نفس الأمر بعد أي انقطاع؛ كل دفعة idempotent.
-5. **النشر**: `kubectl argo rollouts get rollout natiqo-api --watch`، ثم
+6. **النشر**: `kubectl argo rollouts get rollout natiqo-api --watch`، ثم
    `kubectl argo rollouts promote natiqo-api` بعد كل خطوة إن لم تُضبط الخطوات الآلية.
 
 ## التراجع
