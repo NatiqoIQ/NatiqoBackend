@@ -139,9 +139,23 @@ def overall_status(checks: list[CheckResult], *, uses_redis: bool) -> HealthStat
     return HealthStatus.HEALTHY
 
 
-async def build_health_report(*, deep: bool) -> HealthReport:
+#: The last deep report and when it was taken, in ``time.monotonic`` seconds. A probe is
+#: liveness/readiness signalling, not a monitoring query: every orchestrator replica polls
+#: every few seconds, and each poll otherwise opens a database connection to answer a
+#: question whose answer cannot have changed that fast.
+_ready_cache: tuple[float, HealthReport] | None = None
+
+
+def reset_health_cache() -> None:
+    """Drop the cached readiness report. Tests and a forced probe use this."""
+    global _ready_cache
+    _ready_cache = None
+
+
+async def build_health_report(*, deep: bool, force: bool = False) -> HealthReport:
     from app.core.config import get_settings
 
+    global _ready_cache
     settings = get_settings()
     if not deep:
         return HealthReport(
@@ -149,6 +163,11 @@ async def build_health_report(*, deep: bool) -> HealthReport:
             environment=settings.app_env,
             checked_at=utc_now().isoformat(),
         )
+
+    ttl = settings.ready_cache_ttl_seconds
+    now = time.monotonic()
+    if not force and _ready_cache is not None and now - _ready_cache[0] < ttl:
+        return _ready_cache[1]
 
     checks = [await database_check()]
     from app.api.deps import get_cache, get_queue
@@ -158,9 +177,11 @@ async def build_health_report(*, deep: bool) -> HealthReport:
     checks.append(await queue_check(get_queue().ping))
 
     status = overall_status(checks, uses_redis=settings.uses_redis)
-    return HealthReport(
+    report = HealthReport(
         status=status,
         checks=checks,
         environment=settings.app_env,
         checked_at=utc_now().isoformat(),
     )
+    _ready_cache = (now, report)
+    return report

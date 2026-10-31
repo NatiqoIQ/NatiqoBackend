@@ -67,6 +67,7 @@ from app.core.database import (  # noqa: E402
     get_session_factory,
 )
 from app.core.events import reset_event_bus  # noqa: E402
+from app.core.health import reset_health_cache  # noqa: E402
 from app.core.registry import import_all_models  # noqa: E402
 from app.modules.ai.infrastructure.usage import clear_buffer  # noqa: E402
 
@@ -83,11 +84,13 @@ def _clean_process_state() -> Iterator[None]:
     reset_composition_root()
     reset_event_bus()
     clear_buffer()
+    reset_health_cache()
     yield
     reset_settings_cache()
     reset_composition_root()
     reset_event_bus()
     clear_buffer()
+    reset_health_cache()
 
 
 @pytest.fixture(autouse=True)

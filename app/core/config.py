@@ -112,6 +112,9 @@ class Settings(BaseSettings):
     #: costs one rebuild while a longer TTL would make "I published it" look broken.
     catalogue_cache_ttl_seconds: int = 30
     flags_cache_ttl_seconds: int = 30
+    #: `/ready` is polled by orchestrators every few seconds; a shorter cache would
+    #: only move the same database ping to every probe replica.
+    ready_cache_ttl_seconds: float = 2.0
     queue_enabled: bool = False
 
     # ----------------------------------------------------------- security
