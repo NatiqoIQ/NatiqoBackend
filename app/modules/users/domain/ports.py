@@ -155,7 +155,7 @@ class RefreshTokenRepositoryPort(Protocol):
         self, user_id: UserId, device_id: uuid.UUID, *, at: object | None = None
     ) -> int: ...
 
-    async def purge_expired(self, *, before: object | None = None) -> int:
+    async def purge_expired(self, *, before: object | None = None, limit: int = 5000) -> int:
         """Delete rows whose ``expires_at`` has passed, and return how many.
 
         Rotation appends a row per issue and revokes rather than deletes, so the table
@@ -167,6 +167,10 @@ class RefreshTokenRepositoryPort(Protocol):
         Replaced, revoked-but-unexpired rows are deliberately *kept*: a revoked token
         that is presented again is a reuse signal, and that signal has to outlive the
         revocation for the lifetime of the token at least.
+
+        ``limit`` bounds one statement. A single unbounded DELETE on a table with
+        millions of rows holds locks and writes one enormous WAL record; the worker
+        calls this repeatedly and commits between batches.
         """
         ...
 

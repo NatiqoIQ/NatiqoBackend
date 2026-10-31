@@ -14,7 +14,7 @@ ports would only move the coupling into the service's constructor.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from typing import Protocol, runtime_checkable
 
 from app.core.pagination import PositionCursor
@@ -44,6 +44,26 @@ class AdminStatsRepositoryPort(Protocol):
     """
 
     async def overview(self, *, since: datetime) -> AdminOverview: ...
+
+
+@runtime_checkable
+class DailyMetricsRepositoryPort(Protocol):
+    """The dashboard's daily rollup, as the worker and the stats adapter need it.
+
+    Only the worker and the backfill script write; the overview adapter only reads. The
+    marker methods are here rather than in the reader because the same row decides whether
+    reads are allowed to trust the table at all.
+    """
+
+    async def ready(self) -> bool: ...
+
+    async def coverage(self) -> tuple[date | None, date | None]: ...
+
+    async def recompute(self, start: date, end: date) -> int: ...
+
+    async def mark_backfilled(self, *, start: date, through: date) -> None: ...
+
+    async def advance(self, through: date) -> None: ...
 
 
 @runtime_checkable

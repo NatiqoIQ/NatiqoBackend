@@ -52,6 +52,14 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=25s --retries=3 \
     CMD python -c "import urllib.request as u, sys; sys.exit(0 if u.urlopen('http://127.0.0.1:8000/health', timeout=4).status == 200 else 1)"
 
-# Migrations run on every start: a container serving a schema its code no longer
-# expects fails here, before the first request, instead of at query time.
-CMD ["sh", "-c", "alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port 8000"]
+# Migrations are *not* run here. They run once, in the dedicated ``migrate`` service
+# (docker-compose) or in the release phase of the platform. Starting the web process
+# with ``alembic upgrade head`` meant every replica raced the same DDL on a rolling
+# deploy, and a slow migration kept the instance out of the load balancer for its whole
+# duration instead of failing fast.
+#
+# ``--proxy-headers`` is what makes ``X-Forwarded-For`` real inside the process: without
+# it every request appears to come from the proxy's address, and the rate limiter — and
+# every audit log — sees one client. ``--forwarded-allow-ips`` is limited to the private
+# ranges a load balancer lives in, not '*', so a direct client cannot forge the header.
+CMD ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips '10.0.0.0/8,172.16.0.0/12,192.168.0.0/16' --workers ${WEB_CONCURRENCY:-2} --timeout-keep-alive 75 --timeout-graceful-shutdown 20"]

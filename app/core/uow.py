@@ -21,6 +21,7 @@ if TYPE_CHECKING:  # pragma: no cover
     from app.modules.admin.domain.ports import (
         AdminStatsRepositoryPort,
         AuditLogRepositoryPort,
+        DailyMetricsRepositoryPort,
         EditorialRepositoryPort,
     )
     from app.modules.ai.domain.conversation import ConversationRepositoryPort
@@ -134,6 +135,9 @@ class UnitOfWorkProtocol(Protocol):
 
     @property
     def stats(self) -> AdminStatsRepositoryPort: ...
+
+    @property
+    def daily_metrics(self) -> DailyMetricsRepositoryPort: ...
 
     async def commit(self) -> None: ...
 

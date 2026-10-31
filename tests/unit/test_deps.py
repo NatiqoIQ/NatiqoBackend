@@ -26,7 +26,9 @@ from app.api.deps import (
     _build_storage,
     client_ip,
     get_ai_service,
+    get_cache,
     rate_limit,
+    rate_limit_principal,
 )
 from app.core.config import get_settings, reset_settings_cache
 from app.core.errors import RateLimitedError
@@ -291,7 +293,7 @@ class TestAIProviderSelection:
 
         uow = cast("SqlAlchemyUnitOfWork", FakeUow(session=session))
 
-        assert get_ai_service(uow) is not None
+        assert get_ai_service(uow, get_cache()) is not None
 
 
 class TestTrustDefaults:
@@ -356,3 +358,73 @@ def test_the_composition_root_is_cleared_between_requests() -> None:
     reset_composition_root()
 
     assert _build_cache.cache_info().currsize == 0
+
+
+# =========================================================== rate-limit identity
+class TestRateLimitPrincipal:
+    """The budget follows the caller, not the NAT address they happen to share."""
+
+    def test_an_authenticated_token_gets_its_own_stable_key(self) -> None:
+        first = make_request(headers={"Authorization": "Bearer token-one"})
+        same = make_request(headers={"Authorization": "Bearer token-one"})
+        other = make_request(headers={"Authorization": "Bearer token-two"})
+
+        assert rate_limit_principal(first) == rate_limit_principal(same)
+        assert rate_limit_principal(first) != rate_limit_principal(other)
+        assert rate_limit_principal(first).startswith("t:")
+
+    def test_the_raw_token_never_appears_in_the_key(self) -> None:
+        """The key is logged and stored in Redis; it must not become a credential leak."""
+        token = "super-secret-access-token"
+        request = make_request(headers={"Authorization": f"Bearer {token}"})
+
+        assert token not in rate_limit_principal(request)
+
+    def test_a_resolved_user_id_wins_over_the_ip(self) -> None:
+        request = make_request(host="198.51.100.9")
+        request.state.user_id = "11111111-1111-1111-1111-111111111111"
+
+        assert rate_limit_principal(request).startswith("u:")
+
+    def test_anonymous_traffic_falls_back_to_the_peer_address(self) -> None:
+        assert rate_limit_principal(make_request(host="198.51.100.9")) == "ip:198.51.100.9"
+
+    def test_a_non_bearer_authorization_header_is_not_trusted(self) -> None:
+        request = make_request(host="198.51.100.9", headers={"Authorization": "Basic abc"})
+
+        assert rate_limit_principal(request) == "ip:198.51.100.9"
+
+
+class _BrokenCache:
+    """A cache whose shared backend is down; only ``increment`` matters here."""
+
+    def build_key(self, *parts: str) -> str:
+        return ":".join(parts)
+
+    async def increment(self, key: str, amount: int = 1, ttl_seconds: int | None = None) -> int:
+        raise RuntimeError("redis unreachable")
+
+
+async def test_a_cache_outage_degrades_the_limiter_instead_of_failing_the_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Redis being down must not turn every limited route into a 500.
+
+    The fallback is a per-process counter, so the first call succeeds and the second
+    is still refused: the caller sees a normal 429 rather than an internal error.
+    """
+    monkeypatch.setenv("RATE_LIMIT_ENABLED", "true")
+    reset_settings_cache()
+    dependency = rate_limit(limit=1)
+
+    await dependency(  # type: ignore[operator]
+        request=make_request(host="198.51.100.10"),
+        cache=_BrokenCache(),  # type: ignore[arg-type]
+        settings=get_settings(),
+    )
+    with pytest.raises(RateLimitedError):
+        await dependency(  # type: ignore[operator]
+            request=make_request(host="198.51.100.10"),
+            cache=_BrokenCache(),  # type: ignore[arg-type]
+            settings=get_settings(),
+        )

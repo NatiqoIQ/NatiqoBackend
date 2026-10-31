@@ -119,4 +119,7 @@ class ReviewLogModel(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         CheckConstraint("new_interval_days >= 0", name="non_negative_new_interval"),
         Index("ix_review_logs_card", "card_id", "reviewed_at"),
         Index("ix_review_logs_user", "user_id", "reviewed_at"),
+        # The daily rollup's day filter neither user nor card leads with, so it needs the
+        # bare column the two composites above put second.
+        Index("ix_review_logs_reviewed_at", "reviewed_at"),
     )

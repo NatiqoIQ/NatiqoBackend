@@ -11,6 +11,7 @@ once per request. :func:`reset_composition_root` clears them for tests.
 
 from __future__ import annotations
 
+import hashlib
 import time
 from collections.abc import AsyncIterator, Callable
 from functools import lru_cache
@@ -19,16 +20,22 @@ from typing import Annotated
 from fastapi import Depends, Request
 
 from app.core.config import Settings, get_settings
-from app.core.database import make_uow
+from app.core.database import (
+    get_session_factory,
+    make_read_uow,
+    make_uow,
+    replica_is_lagging,
+)
 from app.core.errors import RateLimitedError
 from app.core.events import InProcessEventBus
 from app.core.logging import get_logger
 from app.core.uow_sqlalchemy import SqlAlchemyUnitOfWork
 from app.modules.admin.application.content_service import AdminContentService
+from app.modules.admin.application.flags_service import FeatureFlagService
 from app.modules.admin.application.stats_service import AdminStatsService
 from app.modules.admin.application.users_service import AdminUserService
 from app.modules.ai.application.tutor_service import AiTutorService
-from app.modules.content.application.catalogue_service import CatalogueService
+from app.modules.content.application.catalogue_service import CatalogueService, invalidate_tree
 from app.modules.gamification.application.handlers import build_gamification_bus
 from app.modules.gamification.application.service import GamificationService
 from app.modules.media.application.service import MediaService
@@ -65,7 +72,11 @@ def _build_cache() -> CachePort:
         from app.platform.cache.redis import RedisCache
 
         logger.info("deps.cache_adapter", adapter="redis")
-        return RedisCache.from_url(settings.redis_url or "", namespace="natiqo")
+        return RedisCache.from_url(
+            settings.redis_url or "",
+            namespace="natiqo",
+            socket_timeout=settings.redis_cache_timeout_seconds,
+        )
     logger.info("deps.cache_adapter", adapter="memory")
     from app.platform.cache.memory import InMemoryCache
 
@@ -79,6 +90,18 @@ def get_cache() -> CachePort:
 CacheDep = Annotated[CachePort, Depends(get_cache)]
 
 
+@lru_cache(maxsize=1)
+def _rate_limit_fallback() -> CachePort:
+    """Counters kept in this process while the shared cache is unreachable.
+
+    Not a second source of truth: it exists only so a Redis blip degrades the limiter
+    from exact to approximate instead of turning every limited route into a 500.
+    """
+    from app.platform.cache.memory import InMemoryCache
+
+    return InMemoryCache()
+
+
 # ---------------------------------------------------------------------- queue
 @lru_cache(maxsize=1)
 def _build_queue() -> QueuePort:
@@ -87,7 +110,12 @@ def _build_queue() -> QueuePort:
         from app.platform.queue.redis import RedisQueue
 
         logger.info("deps.queue_adapter", adapter="redis")
-        return RedisQueue.from_url(settings.redis_url or "")
+        #: Jobs live in their own instance when one is configured: the cache can evict
+        #: under memory pressure, a queued job must not be evicted with it.
+        return RedisQueue.from_url(
+            settings.queue_redis_url or settings.redis_url or "",
+            socket_timeout=settings.redis_queue_timeout_seconds,
+        )
     logger.info("deps.queue_adapter", adapter="memory")
     from app.platform.queue.memory import InMemoryQueue
 
@@ -203,6 +231,31 @@ async def uow_dep() -> AsyncIterator[SqlAlchemyUnitOfWork]:
 UowDep = Annotated[SqlAlchemyUnitOfWork, Depends(uow_dep)]
 
 
+async def read_uow_dep() -> AsyncIterator[SqlAlchemyUnitOfWork]:
+    """Request-scoped unit of work on the replica, when one is configured.
+
+    Reserved for reads that tolerate replication lag. Learner state is deliberately not
+    routed here: seeing your own lesson as unfinished a second after you finished it is a
+    bug users report, not a scaling win.
+    """
+    #: A replica that is minutes behind cannot serve the catalogue faithfully either: a
+    #: lesson published after the lag point would be missing, and the client would cache
+    #: that absence. Fall back to the primary until the probe says it has caught up.
+    uow = make_uow() if await replica_is_lagging() else make_read_uow()
+    await uow.__aenter__()
+    exc_info: tuple[type[BaseException] | None, BaseException | None, object] = (None, None, None)
+    try:
+        yield uow
+    except BaseException as exc:
+        exc_info = (type(exc), exc, exc.__traceback__)
+        raise
+    finally:
+        await uow.__aexit__(*exc_info)
+
+
+ReadUowDep = Annotated[SqlAlchemyUnitOfWork, Depends(read_uow_dep)]
+
+
 # ------------------------------------------------------------------- event bus
 def get_bus(uow: UowDep, settings: SettingsDep) -> InProcessEventBus:
     """Build a request-scoped event bus bound to **this request's** unit of work.
@@ -243,7 +296,7 @@ def _build_ai_provider() -> AIProvider:
     return provider
 
 
-def get_ai_service(uow: UowDep) -> AIService:
+def get_ai_service(uow: UowDep, cache: CacheDep) -> AIService:
     """Build a request-scoped :class:`AIService`.
 
     The provider is process-cached (it owns an HTTP client pool), but the service is
@@ -256,7 +309,7 @@ def get_ai_service(uow: UowDep) -> AIService:
     return AIService(
         _build_ai_provider(),
         usage_recorder=record_ai_usage,
-        budget=budget_for(uow.session, get_settings()),
+        budget=budget_for(uow.session, get_settings(), cache=cache),
     )
 
 
@@ -264,7 +317,7 @@ AIServiceDep = Annotated[AIService, Depends(get_ai_service)]
 
 
 # ------------------------------------------------------------------ ai tutor
-def get_ai_tutor_service(uow: UowDep, settings: SettingsDep) -> AiTutorService:
+def get_ai_tutor_service(uow: UowDep, cache: CacheDep, settings: SettingsDep) -> AiTutorService:
     """Build a request-scoped :class:`AiTutorService`.
 
     Bound to the request's unit of work, so a stored thread and the AI usage it produced
@@ -274,30 +327,79 @@ def get_ai_tutor_service(uow: UowDep, settings: SettingsDep) -> AiTutorService:
     """
     from app.modules.ai.infrastructure.budget import budget_for
 
-    return AiTutorService(uow, get_ai_service(uow), budget_for(uow.session, settings))
+    return AiTutorService(
+        uow, get_ai_service(uow, cache), budget_for(uow.session, settings, cache=cache)
+    )
 
 
 AiTutorServiceDep = Annotated[AiTutorService, Depends(get_ai_tutor_service)]
 
 
 # ------------------------------------------------------------------- catalogue
-def get_catalogue_service(uow: UowDep) -> CatalogueService:
+def get_catalogue_service(
+    uow: ReadUowDep, cache: CacheDep, settings: SettingsDep
+) -> CatalogueService:
     """Build a request-scoped :class:`CatalogueService`.
 
     Bound to the request's unit of work, like every other service, so the four read
-    endpoints share one session and one transaction. It takes no cache: the catalogue is
-    public data that changes only when an editor publishes, and an HTTP cache header is
-    the right place for that decision, not a process-wide ``lru_cache`` that would keep
-    serving a retired level to the next process to start.
+    endpoints share one session and one transaction. It is the one service routed to
+    ``ReadUowDep``: the catalogue is identical for every learner, so a replica that is a
+    second behind costs nothing, while it takes the heaviest reads off the primary. The shared cache is passed because
+    the tree is the one response every cold start downloads: four queries and a full
+    nesting pass per launch, for a document that changes only when an editor publishes.
+    Its TTL is deliberately short (``CATALOGUE_CACHE_TTL_SECONDS``); a cache failure
+    falls through to the database rather than failing the read.
     """
-    return CatalogueService(uow)
+    return CatalogueService(uow, cache, ttl_seconds=settings.catalogue_cache_ttl_seconds)
 
 
 CatalogueServiceDep = Annotated[CatalogueService, Depends(get_catalogue_service)]
 
 
+# ------------------------------------------------------------------- feature flags
+def get_feature_flag_service(cache: CacheDep, settings: SettingsDep) -> FeatureFlagService:
+    """Flags use their own short session: they are configuration, not request data.
+
+    Sharing the request's unit of work would tie a cached, cross-request read to one
+    learner's transaction, and a flag write happens from the admin surface where there
+    may be no learner at all.
+    """
+    return FeatureFlagService(
+        get_session_factory(),
+        cache,
+        ttl_seconds=settings.flags_cache_ttl_seconds,
+    )
+
+
+FeatureFlagServiceDep = Annotated[FeatureFlagService, Depends(get_feature_flag_service)]
+
+
+async def invalidate_catalogue_tree(request: Request, cache: CacheDep) -> AsyncIterator[None]:
+    """Drop the cached tree after an editorial write.
+
+    The TTL alone would leave an editor staring at the old catalogue for up to 30
+    seconds after pressing publish. Hanging this off the admin router rather than every
+    service method means a write path added later cannot forget it: any successful
+    unsafe request under ``/admin/content`` invalidates the one key.
+
+    Runs after the response, and swallows its own failure: failing to invalidate is a
+    staleness bug bounded by the TTL, while a 500 after a successful publish is not.
+    """
+    yield
+    if request.method not in {"POST", "PUT", "PATCH", "DELETE"}:
+        return
+    if not request.url.path.startswith("/api/v1/admin/content"):
+        return
+    try:
+        await invalidate_tree(cache)
+    except Exception as exc:  # noqa: BLE001 - TTL is the backstop
+        logger.warning("catalogue.cache_invalidate_failed", error=str(exc)[:200])
+
+
 # ------------------------------------------------------------------------ quiz
-def get_quiz_service(uow: UowDep, settings: SettingsDep, bus: EventBusDep) -> QuizService:
+def get_quiz_service(
+    uow: UowDep, settings: SettingsDep, bus: EventBusDep, cache: CacheDep
+) -> QuizService:
     """Build a request-scoped :class:`QuizService`.
 
     Bound to the request's unit of work, so starting a session, grading an answer and
@@ -309,7 +411,7 @@ def get_quiz_service(uow: UowDep, settings: SettingsDep, bus: EventBusDep) -> Qu
     this same unit of work — otherwise the XP a completion earns could be committed without
     the completion, or vice versa.
     """
-    return QuizService(uow, settings, bus=bus)
+    return QuizService(uow, settings, bus=bus, cache=cache)
 
 
 QuizServiceDep = Annotated[QuizService, Depends(get_quiz_service)]
@@ -352,8 +454,14 @@ def get_admin_user_service(uow: UowDep) -> AdminUserService:
 AdminUserServiceDep = Annotated[AdminUserService, Depends(get_admin_user_service)]
 
 
-def get_admin_stats_service(uow: UowDep) -> AdminStatsService:
-    """Build a request-scoped :class:`AdminStatsService` on the request's unit of work."""
+def get_admin_stats_service(uow: ReadUowDep) -> AdminStatsService:
+    """Build a request-scoped :class:`AdminStatsService` on the replica when configured.
+
+    The dashboard is the heaviest read surface in the product — nineteen aggregates over
+    history — and it tolerates a second of lag by definition: nobody acts on a figure that
+    updates once a minute. Routing it here keeps that scan off the primary, where a learner
+    writing an answer is waiting.
+    """
     return AdminStatsService(uow)
 
 
@@ -377,14 +485,18 @@ MediaServiceDep = Annotated[MediaService, Depends(get_media_service)]
 
 
 # -------------------------------------------------------------------- progress
-def get_progress_service(uow: UowDep) -> ProgressService:
+def get_progress_service(uow: UowDep, cache: CacheDep, settings: SettingsDep) -> ProgressService:
     """Build a request-scoped :class:`ProgressService`.
 
     Bound to the request's unit of work like every other service. It is read-only, so it
     never commits: the session is opened and rolled back by the dependency's ``__aexit__``,
     which is exactly what a pure read should do.
     """
-    return ProgressService(uow)
+    return ProgressService(
+        uow,
+        cache=cache,
+        cache_ttl_seconds=settings.progress_summary_cache_ttl_seconds,
+    )
 
 
 ProgressServiceDep = Annotated[ProgressService, Depends(get_progress_service)]
@@ -420,6 +532,33 @@ def client_ip(request: Request) -> str:
     return "unknown"
 
 
+def rate_limit_principal(request: Request) -> str:
+    """Who owns the budget: a user, a token, or — last resort — an IP address.
+
+    Keying the limiter on the IP alone breaks the moment a carrier puts a city behind
+    one NAT address: every subscriber shares one 1,200/minute allowance, so ordinary
+    browsing starts returning 429 for people who did nothing wrong. The ladder is:
+
+    * ``u:<id>`` when an earlier dependency already resolved the caller;
+    * ``t:<sha256(access token)>`` otherwise — stable for the token's lifetime, and it
+      cannot be spoofed, because a forged token never reaches this dependency (auth
+      rejects it first). The digest, not the token, so the key is safe to log;
+    * ``ip:<address>`` for anonymous traffic (the catalogue before sign-in, login).
+
+    A caller cannot promote itself: the header is only read after the token has been
+    accepted, and an unauthenticated request has no other identity to claim.
+    """
+    user_id = getattr(request.state, "user_id", None)
+    if user_id:
+        return f"u:{user_id}"
+    authorization = request.headers.get("authorization", "")
+    scheme, _, token = authorization.partition(" ")
+    if scheme.lower() == "bearer" and token.strip():
+        digest = hashlib.sha256(token.strip().encode()).hexdigest()[:32]
+        return f"t:{digest}"
+    return f"ip:{client_ip(request)}"
+
+
 def rate_limit(scope: str = "default", limit: int | None = None) -> Callable[..., object]:
     """Build a FastAPI dependency enforcing a per-client request budget.
 
@@ -450,8 +589,19 @@ def rate_limit(scope: str = "default", limit: int | None = None) -> Callable[...
             }.get(scope, settings.rate_limit_requests_per_minute)
         # The window key is derived server-side from the clock, never from a header.
         window = int(time.time() // 60)
-        key = cache.build_key("ratelimit", scope, client_ip(request), str(window))
-        current = await cache.increment(key, amount=1, ttl_seconds=120)
+        key = cache.build_key("ratelimit", scope, rate_limit_principal(request), str(window))
+        try:
+            current = await cache.increment(key, amount=1, ttl_seconds=120)
+        except Exception as exc:  # noqa: BLE001 - Redis is not on the request's critical path
+            # A cache outage must not turn into an API outage. Count in this process
+            # instead: the allowance is approximate (once per replica) but the endpoint
+            # keeps serving, which is strictly better than a 500 for every caller.
+            logger.warning("ratelimit.cache_unavailable", scope=scope, error=str(exc)[:200])
+            try:
+                current = await _rate_limit_fallback().increment(key, amount=1, ttl_seconds=120)
+            except Exception:  # noqa: BLE001 - last resort: fail open
+                logger.warning("ratelimit.failed_open", scope=scope)
+                return
         if current > budget:
             logger.warning("ratelimit.exceeded", scope=scope, limit=budget)
             raise RateLimitedError(
@@ -532,5 +682,6 @@ def reset_composition_root() -> None:
         _build_push,
         _build_ai_provider,
         _build_identity_verifiers,
+        _rate_limit_fallback,
     ):
         factory.cache_clear()

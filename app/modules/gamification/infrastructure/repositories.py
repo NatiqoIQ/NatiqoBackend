@@ -51,18 +51,23 @@ def _to_stats(model: UserStatsModel) -> UserStats:
     )
 
 
+def _stats_values(stats: UserStats) -> dict[str, object]:
+    """The insertable columns, shared by the ORM path and the conflict-safe insert."""
+    return {
+        "user_id": stats.user_id,
+        "xp_total": stats.xp_total,
+        "gems": stats.gems,
+        "current_streak": stats.current_streak,
+        "longest_streak": stats.longest_streak,
+        "last_activity_date": stats.last_activity_date,
+        "freezes_available": stats.freezes_available,
+        "league_tier": stats.league_tier.value,
+        "league_updated_at": stats.league_updated_at,
+    }
+
+
 def _to_stats_model(stats: UserStats) -> UserStatsModel:
-    return UserStatsModel(
-        user_id=stats.user_id,
-        xp_total=stats.xp_total,
-        gems=stats.gems,
-        current_streak=stats.current_streak,
-        longest_streak=stats.longest_streak,
-        last_activity_date=stats.last_activity_date,
-        freezes_available=stats.freezes_available,
-        league_tier=stats.league_tier.value,
-        league_updated_at=stats.league_updated_at,
-    )
+    return UserStatsModel(**_stats_values(stats))
 
 
 def _apply_stats(stats: UserStats, model: UserStatsModel) -> None:
@@ -139,8 +144,37 @@ class SqlAlchemyUserStatsRepository:
         model = await self._session.get(UserStatsModel, user_id)
         return _to_stats(model) if model is not None else None
 
-    async def add(self, stats: UserStats) -> None:
-        self._session.add(_to_stats_model(stats))
+    async def get_for_update(self, user_id: UserId) -> UserStats | None:
+        stmt = select(UserStatsModel).where(UserStatsModel.user_id == user_id).with_for_update()
+        model = (await self._session.execute(stmt)).scalar_one_or_none()
+        return _to_stats(model) if model is not None else None
+
+    async def add(self, stats: UserStats) -> bool:
+        """Insert unless a concurrent completion already created the row.
+
+        Two first-ever completions race here: both see no row, both project, and a plain
+        INSERT makes the loser a 500. ``ON CONFLICT DO NOTHING`` lets it learn that it
+        lost without aborting the transaction, so the caller can re-read the winner's
+        row and add its own award on top.
+        """
+        values = _stats_values(stats)
+        dialect = self._session.get_bind().dialect.name
+        if dialect == "postgresql":
+            from sqlalchemy.dialects.postgresql import insert as dialect_insert
+        elif dialect == "sqlite":
+            from sqlalchemy.dialects.sqlite import insert as dialect_insert
+        else:  # pragma: no cover - both supported engines are covered above
+            self._session.add(UserStatsModel(**values))
+            await self._session.flush()
+            return True
+
+        statement = (
+            dialect_insert(UserStatsModel)
+            .values(**values)
+            .on_conflict_do_nothing(index_elements=["user_id"])
+        )
+        result = await self._session.execute(statement)
+        return bool(getattr(result, "rowcount", 0))
 
     async def save(self, stats: UserStats) -> None:
         model = await self._session.get(UserStatsModel, stats.user_id)

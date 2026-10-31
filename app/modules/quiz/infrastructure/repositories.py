@@ -17,7 +17,7 @@ import uuid
 from collections.abc import Sequence
 from datetime import datetime
 
-from sqlalchemy import and_, case, func, or_, select
+from sqlalchemy import and_, case, delete, exists, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
@@ -27,6 +27,8 @@ from app.modules.quiz.domain.entities import (
     AnswerHistory,
     AnswerTally,
     LessonProgress,
+    LessonProgressTotals,
+    ProgressState,
     QuizAnswer,
     QuizSession,
     SessionStatus,
@@ -45,6 +47,7 @@ from app.modules.quiz.infrastructure.mappers import (
     apply_unit_progress,
     to_answer,
     to_answer_model,
+    to_answer_values,
     to_progress,
     to_progress_model,
     to_session,
@@ -60,6 +63,7 @@ from app.modules.quiz.infrastructure.models import (
 )
 
 _COMPLETED = SessionStatus.COMPLETED.value
+_ACTIVE = SessionStatus.ACTIVE.value
 
 
 def _completed_keyset_predicate(after: TimeCursor) -> ColumnElement[bool]:
@@ -152,13 +156,63 @@ class SqlAlchemyQuizSessionRepository(QuizSessionRepositoryPort):
         )
         return int((await self._session.execute(stmt)).scalar_one())
 
+    async def purge_abandoned(self, *, before: datetime, limit: int = 5000) -> int:
+        """Delete old, unanswered, unfinished sessions in one statement.
+
+        ``NOT EXISTS`` rather than a join: a session with even one answer must survive, and
+        an anti-join states that as the deletion condition instead of a second query whose
+        result could go stale between the read and the delete.
+        """
+        answered = exists().where(QuizAnswerModel.session_id == QuizSessionModel.id)
+        #: Bounded by id so a huge backlog is deleted in batches rather than in one
+        #: long-running statement; the worker calls this until it returns a short batch.
+        doomed = (
+            select(QuizSessionModel.id)
+            .where(
+                QuizSessionModel.status == _ACTIVE,
+                QuizSessionModel.started_at < before,
+                ~answered,
+            )
+            .order_by(QuizSessionModel.started_at)
+            .limit(limit)
+        )
+        stmt = delete(QuizSessionModel).where(QuizSessionModel.id.in_(doomed))
+        result = await self._session.execute(stmt.execution_options(synchronize_session=False))
+        return int(getattr(result, "rowcount", 0) or 0)
+
 
 class SqlAlchemyQuizAnswerRepository(QuizAnswerRepositoryPort):
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
-    async def add(self, answer: QuizAnswer) -> None:
-        self._session.add(to_answer_model(answer))
+    async def add(self, answer: QuizAnswer) -> bool:
+        """Insert one answer, returning ``False`` when the row already exists.
+
+        A plain INSERT would make two concurrent submissions of the same question a
+        500 (``IntegrityError`` on ``uq_quiz_answers_session_question``). The conflict
+        is not exceptional: a double tap or a retried request produces it, and the
+        correct outcome is that the *first* answer wins. ``ON CONFLICT DO NOTHING``
+        makes that decision inside the database, so the caller can tell whether it lost
+        the race from the row count instead of from an exception.
+        """
+        values = to_answer_values(answer)
+        dialect = self._session.get_bind().dialect.name
+        if dialect == "postgresql":
+            from sqlalchemy.dialects.postgresql import insert as dialect_insert
+        elif dialect == "sqlite":
+            from sqlalchemy.dialects.sqlite import insert as dialect_insert
+        else:  # pragma: no cover - both supported engines are covered above
+            self._session.add(QuizAnswerModel(**values))
+            await self._session.flush()
+            return True
+
+        statement = (
+            dialect_insert(QuizAnswerModel)
+            .values(**values)
+            .on_conflict_do_nothing(index_elements=["session_id", "question_id"])
+        )
+        result = await self._session.execute(statement)
+        return bool(getattr(result, "rowcount", 0))
 
     async def save(self, answer: QuizAnswer) -> None:
         model = await self._session.get(QuizAnswerModel, answer.id)
@@ -191,6 +245,10 @@ class SqlAlchemyQuizAnswerRepository(QuizAnswerRepositoryPort):
             .where(QuizAnswerModel.session_id == session_id)
         )
         return int((await self._session.execute(stmt)).scalar_one())
+
+    async def exists_for_question(self, question_id: uuid.UUID) -> bool:
+        stmt = select(QuizAnswerModel.id).where(QuizAnswerModel.question_id == question_id).limit(1)
+        return (await self._session.execute(stmt)).first() is not None
 
     async def tally_for_user(self, user_id: UserId) -> AnswerTally:
         stmt = (
@@ -309,6 +367,28 @@ class SqlAlchemyLessonProgressRepository(LessonProgressRepositoryPort):
         )
         models = (await self._session.execute(stmt)).scalars().all()
         return [to_progress(model) for model in models]
+
+    async def totals_for_user(self, user_id: UserId) -> LessonProgressTotals:
+        stmt = select(
+            func.coalesce(func.sum(LessonProgressModel.xp_earned), 0),
+            func.count(),
+            func.count(case((LessonProgressModel.state == ProgressState.COMPLETED.value, 1))),
+            func.count(case((LessonProgressModel.state == ProgressState.IN_PROGRESS.value, 1))),
+        ).where(LessonProgressModel.user_id == user_id)
+        xp_total, started, completed, in_progress = (await self._session.execute(stmt)).one()
+        return LessonProgressTotals(
+            xp_total=int(xp_total or 0),
+            lessons_started=int(started or 0),
+            lessons_completed=int(completed or 0),
+            lessons_in_progress=int(in_progress or 0),
+        )
+
+    async def completed_lesson_ids(self, user_id: UserId) -> set[uuid.UUID]:
+        stmt = select(LessonProgressModel.lesson_id).where(
+            LessonProgressModel.user_id == user_id,
+            LessonProgressModel.state == ProgressState.COMPLETED.value,
+        )
+        return set((await self._session.execute(stmt)).scalars().all())
 
 
 class SqlAlchemyUnitProgressRepository(UnitProgressRepositoryPort):

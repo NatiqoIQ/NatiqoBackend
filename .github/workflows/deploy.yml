@@ -42,8 +42,13 @@ jobs:
         env:
           PAT: ${{ secrets.GH_PAT }}
         run: |
+          set -euo pipefail
           cd /home/dev/natiqo
           if [ ! -d .git ]; then git init -q; fi
+          #: Remember what was running before the reset. The verify step rolls back to
+          #: this commit if the new one never becomes ready; that is the difference
+          #: between a failed deploy and an outage.
+          git rev-parse HEAD > /tmp/natiqo-previous-sha 2>/dev/null || true
           git remote set-url origin "https://x-access-token:${PAT}@github.com/qutaibatalal/Natiqo.git"
           git fetch --prune origin main
           git reset --hard origin/main
@@ -52,17 +57,37 @@ jobs:
       - name: Deploy with Docker Compose
         working-directory: /home/dev/natiqo
         run: |
-          docker compose up -d --build
+          set -euo pipefail
+          docker compose up -d --build --remove-orphans
           docker compose ps
 
-      - name: Verify health
+      - name: Verify readiness
+        working-directory: /home/dev/natiqo
         run: |
-          for i in $(seq 1 20); do
-            if curl -fsS http://127.0.0.1:8000/health; then
-              echo "natiqo-api is healthy"
-              exit 0
+          set -euo pipefail
+          #: Readiness, not liveness: /health only proves the process exists. /ready
+          #: checks PostgreSQL and fails on 503, which is the condition that matters to
+          #: a learner holding a phone. Allow a minute for migrations and warm-up.
+          ready=false
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8000/ready >/dev/null; then
+              ready=true
+              break
             fi
-            sleep 3
+            sleep 2
           done
-          echo "natiqo-api did not become healthy after deploy" >&2
+          if [ "$ready" = "true" ]; then
+            echo "natiqo-api is ready"
+            exit 0
+          fi
+
+          echo "natiqo-api did not become ready; rolling back" >&2
+          PREVIOUS=$(cat /tmp/natiqo-previous-sha 2>/dev/null || true)
+          if [ -n "$PREVIOUS" ] && git cat-file -e "$PREVIOUS^{commit}" 2>/dev/null; then
+            git reset --hard "$PREVIOUS"
+            docker compose up -d --build --remove-orphans
+            docker compose ps
+          else
+            echo "no previous commit recorded; leaving the stack as it is" >&2
+          fi
           exit 1

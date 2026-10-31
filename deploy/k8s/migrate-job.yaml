@@ -1,0 +1,50 @@
+# Schema migration as a one-shot Job, run *before* the new ReplicaSet is scaled up.
+#
+# The application image no longer runs Alembic on startup (F3): a pod that migrates while
+# its siblings serve traffic makes the deploy's success depend on which pod won a race.
+# This Job is idempotent — `alembic upgrade head` takes the advisory lock in
+# alembic/env.py and exits when there is nothing to do — so a re-run after a failed
+# rollout is safe.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: natiqo-migrate
+  labels:
+    app.kubernetes.io/name: natiqo-migrate
+spec:
+  backoffLimit: 2
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: natiqo-migrate
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+      containers:
+        - name: migrate
+          image: ghcr.io/natiqo/natiqo-backend:REPLACE_WITH_DIGEST
+          command: ["alembic", "upgrade", "head"]
+          envFrom:
+            - secretRef:
+                name: natiqo-api-secrets
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}

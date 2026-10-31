@@ -70,5 +70,18 @@ class AiUsageRepositoryPort(Protocol):
         """
         ...
 
+    async def purge_before(self, *, before: datetime, limit: int = 5000) -> int:
+        """Delete at most ``limit`` rows older than ``before`` and return how many.
+
+        Usage is kept for cost attribution and abuse review over a rolling window, not
+        forever: a learner generating a few calls a day produces millions of rows a
+        year across the platform. Budget checks only read today's rows, so an old row
+        has no reader once its window has passed.
+
+        Bounded on purpose — the caller loops and commits between batches, so one
+        statement cannot hold a lock or write an unbounded WAL record.
+        """
+        ...
+
 
 __all__ = ["AiUsageEntry", "AiUsageRepositoryPort"]

@@ -198,6 +198,21 @@ class QuizAnswer:
     answered_at: datetime = field(default_factory=utc_now)
 
 
+@dataclass(frozen=True, slots=True)
+class LessonProgressTotals:
+    """Aggregate of one learner's lesson rows, for the progress summary.
+
+    The summary needs four numbers, not the rows themselves. Loading every
+    ``lesson_progress`` row to count them made the first screen of the progress tab
+    grow with the learner's whole history; this is what one grouped query returns.
+    """
+
+    xp_total: int = 0
+    lessons_started: int = 0
+    lessons_completed: int = 0
+    lessons_in_progress: int = 0
+
+
 @dataclass(slots=True)
 class LessonProgress:
     """One learner's durable record against one lesson.
@@ -221,7 +236,9 @@ class LessonProgress:
         if self.state is not ProgressState.COMPLETED:
             self.state = ProgressState.IN_PROGRESS
 
-    def record_completion(self, *, score_percent: int, xp: int, words: int = 0, at: datetime | None = None) -> None:
+    def record_completion(
+        self, *, score_percent: int, xp: int, words: int = 0, at: datetime | None = None
+    ) -> None:
         """Fold one finished attempt in.
 
         ``best_score`` keeps the maximum and ``xp_earned`` accumulates, so a retry can

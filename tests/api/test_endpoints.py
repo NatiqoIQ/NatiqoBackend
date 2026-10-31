@@ -34,7 +34,7 @@ from typing import Any
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient, Response
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import SettingsDep, UowDep, get_storage
@@ -107,6 +107,9 @@ PUBLISHED_OPERATIONS: set[tuple[str, str]] = {
     ("DELETE", "/api/v1/me/devices/{device_id}"),
     ("GET", "/api/v1/me/daily-challenge"),
     ("POST", "/api/v1/me/daily-challenge/claim"),
+    ("GET", "/api/v1/flags"),
+    ("GET", "/api/v1/admin/flags"),
+    ("PUT", "/api/v1/admin/flags/{key}"),
     ("GET", "/api/v1/content/tree"),
     ("GET", "/api/v1/content/lessons/{lesson_id}"),
     ("POST", "/api/v1/quiz/sessions"),
@@ -4560,6 +4563,27 @@ async def test_admin_overview_aggregates_every_card_of_the_home_screen(
 
 
 @pytest.mark.asyncio
+async def test_the_overview_is_cached_between_reads(
+    client: AsyncClient, content_db: AsyncSession
+) -> None:
+    """A dashboard polled by several admins must not rescan every table each time.
+
+    The proof is a write that would change the answer: a new account joins after the
+    first read, and the second read still reports the first total. A 30-second stale
+    total is invisible on this screen; the scan behind it is not.
+    """
+    admin = await _grant_admin(client, content_db, token="stats-cache-admin")
+    first = await client.get("/api/v1/admin/stats/overview", headers=admin)
+    assert first.status_code == 200, first.text
+
+    await sign_in(client, token="stats-cache-newcomer")
+
+    second = await client.get("/api/v1/admin/stats/overview", headers=admin)
+    assert second.status_code == 200
+    assert second.json()["users"]["total"] == first.json()["users"]["total"]
+
+
+@pytest.mark.asyncio
 async def test_the_overview_is_admin_only_and_bounded(
     client: AsyncClient, content_db: AsyncSession
 ) -> None:
@@ -5098,3 +5122,114 @@ async def test_me_reports_days_since_signup(client: AsyncClient) -> None:
     assert body["daysSinceSignup"] >= 0
     # The same value rides on the auth response, so a cold start need not call /me twice.
     assert created["user"]["daysSinceSignup"] == body["daysSinceSignup"]
+
+
+@pytest.mark.asyncio
+async def test_a_question_with_learner_history_is_not_hard_deleted(
+    client: AsyncClient, content_db: AsyncSession
+) -> None:
+    """Deleting a question cascades to quiz_answers, which is learner history.
+
+    A draft lesson can still contain an item people answered before the lesson was
+    reverted, so the parent's state alone is not enough: the editorial delete must look
+    at whether anyone has answered it, and refuse with a way out rather than erase the
+    trail.
+    """
+    headers = await _grant_admin(client, content_db)
+    level = await _create_level(client, headers, code="A2")
+    unit = (
+        await client.post(
+            f"/api/v1/admin/content/levels/{level['id']}/units",
+            json={"title": "Introductions"},
+            headers=headers,
+        )
+    ).json()
+    lesson = (
+        await client.post(
+            f"/api/v1/admin/content/units/{unit['id']}/lessons",
+            json={"title": "Saying hello", "summary": "Greetings.", "estimated_minutes": 5},
+            headers=headers,
+        )
+    ).json()
+    question = (
+        await client.post(
+            f"/api/v1/admin/content/lessons/{lesson['id']}/questions",
+            json=QUESTION_BODY,
+            headers=headers,
+        )
+    ).json()
+
+    learner = UserModel(id=uuid.uuid4(), email=f"{uuid.uuid4().hex}@example.com", status="active")
+    content_db.add(learner)
+    now = datetime.now(UTC)
+    quiz_session = QuizSessionModel(
+        id=uuid.uuid4(),
+        user_id=learner.id,
+        mode="lesson",
+        lesson_id=uuid.UUID(lesson["id"]),
+        status=SessionStatus.ACTIVE.value,
+        question_ids=[question["id"]],
+        started_at=now,
+        expires_at=now + timedelta(hours=1),
+    )
+    content_db.add(quiz_session)
+    content_db.add(
+        QuizAnswerModel(
+            id=uuid.uuid4(),
+            session_id=quiz_session.id,
+            question_id=uuid.UUID(question["id"]),
+            position=1,
+            given_answer={"choice": "Hello"},
+            is_correct=True,
+            points_awarded=2,
+            attempt=1,
+            answered_at=now,
+        )
+    )
+    await content_db.commit()
+    content_db.expunge_all()
+
+    refused = await client.delete(
+        f"/api/v1/admin/content/questions/{question['id']}", headers=headers
+    )
+
+    assert refused.status_code == 409, refused.text
+    assert error_code(refused) == "CONFLICT"
+    remaining = await content_db.scalar(
+        select(func.count())
+        .select_from(QuizAnswerModel)
+        .where(QuizAnswerModel.question_id == uuid.UUID(question["id"]))
+    )
+    assert remaining == 1, "the learner's answer must survive the refusal"
+
+
+@pytest.mark.asyncio
+async def test_publishing_invalidates_the_cached_catalogue_tree(
+    client: AsyncClient, content_db: AsyncSession
+) -> None:
+    """A publish must be visible on the next public read, not after the cache TTL.
+
+    The tree is cached for 30 seconds. Without an explicit invalidation an editor would
+    press publish and see the old catalogue, which reads as a broken button. The admin
+    router drops the key after any unsafe content write; this test warms the cache with
+    an empty tree first, then authors and publishes, and expects the lesson to appear.
+    """
+    headers = await _grant_admin(client, content_db)
+
+    empty = await client.get("/api/v1/content/tree")
+    assert empty.status_code == 200
+    assert empty.json()["items"] == []
+
+    ids = await _published_lesson(client, headers)
+    published = await client.post(
+        f"/api/v1/admin/content/lessons/{ids['lesson']}/publish", headers=headers
+    )
+    assert published.status_code == 200, published.text
+
+    tree = await client.get("/api/v1/content/tree")
+
+    assert tree.status_code == 200
+    levels = tree.json()["items"]
+    assert [level["id"] for level in levels] == [ids["level"]]
+    assert [unit["id"] for unit in levels[0]["units"]] == [ids["unit"]]
+    assert [lesson["id"] for lesson in levels[0]["units"][0]["lessons"]] == [ids["lesson"]]

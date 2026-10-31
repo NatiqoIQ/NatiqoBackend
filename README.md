@@ -31,6 +31,30 @@ registered for each name (`app/workers/handlers.py`). It needs a *shared* queue 
 process, so a job the API enqueues would never reach a separately started worker. In
 `docker-compose.yml` both processes get `QUEUE_ENABLED=true` explicitly for that reason.
 
+`QUEUE_REDIS_URL` optionally points jobs at a second Redis instance. The cache runs with
+`allkeys-lru` (a cache entry may be evicted) while the queue runs with `noeviction` (a job
+may not); one instance cannot honour both policies, so production should set it.
+
+Delivery is **at-least-once**: a job moves to a processing list, is acknowledged by the
+worker, and is requeued if the claim outlives its 5-minute visibility timeout. A crash can
+therefore execute a job twice, so handlers must be idempotent. A durable dead-letter queue
+is not implemented yet; an exhausted job is acknowledged and logged.
+
+The worker's scheduler enqueues two jobs a day, each deduplicated by date: expired refresh
+tokens, and AI usage rows older than `AI_USAGE_RETENTION_DAYS` (default 180; `0` disables
+the purge). Both delete in 5,000-row batches and commit between them, so neither holds a
+long lock or writes one unbounded WAL record.
+
+In Compose the schema is migrated by a one-shot `migrate` service before the API and worker
+start; the web image deliberately no longer runs `alembic upgrade head` on boot, so a
+rolling deploy cannot have several replicas racing the same DDL.
+
+**Pooling.** `docker-compose.pooled.yml` adds an optional PgBouncer in transaction mode so
+API and worker replicas share a bounded set of PostgreSQL backends instead of one connection
+per request. Migrations stay on the direct URL on purpose. The sizing arithmetic, the
+transaction-mode restrictions and the verification queries are in
+[`deploy/pgbouncer/README.ar.md`](deploy/pgbouncer/README.ar.md).
+
 **SQLite (zero external services).** Set `DATABASE_URL=sqlite+aiosqlite:///./local.db` and
 `REDIS_URL=` (empty selects the in-memory cache/queue adapters), then create the schema
 without Alembic — the migrations are PostgreSQL-specific:
@@ -88,8 +112,8 @@ must be set, and a request to a provider with no configured client ids answers `
 
 An email is only used to *link* a second provider to an existing account, and only when
 the provider asserts the address is verified — otherwise an unverified address could be
-used to take the account over. See the
-[Mobile integration guide](docs/mobile-integration-ar.md) for the client side.
+used to take the account over. The generated OpenAPI document at `/openapi.json` is the
+client-side reference for the auth contract.
 
 ## Quality gates
 
@@ -100,10 +124,8 @@ uv run pyright
 uv run pytest
 ```
 
-The suite includes a drift check on the client guides: every payload example in
-[docs/client-contract.md](docs/client-contract.md) and the two mobile guides is compared
-against the component schema it documents, so a field that reaches the schema without
-reaching the guide — or a field renamed in an example — fails the build.
+The API contract is the generated OpenAPI document at `/openapi.json`, and
+`tests/api/test_endpoints.py` fails the build when a published operation has no HTTP test.
 
 ## Demo data
 
@@ -278,14 +300,11 @@ route is added without one.
 
 Client-facing documentation:
 
-- **[Mobile integration guide (Arabic)](docs/mobile-integration-ar.md)** — the reference
-  for building the phone app: every endpoint, auth and token lifecycle, the single-flight
-  refresh requirement, error codes, caching, rate limits, and what does not exist yet.
-- **[Backend roadmap (Arabic)](docs/backend-roadmap-ar.md)** — the phased plan for the
-  missing API, ordered by what unblocks the app first, with the schema and endpoints each
-  phase adds and the product decisions it waits on.
-- [Client contract (English)](docs/client-contract.md) — the wire-level contract, naming
-  and error conventions.
+- **[System design and scaling plan (Arabic)](docs/system-design-scaling-plan-ar.md)** —
+  the capacity model, the phased backlog, and the evidence for every item already shipped.
+- **[Mobile app architecture](docs/mobile-app-architecture.md)** — how the client is
+  organised around this API.
+- **[Runbooks](docs/runbooks/)** — backup/restore and operational procedures.
 - `GET /openapi.json` — machine-readable schema for client generation. Every versioned
   operation publishes the real `{ "error": { code, message, details, requestId } }`
   envelope for 400/401/403/404/409/422/429/500, so generated clients match the wire.
@@ -295,27 +314,25 @@ Client-facing documentation:
 | Method | Path | Auth | Purpose |
 | --- | --- | --- | --- |
 | `GET` | `/health` | — | Liveness probe |
-| `GET` | `/ready` | — | Readiness; verifies the database and cache, `503` when unhealthy |
+| `GET` | `/ready` | — | Readiness; `503` only when PostgreSQL is down — a Redis/queue failure reports `degraded` with 200 |
+| `GET` | `/metrics` | — | Prometheus exposition: request rate, latency histogram, in-flight, DB-pool saturation, queue depth. Unversioned; restrict it to the monitoring network in production |
 | `POST` | `/api/v1/auth/google` | — | Sign in with a Google ID token, creating the account on first sight. Issues access + refresh tokens |
 | `POST` | `/api/v1/auth/apple` | — | Sign in with an Apple ID token, same contract |
 | `POST` | `/api/v1/auth/refresh` | refresh token | Rotate a refresh token; replay is rejected |
 | `POST` | `/api/v1/auth/logout` | refresh token | Revoke this device, or `all_devices: true` |
 | `DELETE` | `/api/v1/me` | Bearer | Close the caller's own account and revoke every session |
 | `GET` | `/api/v1/me` | Bearer | Current profile and settings |
-| `PATCH` | `/api/v1/me` | Bearer | PATCH semantics — omit a field to leave it alone. Accepts profile and settings fields under either spelling (see [Client contract](docs/client-contract.md)); deliberately refuses `currentLevel` so a learner cannot bypass the placement test |
+| `PATCH` | `/api/v1/me` | Bearer | PATCH semantics — omit a field to leave it alone. Accepts profile and settings fields under either spelling (see the OpenAPI schema); deliberately refuses `currentLevel` so a learner cannot bypass the placement test |
 | `GET` | `/api/v1/me/devices` | Bearer | List the caller's devices |
 | `DELETE` | `/api/v1/me/devices/{device_id}` | Bearer | Revoke one of the caller's devices |
-| `GET` | `/api/v1/content/levels` | — | Published CEFR levels, each with its unit count. Cacheable |
-| `GET` | `/api/v1/content/levels/{level_code}/units` | — | Published units of one level. Cacheable |
-| `GET` | `/api/v1/content/units/{unit_id}/lessons` | — | Published lessons of one unit. Cacheable |
-| `GET` | `/api/v1/content/lessons/{lesson_id}` | — | A lesson and its questions, with **no answer key**. Cacheable |
-| `GET` | `/api/v1/content/questions/{question_id}/explanation` | — | A single question's rationale, asked for after the learner has answered. Cacheable |
+| `GET` | `/api/v1/content/tree` | — | The whole published catalogue, levels down to question counts. Cacheable |
+| `GET` | `/api/v1/content/lessons/{lesson_id}` | — | One lesson and its questions, with **no answer key**. Cacheable |
 
-The five catalogue routes are deliberately unauthenticated: an app shell has to be able to
+Both catalogue routes are deliberately unauthenticated: an app shell has to be able to
 show that a beginner course exists before anyone signs in. That is safe only because the
 question schema withholds `correct_index`, `accepted_answers` and `explanation` — the
-practisable question is readable before an attempt, and the graded feedback, served only
-by the standalone explanation route, after one.
+practisable question is readable before an attempt, and the graded feedback is earned by
+answering it.
 
 Populate them with `uv run python -m scripts.seed_content --yes` (see `scripts/`).
 

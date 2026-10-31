@@ -31,7 +31,7 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
-from alembic import command
+from alembic import command  # pyright: ignore[reportAttributeAccessIssue]
 from alembic.config import Config
 from alembic.script import ScriptDirectory
 from sqlalchemy import create_engine
@@ -48,10 +48,13 @@ EXPECTED_TABLES = {
     "ai_messages",
     "ai_usage_records",
     "audit_logs",
+    "daily_metrics",
+    "feature_flags",
     "lesson_progress",
     "lessons",
     "levels",
     "media_assets",
+    "metrics_meta",
     "questions",
     "quiz_answers",
     "quiz_sessions",

@@ -76,3 +76,10 @@ postman/package-lock.json
 postman/reset_token.json
 postman/pm_test.db
 postman/*.pid
+
+# --------------------------------------------------------------- load tests
+# Minted by scripts/mint_loadtest_tokens.py. The file holds live sessions, so it is
+# exactly as sensitive as a password database and must never be committed.
+loadtest/tokens*.json
+loadtest/tokens/*.json
+loadtest-summary.json

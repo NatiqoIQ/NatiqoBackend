@@ -1,0 +1,93 @@
+# Canary replacement for the plain Deployment (Argo Rollouts).
+#
+# The plan's 5 / 25 / 100 steps, each gated by an AnalysisRun rather than by a human
+# watching a graph. A failed analysis rolls back automatically; that is the whole reason
+# to use a Rollout instead of `kubectl set image`.
+#
+# Metrics come from `/metrics` (see app/core/metrics.py) and must be scraped by the
+# Prometheus named in `analysisTemplate`. `natiqo_http_requests_total` carries
+# `route` and `status` labels, so the error ratio is a real 5xx share, not a guess.
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: natiqo-api
+spec:
+  replicas: 3
+  revisionHistoryLimit: 5
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: natiqo-api
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: natiqo-api
+    spec:
+      containers:
+        - name: api
+          image: ghcr.io/natiqo/natiqo-backend:REPLACE_WITH_DIGEST
+          ports:
+            - name: http
+              containerPort: 8000
+          envFrom:
+            - secretRef:
+                name: natiqo-api-secrets
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: http
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 250m
+              memory: 384Mi
+            limits:
+              cpu: "1"
+              memory: 768Mi
+  strategy:
+    canary:
+      stableService: natiqo-api-stable
+      canaryService: natiqo-api-canary
+      maxSurge: 1
+      maxUnavailable: 0
+      analysis:
+        startingStep: 1
+        templates:
+          - templateName: natiqo-error-ratio
+      steps:
+        - setWeight: 5
+        - pause: { duration: 5m }
+        - setWeight: 25
+        - pause: { duration: 10m }
+        - setWeight: 100
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: natiqo-error-ratio
+spec:
+  metrics:
+    - name: error-ratio
+      interval: 60s
+      count: 5
+      successCondition: result[0] < 0.01
+      failureLimit: 2
+      provider:
+        prometheus:
+          address: http://prometheus.monitoring.svc:9090
+          query: |
+            sum(rate(natiqo_http_requests_total{status=~"5.."}[2m]))
+              /
+            clamp_min(sum(rate(natiqo_http_requests_total[2m])), 0.001)
+    - name: p95-latency
+      interval: 60s
+      count: 5
+      successCondition: result[0] < 0.4
+      failureLimit: 2
+      provider:
+        prometheus:
+          address: http://prometheus.monitoring.svc:9090
+          query: |
+            histogram_quantile(
+              0.95,
+              sum(rate(natiqo_http_request_duration_seconds_bucket[5m])) by (le)
+            )

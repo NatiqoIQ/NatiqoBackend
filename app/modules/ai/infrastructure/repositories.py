@@ -8,8 +8,10 @@ and no lazy loads, so the round trip is a row in and a frozen dataclass out.
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 from decimal import Decimal
 
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.types import UserId
@@ -74,6 +76,15 @@ class SqlAlchemyAiUsageRepository(AiUsageRepositoryPort):
             return False
         await self.add(entry)
         return True
+
+    async def purge_before(self, *, before: datetime, limit: int = 5000) -> int:
+        stale_ids = (
+            select(AiUsageRecord.id).where(AiUsageRecord.created_at < before).limit(max(1, limit))
+        )
+        result = await self._session.execute(
+            delete(AiUsageRecord).where(AiUsageRecord.id.in_(stale_ids))
+        )
+        return int(getattr(result, "rowcount", 0) or 0)
 
 
 __all__ = ["SqlAlchemyAiUsageRepository"]

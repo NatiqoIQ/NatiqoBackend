@@ -39,6 +39,18 @@ _PLACEHOLDER_SECRETS = {
 DEV_CORS_ORIGIN_REGEX = r"https?://(?:localhost|127\.0\.0\.1|\[::1\])(?::\d{1,5})?"
 
 
+def _async_dsn(url: str) -> str:
+    """Normalise a PostgreSQL URL to SQLAlchemy's asyncpg dialect."""
+    if url.startswith("postgresql://"):
+        return url.replace("postgresql://", "postgresql+asyncpg://", 1)
+    if url.startswith("postgres://"):
+        return url.replace("postgres://", "postgresql+asyncpg://", 1)
+    return url
+
+
+_KEY_ID_PATTERN = re.compile(r"[A-Za-z0-9_-]{1,32}")
+
+
 class Settings(BaseSettings):
     """Typed application settings."""
 
@@ -68,25 +80,84 @@ class Settings(BaseSettings):
     postgres_password: SecretStr = SecretStr("change-me")
     postgres_db: str = "natiqo"
     database_url: str | None = None
+    #: Optional read-only replica. Only reads that tolerate replication lag may use it
+    #: (the public catalogue). Empty means "use the primary".
+    database_read_url: str | None = None
+    #: Above this replay delay, lag-tolerant reads fall back to the primary. Five seconds
+    #: is longer than a dashboard refresh and shorter than a learner noticing missing
+    #: content; the point is to stop serving visibly stale data, not to chase milliseconds.
+    replica_max_lag_seconds: float = 5.0
+    #: The lag probe costs a query, so its answer is reused for a few seconds. Every read
+    #: request must not pay for a measurement that changes slowly.
+    replica_lag_cache_seconds: float = 5.0
 
     database_pool_size: int = 10
     database_max_overflow: int = 20
-    database_pool_timeout: int = 30
+    #: Fail fast rather than queue behind a saturated pool. 30 seconds meant a request
+    #: could wait half a minute before reaching the database at all, which turns a slow
+    #: query into a whole-API stall instead of a quick 503.
+    database_pool_timeout: int = 3
     database_pool_recycle: int = 1800
     database_echo: bool = False
+    #: Server-side guards. A statement or lock that runs past these is an incident, not
+    #: a request to wait for: without them one bad query holds a pooled connection until
+    #: the client gives up, and every later request queues behind it.
+    database_statement_timeout_ms: int = 4_000
+    database_lock_timeout_ms: int = 1_500
+    database_idle_transaction_timeout_ms: int = 8_000
 
     # -------------------------------------------------------------- redis
     redis_url: str | None = None
+    #: A cache is optional, but a *hung* cache is not: without a socket timeout a
+    #: Redis that accepts connections and stops answering holds an API request open
+    #: for as long as the client will wait. Half a second is longer than any healthy
+    #: GET/SET and short enough that the request falls through to the database.
+    redis_cache_timeout_seconds: float = 0.5
+    #: Optional second Redis for background jobs. Separate on purpose: the cache needs
+    #: ``allkeys-lru`` so memory pressure evicts the least useful entry, while the queue
+    #: needs ``noeviction`` so a job is never silently discarded. One instance cannot be
+    #: both. Empty means "reuse REDIS_URL" for development only.
+    queue_redis_url: str | None = None
+    #: Must exceed the worker's blocking ``BLMOVE`` (1 s) or every idle poll would
+    #: time out. Five seconds still bounds a hung queue server.
+    redis_queue_timeout_seconds: float = 5.0
     cache_ttl_seconds: int = 300
+    #: How long the assembled catalogue tree may be served from the cache. Short on
+    #: purpose: publishing is rare but an editor expects to see it, and 30s of staleness
+    #: costs one rebuild while a longer TTL would make "I published it" look broken.
+    #: A progress screen is opened repeatedly inside one session; a minute of staleness is
+    #: invisible while it saves two lifetime scans per open. Mutations invalidate the key
+    #: immediately, so a learner never sees an old number after finishing something.
+    progress_summary_cache_ttl_seconds: int = 60
+    catalogue_cache_ttl_seconds: int = 30
+    flags_cache_ttl_seconds: int = 30
+    #: The dashboard runs nineteen aggregates per load; a dashboard that is 30 seconds
+    #: stale is indistinguishable from a fresh one, and the scan rate drops by orders of
+    #: magnitude while several admins have the page open.
+    admin_stats_cache_ttl_seconds: int = 30
+    #: `/ready` is polled by orchestrators every few seconds; a shorter cache would
+    #: only move the same database ping to every probe replica.
+    ready_cache_ttl_seconds: float = 2.0
     queue_enabled: bool = False
 
     # ----------------------------------------------------------- security
     jwt_secret: SecretStr = SecretStr("dev-only-access-secret-change-me-0000000000000000000000")
     jwt_refresh_secret: SecretStr = SecretStr("dev-only-refresh-secret-change-me-00000000000000")
+    #: ``kid`` written into every token header. Bump it when rotating ``JWT_SECRET``.
+    jwt_key_id: str = "v1"
+    #: The previous key pair, accepted during the rotation window. Tokens are matched
+    #: by the ``kid`` in their header, so the old key only ever verifies old tokens.
+    jwt_previous_key_id: str | None = None
+    jwt_previous_secret: SecretStr | None = None
+    jwt_previous_refresh_secret: SecretStr | None = None
     jwt_algorithm: str = "HS256"
     jwt_issuer: str = "natiqo"
     jwt_audience: str = "natiqo-clients"
-    access_token_ttl_seconds: int = 900
+    #: Thirty minutes, not fifteen. Every refresh is a read-modify-write on
+    #: ``refresh_tokens``; halving the refresh rate halves that table's write load without
+    #: making a stolen token usable for longer than the revocation window the product
+    #: already accepts. Clients that want the old ceiling can still set it (F12).
+    access_token_ttl_seconds: int = 1800
     refresh_token_ttl_seconds: int = 2_592_000
 
     # ------------------------------------------------------- social sign-in
@@ -140,11 +211,11 @@ class Settings(BaseSettings):
     # ------------------------------------------------------------ limits
     rate_limit_enabled: bool = True
     rate_limit_requests_per_minute: int = 120
-    rate_limit_auth_requests_per_minute: int = 10
+    rate_limit_auth_requests_per_minute: int = 120
     #: The catalogue is public, unauthenticated and cacheable, so it gets its own budget
     #: rather than competing with the write path. A learner scrolling a level list while
     #: the app refreshes a token should not be able to exhaust one another's allowance.
-    rate_limit_catalogue_requests_per_minute: int = 240
+    rate_limit_catalogue_requests_per_minute: int = 1_200
     #: Grading an answer is a write per question, so a lesson costs a burst of them. The
     #: default scope (120/min) is the right order of magnitude for a normal lesson.
     rate_limit_quiz_requests_per_minute: int = 120
@@ -211,10 +282,31 @@ class Settings(BaseSettings):
     ai_provider: Literal["none", "openai", "anthropic"] = "none"
     ai_api_key: SecretStr | None = None
     ai_model: str | None = None
-    ai_timeout_seconds: int = 20
+    #: A model that has not answered in ten seconds is not going to improve the lesson.
+    #: The old 20s kept a request (and a database connection) waiting far past the point
+    #: where the deterministic fallback is the better answer.
+    ai_timeout_seconds: int = 10
     ai_max_input_chars: int = 4000
     ai_max_output_tokens: int = 800
     ai_daily_user_budget_usd: float = 0.50
+    #: Platform-wide daily ceiling across every learner. Zero disables it. This is the
+    #: breaker for a runaway prompt or a bug that fans out calls: a per-user limit cannot
+    #: stop ten thousand users each spending their own allowance.
+    ai_daily_global_budget_usd: float = 0.0
+    #: Days of AI usage kept for cost attribution. Zero disables the purge job.
+    ai_usage_retention_days: int = 180
+    abandoned_session_retention_days: int = 7
+    #: How many complete days the daily rollup recomputes. A re-answer can land after
+    #: midnight, so yesterday alone would leave a one-day hole in the dashboard.
+    metrics_rollup_lookback_days: int = 3
+    #: Bulkhead: the most upstream model calls one process will run at once. Beyond this
+    #: the service falls back immediately instead of queueing behind a slow provider.
+    ai_max_concurrent_requests: int = 20
+    #: Consecutive provider failures before the process stops calling the provider at all
+    #: for ``AI_CIRCUIT_RESET_SECONDS``. Without this, every request pays the full timeout
+    #: again during an outage; with it, the deterministic fallback answers immediately.
+    ai_circuit_failure_threshold: int = 5
+    ai_circuit_reset_seconds: float = 30.0
 
     # ---------------------------------------------------------- payments
     payment_provider: Literal["none", "stripe"] = "none"
@@ -239,10 +331,25 @@ class Settings(BaseSettings):
     # ----------------------------------------------------- observability
     log_level: str = "INFO"
     log_format: Literal["json", "console"] = "json"
+    #: Fraction of successful requests that produce an access-log line. Errors and slow
+    #: requests are always logged; metrics carry the full traffic picture, so at 2,000
+    #: RPS a full log is bytes with no reader. 1.0 keeps every line (development).
+    access_log_sample_rate: float = 1.0
+    #: A request slower than this is logged regardless of sampling. This is the line an
+    #: operator actually searches for during an incident.
+    access_log_slow_ms: int = 500
+    #: Prometheus exposition at ``/metrics``. Off would make an orchestrator scrape
+    #: nothing; the flag exists for an environment that has no scraper and would rather
+    #: not publish the route at all.
+    metrics_enabled: bool = True
     otel_enabled: bool = False
     otel_service_name: str = "natiqo-api"
     otel_exporter_otlp_endpoint: str | None = None
+    #: Head sampling. One in ten requests is enough to see the shape of p95; errors are
+    #: always visible in Sentry separately, so they do not need a 100% trace rate.
+    otel_traces_sample_rate: float = 0.1
     sentry_dsn: str | None = None
+    sentry_traces_sample_rate: float = 0.05
 
     # ---------------------------------------------------------- testing
     allow_sqlite_tests: bool = False
@@ -337,17 +444,20 @@ class Settings(BaseSettings):
     def sqlalchemy_dsn(self) -> str:
         """Async SQLAlchemy DSN. Never log this value."""
         if self.database_url:
-            url = self.database_url
-            if url.startswith("postgresql://"):
-                return url.replace("postgresql://", "postgresql+asyncpg://", 1)
-            if url.startswith("postgres://"):
-                return url.replace("postgres://", "postgresql+asyncpg://", 1)
-            return url
+            return _async_dsn(self.database_url)
         password = self.postgres_password.get_secret_value()
         return (
             f"postgresql+asyncpg://{self.postgres_user}:{password}"
             f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
         )
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def read_sqlalchemy_dsn(self) -> str:
+        """DSN for the read replica, or the primary when none is configured."""
+        if self.database_read_url:
+            return _async_dsn(self.database_read_url)
+        return self.sqlalchemy_dsn
 
     @computed_field  # type: ignore[prop-decorator]
     @property
@@ -394,6 +504,21 @@ class Settings(BaseSettings):
         if self.cors_origins and "*" in self.cors_origins and self.cors_allow_credentials:
             problems.append("CORS_ORIGINS must not contain '*' when CORS_ALLOW_CREDENTIALS is true")
 
+        if not _KEY_ID_PATTERN.fullmatch(self.jwt_key_id):
+            problems.append("JWT_KEY_ID must be 1-32 characters of letters, digits, '_' or '-'")
+        if self.jwt_previous_key_id is not None:
+            if not _KEY_ID_PATTERN.fullmatch(self.jwt_previous_key_id):
+                problems.append(
+                    "JWT_PREVIOUS_KEY_ID must be 1-32 characters of letters, digits, '_' or '-'"
+                )
+            if self.jwt_previous_key_id == self.jwt_key_id:
+                problems.append("JWT_PREVIOUS_KEY_ID must differ from JWT_KEY_ID")
+            if self.jwt_previous_secret is None or self.jwt_previous_refresh_secret is None:
+                problems.append(
+                    "JWT_PREVIOUS_KEY_ID requires both JWT_PREVIOUS_SECRET and "
+                    "JWT_PREVIOUS_REFRESH_SECRET, otherwise the old key cannot be verified"
+                )
+
         if not self.is_production:
             return problems
 
@@ -403,6 +528,16 @@ class Settings(BaseSettings):
         ):
             if secret.get_secret_value() in _PLACEHOLDER_SECRETS:
                 problems.append(f"{name} still holds a development placeholder")
+        if self.jwt_previous_secret is not None:
+            if self.jwt_previous_secret.get_secret_value() in _PLACEHOLDER_SECRETS:
+                problems.append("JWT_PREVIOUS_SECRET still holds a development placeholder")
+            if len(self.jwt_previous_secret.get_secret_value()) < 32:
+                problems.append("JWT_PREVIOUS_SECRET must be at least 32 characters")
+        if self.jwt_previous_refresh_secret is not None:
+            if self.jwt_previous_refresh_secret.get_secret_value() in _PLACEHOLDER_SECRETS:
+                problems.append("JWT_PREVIOUS_REFRESH_SECRET still holds a development placeholder")
+            if len(self.jwt_previous_refresh_secret.get_secret_value()) < 32:
+                problems.append("JWT_PREVIOUS_REFRESH_SECRET must be at least 32 characters")
         if self.jwt_secret.get_secret_value() == self.jwt_refresh_secret.get_secret_value():
             problems.append("JWT_SECRET and JWT_REFRESH_SECRET must be different values")
         if len(self.jwt_secret.get_secret_value()) < 32:
@@ -435,7 +570,14 @@ class Settings(BaseSettings):
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
-    """Cached settings accessor. Use this everywhere instead of module constants."""
+    """Cached settings accessor. Use this everywhere instead of module constants.
+
+    Secrets are bootstrapped here rather than in each entry point: a script that forgets
+    to call the loader would otherwise read an empty DSN and fail somewhere unrelated.
+    """
+    from app.core.secrets import bootstrap_secrets
+
+    bootstrap_secrets()
     return Settings()
 
 

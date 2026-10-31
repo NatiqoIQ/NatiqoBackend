@@ -20,6 +20,7 @@ import uuid
 from datetime import datetime
 
 from app.core.errors import ErrorCode, NotFoundError, ValidationFailed
+from app.core.logging import get_logger
 from app.core.pagination import (
     InvalidCursor,
     PageResult,
@@ -27,10 +28,16 @@ from app.core.pagination import (
     decode_time_cursor,
     paginate_time,
 )
+from app.core.responses import MAX_PAGE_SIZE
 from app.core.time import local_date, streak_runs, utc_now
 from app.core.types import ContentId, UserId
 from app.core.uow import UnitOfWorkProtocol
 from app.modules.content.domain.entities import LessonPlacement
+from app.modules.quiz.application.progress_cache import (
+    decode_summary,
+    encode_summary,
+    progress_summary_key,
+)
 from app.modules.quiz.application.progress_dto import (
     LessonProgressView,
     ProgressSummaryView,
@@ -40,13 +47,24 @@ from app.modules.quiz.application.progress_dto import (
 )
 from app.modules.quiz.domain.entities import LessonProgress, ProgressState, QuizSession
 from app.modules.quiz.domain.unlock import lesson_locked, unit_locked
+from app.platform.cache.port import CachePort
+
+logger = get_logger("quiz.progress")
 
 __all__ = ["ProgressService"]
 
 
 class ProgressService:
-    def __init__(self, uow: UnitOfWorkProtocol) -> None:
+    def __init__(
+        self,
+        uow: UnitOfWorkProtocol,
+        *,
+        cache: CachePort | None = None,
+        cache_ttl_seconds: int = 60,
+    ) -> None:
         self._uow = uow
+        self._cache = cache
+        self._cache_ttl_seconds = cache_ttl_seconds
 
     # ================================================================ summary
     async def summary(self, user_id: UserId) -> ProgressSummaryView:
@@ -58,7 +76,20 @@ class ProgressService:
         missing profile falls back to the default zone rather than UTC — the product
         default is Asia/Baghdad.
         """
-        progress_rows = await self._uow.lesson_progress.list_for_user(user_id)
+        key = progress_summary_key(self._cache, user_id) if self._cache is not None else None
+        if self._cache is not None and key is not None:
+            try:
+                cached = await self._cache.get(key)
+            except Exception as exc:  # noqa: BLE001 - a cache outage costs one query
+                logger.warning("quiz.progress_cache_read_failed", error=str(exc)[:200])
+                cached = None
+            if cached:
+                try:
+                    return decode_summary(cached)
+                except (ValueError, TypeError, KeyError) as exc:
+                    logger.warning("quiz.progress_cache_corrupt", error=str(exc)[:200])
+
+        totals = await self._uow.lesson_progress.totals_for_user(user_id)
         tally = await self._uow.quiz_answers.tally_for_user(user_id)
         completion_times = await self._uow.quiz_sessions.list_completion_times(user_id)
         words_learned = await self._uow.quiz_sessions.sum_words_learned_for_user(user_id)
@@ -66,15 +97,11 @@ class ProgressService:
 
         current_streak, longest_streak = _streaks(completion_times, timezone)
 
-        return ProgressSummaryView(
-            total_xp=sum(row.xp_earned for row in progress_rows),
-            lessons_completed=sum(
-                1 for row in progress_rows if row.state is ProgressState.COMPLETED
-            ),
-            lessons_in_progress=sum(
-                1 for row in progress_rows if row.state is ProgressState.IN_PROGRESS
-            ),
-            lessons_started=len(progress_rows),
+        view = ProgressSummaryView(
+            total_xp=totals.xp_total,
+            lessons_completed=totals.lessons_completed,
+            lessons_in_progress=totals.lessons_in_progress,
+            lessons_started=totals.lessons_started,
             correct_count=tally.correct,
             answered_count=tally.answered,
             accuracy_percent=tally.accuracy_percent,
@@ -83,6 +110,14 @@ class ProgressService:
             last_activity_at=completion_times[0] if completion_times else None,
             words_learned=words_learned,
         )
+        if self._cache is not None and key is not None:
+            try:
+                await self._cache.set(
+                    key, encode_summary(view), ttl_seconds=self._cache_ttl_seconds
+                )
+            except Exception as exc:  # noqa: BLE001 - a failed write is just a miss next time
+                logger.warning("quiz.progress_cache_write_failed", error=str(exc)[:200])
+        return view
 
     # ============================================================ one lesson
     async def lesson_progress(self, user_id: UserId, lesson_id: uuid.UUID) -> LessonProgressView:
@@ -104,12 +139,17 @@ class ProgressService:
             )
         row = await self._uow.lesson_progress.get(user_id, lesson_id)
         ordered_units, passed_units = await self._unlock_inputs(user_id)
-        all_placements = await self._uow.lessons.list_published_ordered()
+        #: One unit's lessons, not the whole catalogue. Opening a lesson used to read every
+        #: published lesson and every progress row to decide whether its predecessor was
+        #: completed; the unlock rule only ever needs this unit's order and a set of
+        #: completed ids, both of which are cheap indexed reads.
         unit_lessons = [
-            p.lesson.id for p in all_placements if p.lesson.unit_id == placement.lesson.unit_id
+            lesson.id
+            for lesson in await self._uow.lessons.list_published_for_unit(
+                ContentId(placement.lesson.unit_id), limit=MAX_PAGE_SIZE, after=None
+            )
         ]
-        rows = await self._uow.lesson_progress.list_for_user(user_id)
-        completed_lessons = {r.lesson_id for r in rows if r.state is ProgressState.COMPLETED}
+        completed_lessons = await self._uow.lesson_progress.completed_lesson_ids(user_id)
         is_u_locked = unit_locked(placement.lesson.unit_id, ordered_units, passed_units)
         l_locked = lesson_locked(
             placement.lesson.id,

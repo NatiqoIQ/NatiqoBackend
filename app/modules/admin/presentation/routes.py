@@ -30,7 +30,11 @@ from app.api.deps import (
     AdminRateLimitDep,
     AdminStatsServiceDep,
     AdminUserServiceDep,
+    CacheDep,
+    SettingsDep,
+    invalidate_catalogue_tree,
 )
+from app.core.logging import get_logger
 from app.core.responses import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, Page, build_page
 from app.modules.admin.application.dto import (
     MISSING,
@@ -89,7 +93,9 @@ from app.modules.admin.presentation.schemas import (
 from app.modules.users.domain.entities import User
 from app.modules.users.presentation.routes import require_admin
 
-router = APIRouter()
+logger = get_logger("admin.routes")
+
+router = APIRouter(dependencies=[Depends(invalidate_catalogue_tree)])
 
 Limit = Annotated[int, Query(ge=1, le=MAX_PAGE_SIZE)]
 Cursor = Annotated[str | None, Query(description="Opaque. Pass back meta.nextCursor verbatim.")]
@@ -694,6 +700,8 @@ Window = Annotated[int, Query(ge=1, le=MAX_WINDOW_DAYS, description="Activity wi
 async def get_stats_overview(
     _admin: AdminDep,
     service: AdminStatsServiceDep,
+    cache: CacheDep,
+    settings: SettingsDep,
     _limit_guard: AdminRateLimitDep,
     window: Window = DEFAULT_WINDOW_DAYS,
 ) -> AdminStatsResponse:
@@ -708,8 +716,35 @@ async def get_stats_overview(
     signed in during it, and the daily ``series`` the chart draws. Everything else is a
     lifetime total (or the one live figure, ``learning.sessionsActive``), so changing the
     window never makes the other numbers jump around.
+
+    The rendered response is cached for ``ADMIN_STATS_CACHE_TTL_SECONDS``. The dashboard is
+    the one screen where being half a minute behind is invisible, while it is also the one
+    page that scans every table it summarises — caching it is what keeps a handful of open
+    admin tabs from becoming the database's busiest client. A cache failure falls through to
+    the query rather than failing the screen.
     """
-    return _stats_response(await service.overview(window_days=window))
+    key = cache.build_key("admin", "stats", str(window))
+    try:
+        cached = await cache.get(key)
+    except Exception as exc:  # noqa: BLE001 - a cache outage must not fail the dashboard
+        logger.warning("admin.stats_cache_read_failed", error=str(exc)[:200])
+        cached = None
+    if cached:
+        try:
+            return AdminStatsResponse.model_validate_json(cached)
+        except ValueError as exc:
+            logger.warning("admin.stats_cache_corrupt", error=str(exc)[:200])
+
+    response = _stats_response(await service.overview(window_days=window))
+    try:
+        await cache.set(
+            key,
+            response.model_dump_json(),
+            ttl_seconds=settings.admin_stats_cache_ttl_seconds,
+        )
+    except Exception as exc:  # noqa: BLE001 - a failed write is just a miss next time
+        logger.warning("admin.stats_cache_write_failed", error=str(exc)[:200])
+    return response
 
 
 # ====================================================================== internals

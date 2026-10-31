@@ -22,6 +22,9 @@ class JobName(StrEnum):
     REFRESH_RECOMMENDATIONS = "refresh_recommendations"
     PROCESS_ANALYTICS = "process_analytics"
     CLEANUP_EXPIRED_TOKENS = "cleanup_expired_tokens"
+    PURGE_AI_USAGE = "purge_ai_usage"
+    PURGE_ABANDONED_SESSIONS = "purge_abandoned_sessions"
+    ROLLUP_DAILY_METRICS = "rollup_daily_metrics"
     PROCESS_AUDIO = "process_audio"
     AI_TASK = "ai_task"
     EVALUATE_ACHIEVEMENTS = "evaluate_achievements"
@@ -67,6 +70,31 @@ class QueuePort(Protocol):
         ...
 
     async def dequeue(self, timeout_ms: int = 1000) -> Job | None: ...
+
+    async def ack(self, job: Job) -> None:
+        """Confirm that ``job`` finished and may leave the in-flight set.
+
+        Without this the queue cannot distinguish "still running" from "the worker died
+        holding it", which is the difference between at-most-once and at-least-once.
+        """
+        ...
+
+    async def recover(self) -> int:
+        """Requeue jobs whose claim outlived its visibility timeout.
+
+        Returns the number of jobs moved back. Called periodically by the worker, not by
+        the API: recovery is the consumer's responsibility.
+        """
+        ...
+
+    async def dead_letter(self, job: Job, *, error: str) -> None:
+        """Keep a job whose attempts are exhausted, with the last error.
+
+        The worker acknowledges it after this call, so it can no longer poison the
+        queue. The record is for an operator: without it the only trace of a job that
+        failed every attempt is a log line that may have rotated away.
+        """
+        ...
 
     async def size(self) -> int: ...
 

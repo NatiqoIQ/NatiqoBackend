@@ -19,6 +19,7 @@ from app.modules.quiz.domain.entities import (
     AnswerHistory,
     AnswerTally,
     LessonProgress,
+    LessonProgressTotals,
     QuizAnswer,
     QuizSession,
     UnitProgress,
@@ -81,10 +82,27 @@ class QuizSessionRepositoryPort(Protocol):
         """
         ...
 
+    async def purge_abandoned(self, *, before: datetime, limit: int = 5000) -> int:
+        """Delete unfinished sessions older than ``before`` that hold no answers.
+
+        A sitting someone opened and never answered is pure storage: no XP, no progress,
+        no history a client can read. Sessions with answers are kept regardless of age —
+        deleting them would move the admin accuracy and activity figures after the fact.
+        Returns the number of rows deleted, so the worker can loop until a short batch.
+        """
+        ...
+
 
 @runtime_checkable
 class QuizAnswerRepositoryPort(Protocol):
-    async def add(self, answer: QuizAnswer) -> None: ...
+    async def add(self, answer: QuizAnswer) -> bool:
+        """Insert a first answer; ``False`` means a concurrent request already recorded it.
+
+        The unique constraint is the arbiter, not a preceding read: two submissions can
+        both see no row, and the loser must learn that from the write rather than from a
+        500.
+        """
+        ...
 
     async def save(self, answer: QuizAnswer) -> None:
         """Persist a re-graded answer. Inserts when the row is not there yet.
@@ -107,6 +125,15 @@ class QuizAnswerRepositoryPort(Protocol):
     async def list_for_session(self, session_id: uuid.UUID) -> list[QuizAnswer]: ...
 
     async def count_for_session(self, session_id: uuid.UUID) -> int: ...
+
+    async def exists_for_question(self, question_id: uuid.UUID) -> bool:
+        """Whether any learner has ever answered this question.
+
+        Exists for the editorial delete path: deleting a question cascades to
+        ``quiz_answers``, so an editor removing a question from a draft lesson would
+        silently erase the history of everyone who practised it while it was published.
+        """
+        ...
 
     async def tally_for_user(self, user_id: UserId) -> AnswerTally:
         """Answered and correct counts across every answer in the learner's sessions.
@@ -165,6 +192,24 @@ class LessonProgressRepositoryPort(Protocol):
 
         Unpaginated: it backs the summary roll-up and the unlock map, both of which need
         the whole set at once, and a learner can have at most one row per published lesson.
+        """
+        ...
+
+    async def totals_for_user(self, user_id: UserId) -> LessonProgressTotals:
+        """Counts and XP for the summary, in one grouped query.
+
+        ``list_for_user`` hydrates every row, which the unlock map needs; the summary
+        only needs four numbers, and the difference is the whole history of a learner
+        who has finished the catalogue.
+        """
+        ...
+
+    async def completed_lesson_ids(self, user_id: UserId) -> set[uuid.UUID]:
+        """Just the ids of lessons the learner has completed.
+
+        The unlock check needs a membership test, not a history: hydrating every progress
+        row to ask "is this predecessor completed?" made opening one lesson cost the
+        learner's whole record. This returns one indexed column instead.
         """
         ...
 

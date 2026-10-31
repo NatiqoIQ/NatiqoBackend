@@ -15,10 +15,21 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import JSON, DateTime, ForeignKey, Index, String, Text, func
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Index,
+    SmallInteger,
+    String,
+    Text,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.core.base import Base, UUIDPrimaryKeyMixin
+from app.core.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
 
 
 class AuditLogModel(Base, UUIDPrimaryKeyMixin):
@@ -46,4 +57,44 @@ class AuditLogModel(Base, UUIDPrimaryKeyMixin):
         # The audit screen's default view is "newest first, unfiltered", which neither
         # composite index leads with: both start with a filter column.
         Index("ix_audit_logs_created_at", "created_at"),
+    )
+
+
+class FeatureFlagModel(Base, TimestampMixin):
+    """One runtime switch, evaluated per learner.
+
+    The key is the primary key, not a UUID: operators flip a switch by name (``ai_tutor``)
+    and a duplicate name is the bug worth preventing, not a surrogate id. New rows are
+    created by the admin endpoint, so a flag exists the moment it has a policy — there is
+    no separate registry to keep in sync.
+
+    ``rollout_percentage`` is the share of learners for whom the flag is on, bucketed by a
+    stable hash of ``key`` and the user id. 0 and 100 are the interesting values; the
+    values between them are for a gradual launch, not for per-user targeting.
+    """
+
+    __tablename__ = "feature_flags"
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    #: The master switch. A disabled flag is off for everyone regardless of rollout.
+    enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+    rollout_percentage: Mapped[int] = mapped_column(
+        SmallInteger, nullable=False, default=100, server_default="100"
+    )
+    #: Whether clients may learn this flag's state. Internal kill switches stay server-side.
+    public: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+    description: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    updated_by: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "rollout_percentage >= 0 AND rollout_percentage <= 100",
+            name="rollout_percentage_range",
+        ),
     )

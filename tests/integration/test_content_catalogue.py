@@ -15,6 +15,7 @@ the public catalogue becomes a map of the editorial pipeline.
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from collections.abc import AsyncIterator
 
@@ -32,7 +33,12 @@ from app.core.pagination import (
 from app.core.registry import import_all_models
 from app.core.types import CEFRLevel, ContentId, ContentState, QuestionKind, SkillKind
 from app.core.uow_sqlalchemy import SqlAlchemyUnitOfWork
-from app.modules.content.application.catalogue_service import CatalogueService
+from app.modules.content.application.catalogue_service import (
+    CatalogueService,
+    invalidate_tree,
+    tree_cache_key,
+    tree_generation_key,
+)
 from app.modules.content.infrastructure.models import (
     LessonModel,
     LevelModel,
@@ -677,3 +683,228 @@ class TestQuestionRepository:
         await session.flush()
 
         assert await uow.questions.get_published(ContentId(row.id)) is None
+
+
+# --------------------------------------------------------------------- tree cost
+@pytest.mark.asyncio
+async def test_the_tree_costs_a_fixed_number_of_queries(
+    uow: SqlAlchemyUnitOfWork, service: CatalogueService, session: AsyncSession
+) -> None:
+    """The tree must not scale its query count with the curriculum.
+
+    It used to compose the paged reads: one level query, then a handful per unit per
+    level. That is the classic N+1, and it ran on the first screen of every launch. The
+    bulk build reads levels, units, lessons and question counts once each — four
+    statements no matter how many rows are underneath.
+    """
+    from sqlalchemy import event
+
+    level = _level_row(session, code="A1", position=1)
+    for unit_position in range(1, 4):
+        unit = _unit_row(session, level.id, title=f"Unit {unit_position}", position=unit_position)
+        for lesson_position in range(1, 4):
+            lesson = _lesson_row(
+                session,
+                unit.id,
+                title=f"Lesson {lesson_position}",
+                position=lesson_position,
+            )
+            _question_row(session, lesson.id)
+    await session.commit()
+
+    statements: list[str] = []
+
+    def _record(conn: object, cursor: object, statement: str, *args: object) -> None:
+        statements.append(statement)
+
+    sync_engine = session.bind.sync_engine  # type: ignore[union-attr]
+    event.listen(sync_engine, "before_cursor_execute", _record)
+    try:
+        tree = await service.tree()
+    finally:
+        event.remove(sync_engine, "before_cursor_execute", _record)
+
+    selects = [s for s in statements if s.lstrip().upper().startswith("SELECT")]
+    assert len(selects) == 4, [s[:80] for s in selects]
+
+    assert len(tree) == 1
+    assert tree[0].unit_count == 3
+    assert len(tree[0].units) == 3
+    assert tree[0].units[0].lesson_count == 3
+    assert len(tree[0].units[0].lessons) == 3
+    assert tree[0].units[0].lessons[0].question_count == 1
+
+
+@pytest.mark.asyncio
+async def test_a_second_tree_read_is_served_without_touching_the_database(
+    uow: SqlAlchemyUnitOfWork, session: AsyncSession
+) -> None:
+    """The cache is what turns four queries per launch into zero for the next request.
+
+    The first read assembles and stores the tree; the second must return an equal tree
+    without issuing a single statement. Equality matters as much as the count: a cache
+    that changes a title or drops a lesson is worse than no cache.
+    """
+    from sqlalchemy import event
+
+    from app.platform.cache.memory import InMemoryCache
+
+    level = _level_row(session, code="A1", position=1)
+    unit = _unit_row(session, level.id, position=1)
+    lesson = _lesson_row(session, unit.id, position=1)
+    _question_row(session, lesson.id)
+    await session.commit()
+
+    cache = InMemoryCache()
+    cached_service = CatalogueService(uow, cache, ttl_seconds=60)
+
+    statements: list[str] = []
+
+    def _record(conn: object, cursor: object, statement: str, *args: object) -> None:
+        statements.append(statement)
+
+    sync_engine = session.bind.sync_engine  # type: ignore[union-attr]
+    event.listen(sync_engine, "before_cursor_execute", _record)
+    try:
+        first = await cached_service.tree()
+        after_first = len(statements)
+        second = await cached_service.tree()
+    finally:
+        event.remove(sync_engine, "before_cursor_execute", _record)
+
+    assert after_first == 4
+    assert len(statements) == after_first, "the second read must not query"
+    assert second == first
+    assert second[0].units[0].lessons[0].title == "Greetings"
+
+
+@pytest.mark.asyncio
+async def test_concurrent_misses_rebuild_the_tree_once(
+    uow: SqlAlchemyUnitOfWork, session: AsyncSession
+) -> None:
+    """A cache expiry must not turn into a thundering herd.
+
+    Eight requests miss the same empty key at once. Without single-flight each one
+    builds the tree, so the first screen after every TTL expiry costs eight times the
+    queries — and each concurrent build would also share one ORM session, which is not
+    safe. With it, exactly one builder issues the four reads and the other seven wait
+    for the freshly stored value.
+    """
+    from sqlalchemy import event
+
+    from app.platform.cache.memory import InMemoryCache
+
+    level = _level_row(session, code="A1", position=1)
+    unit = _unit_row(session, level.id, position=1)
+    lesson = _lesson_row(session, unit.id, position=1)
+    _question_row(session, lesson.id)
+    await session.commit()
+
+    service = CatalogueService(uow, InMemoryCache(), ttl_seconds=60)
+    statements: list[str] = []
+
+    def _record(conn: object, cursor: object, statement: str, *args: object) -> None:
+        statements.append(statement)
+
+    sync_engine = session.bind.sync_engine  # type: ignore[union-attr]
+    event.listen(sync_engine, "before_cursor_execute", _record)
+    try:
+        trees = await asyncio.gather(*(service.tree() for _ in range(8)))
+    finally:
+        event.remove(sync_engine, "before_cursor_execute", _record)
+
+    assert len(statements) == 4, "only the first caller may touch the database"
+    assert all(tree == trees[0] for tree in trees)
+    assert trees[0][0].units[0].lessons[0].title == "Greetings"
+
+
+@pytest.mark.asyncio
+async def test_an_admin_invalidation_forces_the_next_read_to_rebuild(
+    uow: SqlAlchemyUnitOfWork, session: AsyncSession
+) -> None:
+    """Publishing must be visible on the next request, not after the TTL.
+
+    The admin router calls ``invalidate_tree`` after a successful write. Deleting the
+    document is the visible half; bumping the generation is the half that protects it
+    from an in-flight builder writing the old tree back.
+    """
+    from app.platform.cache.memory import InMemoryCache
+
+    level = _level_row(session, code="A1", position=1)
+    unit = _unit_row(session, level.id, position=1)
+    lesson = _lesson_row(session, unit.id, position=1)
+    await session.commit()
+
+    cache = InMemoryCache()
+    service = CatalogueService(uow, cache, ttl_seconds=60)
+    first = await service.tree()
+    assert first[0].units[0].lessons[0].title == "Greetings"
+
+    lesson.title = "Goodbyes"
+    await session.commit()
+    assert (await service.tree())[0].units[0].lessons[0].title == "Greetings"
+
+    await invalidate_tree(cache)
+    assert await cache.get(tree_cache_key(cache)) is None
+    assert int(await cache.get(tree_generation_key(cache)) or 0) == 1
+
+    fresh = await service.tree()
+    assert fresh[0].units[0].lessons[0].title == "Goodbyes"
+
+
+@pytest.mark.asyncio
+async def test_a_build_that_finishes_after_an_invalidation_is_not_stored(
+    uow: SqlAlchemyUnitOfWork, session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The delete-then-store race must not resurrect the pre-edit tree.
+
+    A request that began building before an editor published can finish afterwards. It
+    may return its (possibly stale) result to its own caller, but storing it would make
+    every later request stale for a full TTL. The generation check makes the builder
+    drop its write instead.
+    """
+    from app.platform.cache.memory import InMemoryCache
+
+    level = _level_row(session, code="A1", position=1)
+    unit = _unit_row(session, level.id, position=1)
+    lesson = _lesson_row(session, unit.id, position=1)
+    _question_row(session, lesson.id)
+    await session.commit()
+
+    cache = InMemoryCache()
+    service = CatalogueService(uow, cache, ttl_seconds=60)
+    original_build = service._build_tree
+
+    async def build_then_publish() -> object:
+        tree = await original_build()
+        await invalidate_tree(cache)
+        return tree
+
+    monkeypatch.setattr(service, "_build_tree", build_then_publish)
+
+    tree = await service.tree()
+
+    assert tree[0].units[0].lessons[0].title == "Greetings"
+    assert await cache.get(tree_cache_key(cache)) is None, "a stale build must not be stored"
+
+
+@pytest.mark.asyncio
+async def test_a_malformed_cache_payload_falls_back_to_the_database(
+    uow: SqlAlchemyUnitOfWork, session: AsyncSession
+) -> None:
+    """A cache is an optimisation; a corrupt value must not be a 500 on the first screen."""
+    from app.platform.cache.memory import InMemoryCache
+
+    level = _level_row(session, code="A1", position=1)
+    unit = _unit_row(session, level.id, position=1)
+    lesson = _lesson_row(session, unit.id, position=1)
+    _question_row(session, lesson.id)
+    await session.commit()
+
+    cache = InMemoryCache()
+    await cache.set(cache.build_key("catalogue", "tree", "v1"), "{not json")
+
+    tree = await CatalogueService(uow, cache, ttl_seconds=60).tree()
+
+    assert len(tree) == 1
+    assert tree[0].units[0].lessons[0].title == "Greetings"

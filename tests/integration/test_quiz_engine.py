@@ -1425,3 +1425,54 @@ class TestAbandonSession:
         second = await service.abandon_session(user_id, session_id)
 
         assert first.status == second.status == SessionStatus.ABANDONED.value
+
+
+# ------------------------------------------------------- concurrent submissions
+@pytest.mark.asyncio
+async def test_losing_the_insert_race_returns_the_winners_verdict(
+    service: QuizService,
+    session: AsyncSession,
+    uow: SqlAlchemyUnitOfWork,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Two taps on one question must not become a 500 or a second award.
+
+    The read-then-insert path is what both requests take. Here the second request's
+    *read* is forced to miss the row the first already committed, so its INSERT hits
+    ``uq_quiz_answers_session_question``; the service must return the stored verdict
+    rather than propagate an IntegrityError.
+    """
+    user_id, lesson_id, questions = await _seed(session)
+    session_id = await _start(service, user_id, lesson_id)
+    first = await service.submit_answer(
+        user_id,
+        session_id,
+        question_id=questions[0].id,
+        answer=SubmittedAnswer(choice="Goodbye"),
+    )
+    assert first.is_correct is False
+    assert first.correct_count == 0
+
+    repository = uow.quiz_answers
+    real_get = repository.get
+    calls = {"count": 0}
+
+    async def _miss_once(session_arg: uuid.UUID, question_arg: uuid.UUID) -> object:
+        calls["count"] += 1
+        if calls["count"] == 1:
+            return None
+        return await real_get(session_arg, question_arg)
+
+    monkeypatch.setattr(repository, "get", _miss_once)
+
+    second = await service.submit_answer(
+        user_id,
+        session_id,
+        question_id=questions[0].id,
+        answer=SubmittedAnswer(choice="Hello"),
+    )
+
+    assert second.is_correct is False, "the first recorded answer wins"
+    assert second.points_awarded == 0
+    assert second.correct_count == 0, "the loser must not award a second correct answer"
+    assert second.answered_count == 1

@@ -447,3 +447,58 @@ async def test_the_quota_reports_the_budget_it_read(uow: SqlAlchemyUnitOfWork) -
     assert view.spent_usd == 0.50
     assert view.remaining_usd == 0.0
     assert view.reason == "Daily AI budget reached (tutor_chat). It resets tomorrow."
+
+
+# ======================================================== connection discipline
+class _CommitProbeAI(RecordingAIService):
+    """Records whether the UoW had already committed when the provider was called."""
+
+    def __init__(self, uow: SqlAlchemyUnitOfWork) -> None:
+        super().__init__()
+        self._uow = uow
+        self.saw_commit = False
+
+    async def explain_answer(self, **kwargs: Any) -> dict[str, Any]:
+        self.saw_commit = self._uow.is_committed
+        return await super().explain_answer(**kwargs)
+
+    async def tutor_reply(self, **kwargs: Any) -> dict[str, Any]:
+        self.saw_commit = self._uow.is_committed
+        return await super().tutor_reply(**kwargs)
+
+
+@pytest.mark.asyncio
+async def test_the_model_is_called_after_the_database_transaction_ends(
+    uow: SqlAlchemyUnitOfWork,
+) -> None:
+    """A ten-second provider call must not pin a pooled connection for ten seconds.
+
+    The transaction is ended before the upstream call: the data the provider needs is
+    copied out first, and the connection goes back to the pool while the request waits.
+    """
+    session = uow.session
+    user = _learner(session)
+    _, question = _lesson(session)
+    await session.commit()
+    probe = _CommitProbeAI(uow)
+
+    await _service(uow, ai=probe).explain(
+        UserId(user.id), question_id=question.id, answer=SubmittedAnswer(choice="Hello")
+    )
+
+    assert probe.saw_commit is True
+
+
+@pytest.mark.asyncio
+async def test_a_chat_turn_is_persisted_before_the_model_is_called(
+    uow: SqlAlchemyUnitOfWork,
+) -> None:
+    """The learner's message survives a provider failure, and the connection is free."""
+    session = uow.session
+    user = _learner(session)
+    await session.commit()
+    probe = _CommitProbeAI(uow)
+
+    await _service(uow, ai=probe).ask(UserId(user.id), message="How do I say hello?")
+
+    assert probe.saw_commit is True

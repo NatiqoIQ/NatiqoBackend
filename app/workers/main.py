@@ -35,6 +35,10 @@ logger = get_logger("workers.main")
 #: enough that shutdown is prompt, long enough that an idle worker is not a busy loop.
 POLL_TIMEOUT_MS = 1000
 
+#: How often an idle worker sweeps abandoned claims. Frequent enough that a crashed
+#: job is retried within minutes, infrequent enough that the sweep is not itself load.
+RECOVERY_INTERVAL_SECONDS = 30
+
 #: First retry waits a second, then two, four… capped here. Capped rather than unbounded
 #: because ``max_attempts`` is 5 by default, and 16 seconds of total backoff is a better
 #: use of a worker process than fifteen minutes of sleeping on one bad job.
@@ -75,18 +79,31 @@ class Worker:
             return False
 
         attempts = max(1, job.max_attempts)
+        last_error = ""
         for attempt in range(1, attempts + 1):
             try:
                 await handler(job)
             except Exception as exc:  # noqa: BLE001 — one bad job must not stop the loop
+                last_error = str(exc)
                 if attempt >= attempts:
                     logger.error(
                         "worker.job_dead",
                         job=str(job.name),
                         job_id=str(job.job_id),
                         attempt=attempt,
-                        error=str(exc)[:300],
+                        error=last_error[:300],
                     )
+                    # Before the ack in ``run_once``: a failure to record must not
+                    # keep a poison job cycling, so this is best-effort.
+                    try:
+                        await self._queue.dead_letter(job, error=last_error)
+                    except Exception as record_error:  # noqa: BLE001
+                        logger.error(
+                            "worker.dead_letter_failed",
+                            job=str(job.name),
+                            job_id=str(job.job_id),
+                            error=str(record_error)[:200],
+                        )
                     return False
                 delay = min(2 ** (attempt - 1), self._max_backoff_seconds)
                 logger.warning(
@@ -104,13 +121,22 @@ class Worker:
         return False
 
     async def run_once(self, *, timeout_ms: int | None = None) -> Job | None:
-        """Drain at most one job. ``None`` means the queue was empty."""
+        """Drain at most one job. ``None`` means the queue was empty.
+
+        The job is acknowledged whether the handler succeeded or exhausted its attempts.
+        A success obviously leaves the in-flight set; a permanent failure has to leave
+        it too, or recovery would requeue the same poison payload forever. The log line
+        is the current dead-letter record.
+        """
         job = await self._queue.dequeue(
             timeout_ms=self._poll_timeout_ms if timeout_ms is None else timeout_ms
         )
         if job is None:
             return None
-        await self.handle(job)
+        try:
+            await self.handle(job)
+        finally:
+            await self._queue.ack(job)
         return job
 
     async def run_forever(self, stop: asyncio.Event) -> None:
@@ -122,8 +148,18 @@ class Worker:
         connection again.
         """
         logger.info("worker.started", jobs=sorted(str(name) for name in self._handlers))
+        last_recovery = 0.0
         while not stop.is_set():
             try:
+                # Recover before consuming: a job abandoned by a previous process must
+                # not wait behind the jobs that arrived after it.
+                now = asyncio.get_running_loop().time()
+                if now - last_recovery >= RECOVERY_INTERVAL_SECONDS:
+                    last_recovery = now
+                    try:
+                        await self._queue.recover()
+                    except Exception as exc:  # noqa: BLE001 - recovery is best-effort
+                        logger.warning("worker.recovery_failed", error=str(exc)[:200])
                 await self.run_once()
             except asyncio.CancelledError:
                 raise
@@ -152,12 +188,24 @@ async def schedule_daily_cleanup(
     """
     while not stop.is_set():
         today = clock()
-        job = Job(
-            name=JobName.CLEANUP_EXPIRED_TOKENS,
-            dedupe_key=f"{JobName.CLEANUP_EXPIRED_TOKENS}:{today.date().isoformat()}",
-        )
-        queued = await queue.enqueue(job)
-        logger.info("worker.cleanup_scheduled", queued=queued, job_id=str(job.job_id))
+        #: Two independent daily jobs. Both carry the date in their dedupe key, so a
+        #: restart re-presents the same key instead of enqueueing the work twice.
+        for name in (
+            JobName.CLEANUP_EXPIRED_TOKENS,
+            JobName.PURGE_AI_USAGE,
+            JobName.PURGE_ABANDONED_SESSIONS,
+            JobName.ROLLUP_DAILY_METRICS,
+        ):
+            if stop.is_set():
+                break
+            job = Job(name=name, dedupe_key=f"{name}:{today.date().isoformat()}")
+            queued = await queue.enqueue(job)
+            logger.info(
+                "worker.cleanup_scheduled",
+                job=str(name),
+                queued=queued,
+                job_id=str(job.job_id),
+            )
         with contextlib.suppress(TimeoutError):
             await asyncio.wait_for(stop.wait(), timeout=interval_seconds)
 
@@ -199,7 +247,17 @@ async def main() -> None:
     queue = get_queue()
     stop = asyncio.Event()
     _install_stop_handlers(stop)
-    worker = Worker(queue, build_handlers(WorkerContext(uow_factory=make_uow)))
+    worker = Worker(
+        queue,
+        build_handlers(
+            WorkerContext(
+                uow_factory=make_uow,
+                ai_usage_retention_days=settings.ai_usage_retention_days,
+                abandoned_session_retention_days=settings.abandoned_session_retention_days,
+                metrics_rollup_lookback_days=settings.metrics_rollup_lookback_days,
+            )
+        ),
+    )
 
     try:
         await asyncio.gather(

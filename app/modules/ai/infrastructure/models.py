@@ -20,6 +20,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
+from app.core.ids import uuid7
 from app.modules.ai.domain.conversation import MessageRole
 
 #: Written into the ``CHECK`` on ``role``. A module constant so the model, the mapper and
@@ -40,7 +41,7 @@ class AiUsageRecord(Base):
 
     # ``Uuid`` maps to PostgreSQL's native UUID and to CHAR(32) elsewhere, so the same
     # model runs on Postgres in production and SQLite in the test suite.
-    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid7)
     user_id: Mapped[uuid.UUID] = mapped_column(
         Uuid(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
     )

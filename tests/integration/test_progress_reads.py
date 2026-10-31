@@ -36,7 +36,9 @@ from app.modules.quiz.application.progress_service import ProgressService
 from app.modules.quiz.application.quiz_service import QuizService
 from app.modules.quiz.domain.entities import QuizSession, SessionMode
 from app.modules.quiz.domain.policy import SubmittedAnswer
+from app.modules.quiz.infrastructure.models import QuizAnswerModel
 from app.modules.users.infrastructure.models import UserModel
+from app.platform.cache.memory import InMemoryCache
 
 pytestmark = pytest.mark.integration
 
@@ -524,6 +526,69 @@ class TestSummary:
         assert view.current_streak_days == 3
         assert view.longest_streak_days == 3
 
+    async def test_the_summary_is_cached_until_a_command_invalidates_it(
+        self, uow: SqlAlchemyUnitOfWork, session: AsyncSession
+    ) -> None:
+        """A repeated read must not rescan history; a command must not leave a stale card.
+
+        The direct answer row below bypasses the service on purpose: if the cache were not
+        used, the next summary would count it. It does not — until a real command (which
+        invalidates the key) runs and the next summary sees all three answers.
+        """
+        user = _user_row(session)
+        (lesson,) = _unit_with_lessons(session, code="A1", lessons=[(1, "L1")])
+        questions = _questions(session, lesson)
+        await session.flush()
+
+        cache = InMemoryCache()
+        service = ProgressService(uow, cache=cache, cache_ttl_seconds=60)
+        quiz = QuizService(uow, get_settings(), cache=cache)
+
+        detail = await quiz.start_session(
+            UserId(user.id), mode=SessionMode.LESSON, lesson_id=lesson.id
+        )
+        session_id = detail.session.id
+        await quiz.submit_answer(
+            UserId(user.id),
+            session_id,
+            question_id=questions[0].id,
+            answer=SubmittedAnswer(choice="Hello"),
+        )
+
+        first = await service.summary(UserId(user.id))
+        assert first.answered_count == 1
+        assert cache.misses == 1
+
+        assert await service.summary(UserId(user.id)) == first
+        assert cache.hits == 1
+
+        # Written behind the cache's back, as another process might.
+        session.add(
+            QuizAnswerModel(
+                id=uuid.uuid4(),
+                session_id=session_id,
+                question_id=questions[1].id,
+                position=2,
+                given_answer={"text": "goes"},
+                is_correct=True,
+                points_awarded=1,
+                attempt=1,
+                explanation="goes",
+                answered_at=datetime.now(UTC),
+            )
+        )
+        await session.commit()
+
+        assert (await service.summary(UserId(user.id))).answered_count == 1
+
+        await quiz.submit_answer(
+            UserId(user.id),
+            session_id,
+            question_id=questions[2].id,
+            answer=SubmittedAnswer(choice="False"),
+        )
+        assert (await service.summary(UserId(user.id))).answered_count == 3
+
 
 # ================================================================== xp history
 class TestXpHistory:
@@ -628,3 +693,79 @@ class TestXpHistory:
 
         with pytest.raises(ValidationFailed):
             await service.xp_history(UserId(user.id), limit=10, cursor="not-a-real-cursor")
+
+
+@pytest.mark.asyncio
+async def test_completed_lesson_ids_is_a_membership_read(uow: SqlAlchemyUnitOfWork) -> None:
+    """The unlock check needs a set of ids, not every progress row.
+
+    Opening one lesson used to hydrate the learner's whole record just to ask whether a
+    predecessor was completed. This read returns one indexed column and only the rows
+    that are actually completed; a lesson in progress must not unlock its successor.
+    """
+    from app.modules.quiz.domain.entities import LessonProgress, ProgressState
+
+    user = _user_row(uow.session)
+    finished, started = _unit_with_lessons(
+        uow.session, code="A1", lessons=[(1, "Finished"), (2, "Started")]
+    )
+    await uow.session.flush()
+    await uow.lesson_progress.save(
+        LessonProgress(
+            id=uuid.uuid4(),
+            user_id=UserId(user.id),
+            lesson_id=finished.id,
+            state=ProgressState.COMPLETED,
+        )
+    )
+    await uow.lesson_progress.save(
+        LessonProgress(
+            id=uuid.uuid4(),
+            user_id=UserId(user.id),
+            lesson_id=started.id,
+            state=ProgressState.IN_PROGRESS,
+        )
+    )
+    await uow.commit()
+
+    assert await uow.lesson_progress.completed_lesson_ids(UserId(user.id)) == {finished.id}
+
+
+@pytest.mark.asyncio
+async def test_totals_for_user_is_one_grouped_read(uow: SqlAlchemyUnitOfWork) -> None:
+    """The summary needs four numbers, not every row.
+
+    A learner who has finished the catalogue has one row per lesson; hydrating them to
+    count them is the difference between a constant-size read and a growing one.
+    """
+    from app.modules.quiz.domain.entities import LessonProgress, ProgressState
+
+    user = _user_row(uow.session)
+    lessons = _unit_with_lessons(
+        uow.session,
+        code="A1",
+        lessons=[(1, "One"), (2, "Two"), (3, "Three")],
+    )
+    await uow.session.flush()
+    for lesson, state, xp in (
+        (lessons[0], ProgressState.COMPLETED, 40),
+        (lessons[1], ProgressState.COMPLETED, 50),
+        (lessons[2], ProgressState.IN_PROGRESS, 0),
+    ):
+        await uow.lesson_progress.save(
+            LessonProgress(
+                id=uuid.uuid4(),
+                user_id=UserId(user.id),
+                lesson_id=lesson.id,
+                state=state,
+                xp_earned=xp,
+            )
+        )
+    await uow.commit()
+
+    totals = await uow.lesson_progress.totals_for_user(UserId(user.id))
+
+    assert totals.xp_total == 90
+    assert totals.lessons_started == 3
+    assert totals.lessons_completed == 2
+    assert totals.lessons_in_progress == 1

@@ -118,9 +118,44 @@ async def queue_check(ping: Any) -> CheckResult:
     )
 
 
-async def build_health_report(*, deep: bool) -> HealthReport:
+def overall_status(checks: list[CheckResult], *, uses_redis: bool) -> HealthStatus:
+    """Reduce dependency checks to one verdict.
+
+    PostgreSQL is the *only* dependency that can fail the request path: the cache is
+    fail-open (see ``deps.rate_limit``), idempotency degrades to a normal execution,
+    and the queue is asynchronous. Reporting a Redis blip as UNHEALTHY would pull every
+    instance out of the load balancer and turn a degraded background worker into a full
+    outage — the opposite of what the readiness probe is for. Only a dead database is
+    fatal.
+    """
+    unhealthy = [check for check in checks if check.status is HealthStatus.UNHEALTHY]
+    if any(check.name == "database" for check in unhealthy):
+        return HealthStatus.UNHEALTHY
+    if unhealthy:
+        return HealthStatus.DEGRADED
+    if not uses_redis:
+        # Running on the in-memory adapter: functional, but not production-grade.
+        return HealthStatus.DEGRADED
+    return HealthStatus.HEALTHY
+
+
+#: The last deep report and when it was taken, in ``time.monotonic`` seconds. A probe is
+#: liveness/readiness signalling, not a monitoring query: every orchestrator replica polls
+#: every few seconds, and each poll otherwise opens a database connection to answer a
+#: question whose answer cannot have changed that fast.
+_ready_cache: tuple[float, HealthReport] | None = None
+
+
+def reset_health_cache() -> None:
+    """Drop the cached readiness report. Tests and a forced probe use this."""
+    global _ready_cache
+    _ready_cache = None
+
+
+async def build_health_report(*, deep: bool, force: bool = False) -> HealthReport:
     from app.core.config import get_settings
 
+    global _ready_cache
     settings = get_settings()
     if not deep:
         return HealthReport(
@@ -129,6 +164,11 @@ async def build_health_report(*, deep: bool) -> HealthReport:
             checked_at=utc_now().isoformat(),
         )
 
+    ttl = settings.ready_cache_ttl_seconds
+    now = time.monotonic()
+    if not force and _ready_cache is not None and now - _ready_cache[0] < ttl:
+        return _ready_cache[1]
+
     checks = [await database_check()]
     from app.api.deps import get_cache, get_queue
 
@@ -136,20 +176,12 @@ async def build_health_report(*, deep: bool) -> HealthReport:
     checks.append(await cache_check(cache.ping))
     checks.append(await queue_check(get_queue().ping))
 
-    unhealthy = [c for c in checks if c.status is HealthStatus.UNHEALTHY]
-    if any(c.name != "queue" for c in unhealthy):
-        status = HealthStatus.UNHEALTHY
-    elif unhealthy:
-        # Only the queue: background work is stalled, the request path is not.
-        status = HealthStatus.DEGRADED
-    elif any(c.name == "cache" for c in checks) and not settings.uses_redis:
-        # Running on the in-memory adapter: functional, but not production-grade.
-        status = HealthStatus.DEGRADED
-    else:
-        status = HealthStatus.HEALTHY
-    return HealthReport(
+    status = overall_status(checks, uses_redis=settings.uses_redis)
+    report = HealthReport(
         status=status,
         checks=checks,
         environment=settings.app_env,
         checked_at=utc_now().isoformat(),
     )
+    _ready_cache = (now, report)
+    return report

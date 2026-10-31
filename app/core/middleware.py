@@ -2,15 +2,17 @@
 
 Installed in this order (outermost first):
 
-1. :class:`SecurityHeadersMiddleware` — headers that must be on *every* response,
+1. :class:`MetricsMiddleware` — one count and one latency observation per request.
+2. :class:`SecurityHeadersMiddleware` — headers that must be on *every* response,
    including errors produced further in.
-2. :class:`RequestContextMiddleware` — request/correlation id, access log, duration.
-3. :class:`BodySizeLimitMiddleware` — reject oversized bodies before parsing.
+3. :class:`RequestContextMiddleware` — request/correlation id, access log, duration.
+4. :class:`BodySizeLimitMiddleware` — reject oversized bodies before parsing.
 """
 
 from __future__ import annotations
 
 import json
+import random
 import time
 import uuid
 from collections.abc import Awaitable, Callable
@@ -25,6 +27,7 @@ from app.core.config import get_settings
 from app.core.errors import ErrorCode
 from app.core.http_cache import etag_for, matches_etag, not_modified, policy_for
 from app.core.logging import get_logger, request_id_var, user_id_var
+from app.core.metrics import observe_request, request_finished, request_started
 from app.core.responses import ErrorBody, ErrorResponse
 
 logger = get_logger("http")
@@ -33,6 +36,29 @@ REQUEST_ID_HEADER = "X-Request-ID"
 
 #: Endpoints excluded from access logging noise (health probes).
 _QUIET_PATHS = frozenset({"/health", "/ready", "/live", "/metrics"})
+
+
+def should_log_access(
+    *,
+    status_code: int,
+    duration_ms: float,
+    sample_rate: float,
+    slow_ms: float,
+    roll: float,
+) -> bool:
+    """Whether one request deserves a log line.
+
+    Sampling is only safe because metrics still count every request and every status.
+    What must never be sampled away is the evidence of a problem: a 5xx and a request
+    slower than ``slow_ms`` are always written, whatever the rate. A rate of 1.0 keeps
+    everything, which is what development and the test suite use.
+    """
+    if status_code >= 500:
+        return True
+    if duration_ms >= slow_ms:
+        return True
+    return roll < max(0.0, min(1.0, sample_rate))
+
 
 #: Policy for JSON API responses. ``default-src 'none'`` is the right default here
 #: because nothing in the API is ever loaded as a document.
@@ -73,6 +99,12 @@ def _csp_for(path: str) -> str:
     return _DOCS_CSP if path in _DOCS_PATHS else _API_CSP
 
 
+#: Paths served by the media mount. Kept as one predicate so the cache and CORP
+#: rules cannot drift apart from the mount itself.
+def _is_media_path(path: str) -> bool:
+    return path == "/media" or path.startswith("/media/")
+
+
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     """Baseline hardening headers.
 
@@ -105,7 +137,22 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         # published yet", so a cacheable 404 would let an editor publish a lesson and have
         # learners keep the miss for the whole ``stale-while-revalidate`` window.
         cache_policy = policy_for(request)
-        if cache_policy is None or response.status_code != 200:
+        if _is_media_path(request.url.path):
+            #: Media is content-addressed by the path an editor published and never
+            #: rewritten in place: a changed image gets a new key. A short TTL would
+            #: re-download the same lesson audio on every launch and put megabytes
+            #: back on the API instead of the CDN. Failure responses are *not*
+            #: cacheable, so a missing file does not become a week-long 404.
+            if response.status_code == 200:
+                headers.setdefault(
+                    "Cache-Control", "public, max-age=604800, stale-while-revalidate=86400"
+                )
+            else:
+                headers.setdefault("Cache-Control", "no-store")
+            #: Audio and images are fetched from a separate CDN origin (or embedded
+            #: in a web player), so the default same-site policy would block them.
+            headers["Cross-Origin-Resource-Policy"] = "cross-origin"
+        elif cache_policy is None or response.status_code != 200:
             headers.setdefault("Cache-Control", "no-store")
         else:
             headers.setdefault("Cache-Control", cache_policy.cache_control)
@@ -146,7 +193,14 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
         response.headers[REQUEST_ID_HEADER] = request_id
 
         path = request.url.path
-        if path not in _QUIET_PATHS:
+        settings = get_settings()
+        if path not in _QUIET_PATHS and should_log_access(
+            status_code=response.status_code,
+            duration_ms=duration_ms,
+            sample_rate=settings.access_log_sample_rate,
+            slow_ms=settings.access_log_slow_ms,
+            roll=random.random(),  # noqa: S311 - sampling, not crypto
+        ):
             log = logger.info if response.status_code < 500 else logger.warning
             log(
                 "http.request",
@@ -158,6 +212,52 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
                 user_agent=request.headers.get("user-agent", "")[:120],
             )
         return response
+
+
+class MetricsMiddleware:
+    """Record one observation per request, including streamed responses.
+
+    Raw ASGI rather than ``BaseHTTPMiddleware``: the latter wraps the response in an
+    anyio task, which is measurable overhead on the hottest path and can swallow
+    background-task cancellation. This middleware only wraps ``send`` and times the
+    call, so it sees the real status of a streamed body and adds nothing but a dict
+    increment.
+
+    The label is ``scope["route"].path`` — the route *template*, not the concrete URL.
+    A per-id path would create unbounded series, which is both a memory leak and the
+    usual way an application takes down its own scrape endpoint.
+    """
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http" or scope.get("path") == "/metrics":
+            await self.app(scope, receive, send)
+            return
+
+        started = time.perf_counter()
+        status_code = 500
+
+        async def _send(message: Message) -> None:
+            nonlocal status_code
+            if message["type"] == "http.response.start":
+                status_code = message["status"]
+            await send(message)
+
+        request_started()
+        try:
+            await self.app(scope, receive, _send)
+        finally:
+            request_finished()
+            route = scope.get("route")
+            template = getattr(route, "path", None) or "unmatched"
+            observe_request(
+                str(scope.get("method", "GET")),
+                template,
+                str(status_code),
+                time.perf_counter() - started,
+            )
 
 
 class BodySizeLimitMiddleware:
@@ -337,6 +437,10 @@ def register_middleware(app: ASGIApp) -> None:
     # and RequestContextMiddleware sits inside SecurityHeadersMiddleware so the CSP branch
     # can tell the docs page from the API without re-deriving the path.
     app.add_middleware(ResponseCacheMiddleware)
+    #: Outermost of the stack installed here so the timing covers every header and
+    #: body mutation below it, and so a request rejected by the body limit is still
+    #: counted rather than disappearing from the metrics.
+    app.add_middleware(MetricsMiddleware)
     app.add_middleware(BodySizeLimitMiddleware, max_bytes=settings.max_request_body_bytes)
     app.add_middleware(SecurityHeadersMiddleware)
     app.add_middleware(RequestContextMiddleware)

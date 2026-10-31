@@ -75,6 +75,30 @@ KEY_CONFLICT_BODY: dict[str, Any] = {
     }
 }
 
+#: Returned when the *same* request is still executing. Executing it a second time is
+#: exactly what the header exists to prevent, and waiting would hold a second worker
+#: for as long as the first one takes. A short ``Retry-After`` lets the client come
+#: back and receive the stored response instead.
+IN_PROGRESS_STATUS = 409
+IN_PROGRESS_BODY: dict[str, Any] = {
+    "error": {
+        "code": "IDEMPOTENCY_IN_PROGRESS",
+        "message": "An identical request is already being processed. Retry shortly.",
+        "details": None,
+        "requestId": None,
+    }
+}
+
+#: How long the in-flight marker survives. Long enough to cover a slow write, short
+#: enough that a crashed process does not block its key for the whole retention window.
+IN_FLIGHT_TTL_SECONDS = 60
+
+#: Largest response body worth storing. An export or a bulk import result can be
+#: megabytes, and keeping a day of those in the same Redis that serves rate limits and
+#: the catalogue would evict the small, hot records. Above this size the request runs
+#: normally and simply is not replayable — a duplicate is the lesser harm.
+MAX_STORED_BODY_BYTES = 64 * 1024
+
 
 def fingerprint(payload: bytes) -> str:
     """Stable hash of a request body, used to detect key reuse with different content."""
@@ -216,13 +240,53 @@ class IdempotencyMiddleware:
             await self._send_replay(send, scope, record)
             return
 
+        if not await self._acquire(key):
+            await self._send_in_progress(send, scope)
+            return
+
         captured = _ResponseCapture()
-        await self.app(scope, _replay_body(body, receive), captured.wrap(send))
-        if captured.status is not None and 200 <= captured.status < 300:
-            await self._store(key, fingerprint(body), captured)
+        try:
+            await self.app(scope, _replay_body(body, receive), captured.wrap(send))
+            if captured.status is not None and 200 <= captured.status < 300:
+                await self._store(key, fingerprint(body), captured)
+        finally:
+            # Released *after* the store: a concurrent retry that reads the lock a
+            # microsecond after it is freed must find the stored response, not a gap.
+            await self._release(key)
+
+    async def _acquire(self, key: str) -> bool:
+        """Claim the in-flight marker, or answer ``False`` if someone else holds it.
+
+        ``INCR`` is atomic on both adapters, so two processes cannot both see ``1``.
+        If the cache is unreachable, the request proceeds *unlocked*: the alternative
+        is failing every write during a Redis outage, and a duplicate execution is the
+        lesser harm (the header is a retry optimisation, not a payment ledger).
+        """
+        try:
+            count = await self.cache.increment(
+                f"{key}:inflight", amount=1, ttl_seconds=IN_FLIGHT_TTL_SECONDS
+            )
+        except Exception:  # noqa: BLE001 - fail open, never fail the write
+            logger.warning("idempotency.lock_unavailable", key=key[:40])
+            return True
+        return count == 1
+
+    async def _release(self, key: str) -> None:
+        try:
+            await self.cache.delete(f"{key}:inflight")
+        except Exception:  # noqa: BLE001 - the TTL is the backstop
+            logger.warning("idempotency.lock_release_failed", key=key[:40])
 
     async def _load(self, key: str) -> dict[str, Any] | None:
-        raw = await self.cache.get(key)
+        try:
+            raw = await self.cache.get(key)
+        except Exception:  # noqa: BLE001 - degrade to "no replay", never to a 500
+            # An idempotency lookup is an optimisation on a retry, not a precondition
+            # for doing the work. If Redis is unreachable the request executes
+            # normally; the client gets one execution instead of a replayed response,
+            # which is the same behaviour it would see without the header.
+            logger.warning("idempotency.load_failed", key=key[:40])
+            return None
         if not raw:
             return None
         try:
@@ -232,6 +296,13 @@ class IdempotencyMiddleware:
         return record if isinstance(record, dict) else None
 
     async def _store(self, key: str, body_fingerprint: str, captured: _ResponseCapture) -> None:
+        if len(captured.body) > MAX_STORED_BODY_BYTES:
+            logger.info(
+                "idempotency.response_too_large",
+                bytes=len(captured.body),
+                limit=MAX_STORED_BODY_BYTES,
+            )
+            return
         record = {
             "fingerprint": body_fingerprint,
             "status": captured.status,
@@ -264,6 +335,21 @@ class IdempotencyMiddleware:
             body = b""
         raw.append((b"content-length", str(len(body)).encode()))
         await self._emit(send, scope, record["status"], raw, body)
+
+    async def _send_in_progress(self, send: Send, scope: Scope) -> None:
+        payload = IN_PROGRESS_BODY["error"] | {"requestId": request_id_var.get()}
+        body = json.dumps({"error": payload}).encode()
+        logger.info("idempotency.request_in_progress")
+        await self._emit(
+            send,
+            scope,
+            IN_PROGRESS_STATUS,
+            [
+                (b"content-type", b"application/json"),
+                (b"retry-after", b"1"),
+            ],
+            body,
+        )
 
     async def _send_conflict(self, send: Send, scope: Scope) -> None:
         payload = KEY_CONFLICT_BODY["error"] | {"requestId": request_id_var.get()}

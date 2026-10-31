@@ -1,0 +1,48 @@
+# CPU is the primary signal because the API is I/O-bound but not I/O-idle: a saturating
+# request path shows up as CPU long before memory. Memory is a guardrail for a leak, not a
+# scaling signal, so its target is generous.
+#
+# Scale-down is deliberately slow (5 minutes): a pod removed during a morning spike
+# cannot help with the next one, and the pool budget is sized for the maximum replicas
+# below. Raise `maxReplicas` only together with the PgBouncer pool calculation.
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: natiqo-api
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: natiqo-api
+  minReplicas: 3
+  maxReplicas: 24
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 60
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 75
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 30
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 60
+        - type: Pods
+          value: 4
+          periodSeconds: 60
+      selectPolicy: Max
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Pods
+          value: 2
+          periodSeconds: 120

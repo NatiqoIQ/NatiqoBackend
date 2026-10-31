@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.core.logging import get_logger
+from app.platform.cache import stats
 
 logger = get_logger("cache.redis")
 
@@ -21,10 +22,19 @@ class RedisCache:
         self._namespace = namespace
 
     @classmethod
-    def from_url(cls, url: str, *, namespace: str = "natiqo") -> RedisCache:
+    def from_url(
+        cls, url: str, *, namespace: str = "natiqo", socket_timeout: float = 0.5
+    ) -> RedisCache:
         from redis.asyncio import Redis
 
-        client = Redis.from_url(url, encoding="utf-8", decode_responses=True)
+        client = Redis.from_url(
+            url,
+            encoding="utf-8",
+            decode_responses=True,
+            socket_timeout=socket_timeout,
+            socket_connect_timeout=socket_timeout,
+            health_check_interval=30,
+        )
         logger.info("cache.redis_initialised")
         return cls(client, namespace)
 
@@ -32,7 +42,16 @@ class RedisCache:
         return ":".join([self._namespace, *(p for p in parts if p)])
 
     async def get(self, key: str) -> str | None:
-        return await self._redis.get(key)
+        try:
+            value = await self._redis.get(key)
+        except Exception:
+            # The caller will fall through to the database; that is a miss in every
+            # sense that matters to the hit-ratio signal, and counting it keeps the
+            # ratio honest during an outage instead of freezing at its last value.
+            stats.record(key, hit=False)
+            raise
+        stats.record(key, hit=value is not None)
+        return value
 
     async def set(self, key: str, value: str, *, ttl_seconds: int | None = None) -> None:
         if ttl_seconds:

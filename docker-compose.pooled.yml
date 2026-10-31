@@ -1,0 +1,53 @@
+# Optional PgBouncer layer.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.pooled.yml --profile pooled up -d
+#
+# The API and worker then connect to PgBouncer on 6432 instead of PostgreSQL on 5432.
+# The `migrate` service deliberately keeps the direct URL: DDL and the advisory lock in
+# alembic/env.py must not share a transaction-pooled session with application traffic.
+#
+# Why transaction mode: a request holds a database connection only for the statements
+# it actually runs, so 40 server connections can front 2,000 idle-ish clients. Session
+# mode would give every client a dedicated backend and defeat the point.
+
+services:
+  pgbouncer:
+    image: edoburu/pgbouncer:v1.23.1-p2
+    profiles: ["pooled"]
+    restart: unless-stopped
+    environment:
+      DB_HOST: db
+      DB_PORT: "5432"
+      DB_USER: ${POSTGRES_USER:-natiqo}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is not set}
+      DB_NAME: ${POSTGRES_DB:-natiqo}
+      POOL_MODE: transaction
+      AUTH_TYPE: scram-sha-256
+      #: Clients across all API and worker replicas. Each replica's pool is bounded by
+      #: DATABASE_POOL_SIZE + DATABASE_MAX_OVERFLOW; this ceiling must be the larger of
+      #: the two, or PgBouncer becomes the queue.
+      MAX_CLIENT_CONN: "2000"
+      #: Backends PgBouncer keeps to PostgreSQL. Keep
+      #:   DEFAULT_POOL_SIZE x replicas < PostgreSQL max_connections - maintenance
+      #: and set DATABASE_POOL_SIZE <= DEFAULT_POOL_SIZE per replica.
+      DEFAULT_POOL_SIZE: "40"
+      MIN_POOL_SIZE: "10"
+      RESERVE_POOL_SIZE: "5"
+      IGNORE_STARTUP_PARAMETERS: extra_float_digits,options
+    depends_on:
+      db:
+        condition: service_healthy
+
+  app:
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-natiqo}:${POSTGRES_PASSWORD}@pgbouncer:6432/${POSTGRES_DB:-natiqo}
+    depends_on:
+      pgbouncer:
+        condition: service_started
+
+  worker:
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-natiqo}:${POSTGRES_PASSWORD}@pgbouncer:6432/${POSTGRES_DB:-natiqo}
+    depends_on:
+      pgbouncer:
+        condition: service_started

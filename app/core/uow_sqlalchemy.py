@@ -18,6 +18,7 @@ if TYPE_CHECKING:  # pragma: no cover
     from app.modules.admin.domain.ports import (
         AdminStatsRepositoryPort,
         AuditLogRepositoryPort,
+        DailyMetricsRepositoryPort,
         EditorialRepositoryPort,
     )
     from app.modules.ai.domain.conversation import ConversationRepositoryPort
@@ -323,6 +324,12 @@ class SqlAlchemyUnitOfWork:
         )
 
         return self._repo("stats", SqlAlchemyAdminStatsRepository)
+
+    @property
+    def daily_metrics(self) -> DailyMetricsRepositoryPort:
+        from app.modules.admin.infrastructure.daily_metrics import DailyMetricsRepository
+
+        return self._repo("daily_metrics", DailyMetricsRepository)
 
     def _repo(self, key: str, factory: Any) -> Any:
         if key not in self._repositories:
