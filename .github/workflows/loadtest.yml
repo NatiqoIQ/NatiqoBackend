@@ -38,6 +38,10 @@ on:
         description: "Seconds to wait before restarting the API"
         required: false
         default: "60"
+      chaos_redis_pause_seconds:
+        description: "Pause Redis for N seconds mid-run (0 disables; staging only)"
+        required: false
+        default: "0"
   schedule:
     # Mondays 02:00 UTC, before the working week in Baghdad.
     - cron: "0 2 * * 1"
@@ -193,6 +197,37 @@ jobs:
             fi
             sleep 1
           done
+          wait "$K6_PID"
+
+      - name: Run k6 with a Redis pause
+        if: ${{ github.event.inputs.chaos_redis_pause_seconds != '' && github.event.inputs.chaos_redis_pause_seconds != '0' && github.event.inputs.chaos_restart != 'true' }}
+        env:
+          DURATION: ${{ github.event.inputs.duration || '5m' }}
+          BROWSE_RPS: ${{ github.event.inputs.browse_rps || '80' }}
+          LEARN_RPS: ${{ github.event.inputs.learn_rps || '8' }}
+          PROGRESS_RPS: ${{ github.event.inputs.progress_rps || '12' }}
+          CHAOS_AFTER: ${{ github.event.inputs.chaos_after_seconds || '60' }}
+          CHAOS_REDIS_PAUSE_SECONDS: ${{ github.event.inputs.chaos_redis_pause_seconds }}
+        run: |
+          set -euo pipefail
+          # A paused Redis is the failure mode that a killed one does not test: clients
+          # connect, then wait. The cache timeout turns that into a database fallback.
+          # Thresholds are relaxed for the known window and still fail on a hang.
+          MAX_FAIL_RATE=0.05 k6 run loadtest/k6/natiqo-mixed.js \
+            -e BASE_URL=http://127.0.0.1:8000 \
+            -e TOKENS_FILE="$PWD/loadtest/tokens.json" \
+            -e DURATION="$DURATION" \
+            -e BROWSE_RPS="$BROWSE_RPS" \
+            -e LEARN_RPS="$LEARN_RPS" \
+            -e PROGRESS_RPS="$PROGRESS_RPS" \
+            -e MAX_FAIL_RATE=0.05 \
+            -e READ_P95_MS=2000 -e READ_P99_MS=4000 \
+            -e WRITE_P95_MS=2000 -e WRITE_P99_MS=4000 \
+            --summary-export loadtest/summary.json &
+          K6_PID=$!
+          echo "Pausing Redis after ${CHAOS_AFTER}s for ${CHAOS_REDIS_PAUSE_SECONDS}s"
+          sleep "$CHAOS_AFTER"
+          uv run python -m scripts.pause_redis "$CHAOS_REDIS_PAUSE_SECONDS"
           wait "$K6_PID"
 
       - name: Upload the summary

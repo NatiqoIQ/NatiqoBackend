@@ -32,6 +32,10 @@
 // BROWSE_RPS=400 LEARN_RPS=50 PROGRESS_RPS=66 (~1,400 reads + ~600 writes).
 //   DURATION              default 10m
 //   MAX_FAIL_RATE         default 0.005; raise it only for a deliberate chaos run
+//   READ_P95_MS           default 200; raise for a chaos drill that pauses Redis
+//   READ_P99_MS           default 500
+//   WRITE_P95_MS          default 300
+//   WRITE_P99_MS          default 800
 //   ANSWERS_PER_SESSION   default 0 = answer every question in the sitting
 //   THINK_TIME_MS         default 0 = no pause between answers
 //   LESSON_IDS            optional comma-separated ids; otherwise the first
@@ -52,6 +56,13 @@ const ANSWERS_PER_SESSION = Number(__ENV.ANSWERS_PER_SESSION || 0);
 const THINK_TIME_MS = Number(__ENV.THINK_TIME_MS || 0);
 const DURATION = __ENV.DURATION || '10m';
 const MAX_FAIL_RATE = Number(__ENV.MAX_FAIL_RATE || 0.005);
+// A chaos drill temporarily makes the fast path slower on purpose (a paused Redis
+// becomes a 0.5 s timeout before the database fallback). Keeping the normal SLO here
+// would fail the run for the behaviour it is trying to prove.
+const READ_P95_MS = Number(__ENV.READ_P95_MS || 200);
+const READ_P99_MS = Number(__ENV.READ_P99_MS || 500);
+const WRITE_P95_MS = Number(__ENV.WRITE_P95_MS || 300);
+const WRITE_P99_MS = Number(__ENV.WRITE_P99_MS || 800);
 
 const tokens = TOKENS_FILE
   ? new SharedArray('tokens', () => JSON.parse(open(TOKENS_FILE)))
@@ -98,8 +109,8 @@ export const options = {
   },
   thresholds: {
     http_req_failed: [`rate<${MAX_FAIL_RATE}`],
-    'http_req_duration{kind:read}': ['p(95)<200', 'p(99)<500'],
-    'http_req_duration{kind:write}': ['p(95)<300', 'p(99)<800'],
+    'http_req_duration{kind:read}': [`p(95)<${READ_P95_MS}`, `p(99)<${READ_P99_MS}`],
+    'http_req_duration{kind:write}': [`p(95)<${WRITE_P95_MS}`, `p(99)<${WRITE_P99_MS}`],
     checks: ['rate>0.99'],
     natiqo_ratelimited_total: ['count<100'],
   },
