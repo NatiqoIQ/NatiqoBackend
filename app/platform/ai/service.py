@@ -113,6 +113,20 @@ def _shared_breaker() -> _CircuitBreaker:
     return breaker
 
 
+def circuit_open() -> bool:
+    """Whether the provider breaker for the running loop is currently open.
+
+    Read by ``/metrics``. It is synchronous on purpose: the exposition renderer is a
+    normal function called from a request handler, so the loop is already running.
+    """
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:  # pragma: no cover - called from a request, so a loop exists
+        return False
+    breaker = _SHARED_BREAKERS.get(loop)
+    return breaker.is_open if breaker is not None else False
+
+
 def reset_circuit_breakers() -> None:
     """Drop every breaker. Tests need a known state; a live process never calls this."""
     _SHARED_BREAKERS.clear()

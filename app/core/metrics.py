@@ -106,39 +106,52 @@ def _labels(**labels: str) -> str:
     return ",".join(f'{name}="{_escape(value)}"' for name, value in labels.items())
 
 
-def _pool_lines() -> list[str]:
-    """Database-pool gauges, gathered lazily so ``/metrics`` never creates an engine.
+def _extra_gauges() -> list[str]:
+    """Replica-pool and AI-breaker gauges.
 
-    ``pool.checkedout()`` is the number that matters: when it reaches
-    ``pool.size() + max_overflow`` every later request waits for the pool timeout and
-    then fails. Watching it climb is how pool exhaustion is caught before it pages.
+    Both are optional: a single-database deployment has no read engine, and the AI module
+    may not even be imported yet in a worker. A missing gauge must never fail a scrape.
     """
+    lines: list[str] = []
     try:
         from app.core import database
 
-        engine = database._engine
-        if engine is None:
-            return []
-        pool = engine.pool
-        lines = [
-            "# HELP natiqo_db_pool_checked_out Connections currently checked out.",
-            "# TYPE natiqo_db_pool_checked_out gauge",
-            f"natiqo_db_pool_checked_out {pool.checkedout()}",
-            "# HELP natiqo_db_pool_size Configured pool size.",
-            "# TYPE natiqo_db_pool_size gauge",
-            f"natiqo_db_pool_size {pool.size()}",
-            "# HELP natiqo_db_pool_overflow Current overflow beyond the pool size.",
-            "# TYPE natiqo_db_pool_overflow gauge",
-            f"natiqo_db_pool_overflow {pool.overflow()}",
-        ]
-        return lines
-    except Exception:  # noqa: BLE001 - a scrape must never fail because a gauge failed
-        return []
+        for role, engine in (("primary", database._engine), ("replica", database._read_engine)):
+            if engine is None:
+                continue
+            pool = engine.pool
+            for metric, method in (
+                ("checked_out", "checkedout"),
+                ("size", "size"),
+                ("overflow", "overflow"),
+            ):
+                try:
+                    value = getattr(pool, method)()
+                except Exception:  # noqa: BLE001, S112 - StaticPool has no size
+                    continue
+                lines.append(f"natiqo_db_pool_{metric}{{{_labels(role=role)}}} {value}")
+    except Exception:  # noqa: BLE001, S110 - a scrape must never fail because a gauge failed
+        pass
+    try:
+        from app.platform.ai.service import circuit_open
+
+        lines.append(f"natiqo_ai_circuit_open {1 if circuit_open() else 0}")
+    except Exception:  # noqa: BLE001, S110 - the AI module may not be loaded
+        pass
+    return lines
 
 
 def render_prometheus() -> str:
     """Render every series in the 0.0.4 text exposition format."""
     lines: list[str] = [
+        "# HELP natiqo_ai_circuit_open 1 when the AI provider breaker is open.",
+        "# TYPE natiqo_ai_circuit_open gauge",
+        "# HELP natiqo_db_pool_checked_out Connections currently checked out, per role.",
+        "# TYPE natiqo_db_pool_checked_out gauge",
+        "# HELP natiqo_db_pool_size Configured pool size, per role.",
+        "# TYPE natiqo_db_pool_size gauge",
+        "# HELP natiqo_db_pool_overflow Current overflow beyond the pool size, per role.",
+        "# TYPE natiqo_db_pool_overflow gauge",
         "# HELP natiqo_requests_in_flight Requests currently being served.",
         "# TYPE natiqo_requests_in_flight gauge",
         f"natiqo_requests_in_flight {max(_inflight, 0)}",
@@ -173,5 +186,5 @@ def render_prometheus() -> str:
             )
             lines.append(f"natiqo_http_request_duration_seconds_count{{{base}}} {histogram.count}")
 
-    lines.extend(_pool_lines())
+    lines.extend(_extra_gauges())
     return "\n".join(lines) + "\n"
