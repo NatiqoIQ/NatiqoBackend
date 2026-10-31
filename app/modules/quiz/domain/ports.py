@@ -82,6 +82,16 @@ class QuizSessionRepositoryPort(Protocol):
         """
         ...
 
+    async def purge_abandoned(self, *, before: datetime, limit: int = 5000) -> int:
+        """Delete unfinished sessions older than ``before`` that hold no answers.
+
+        A sitting someone opened and never answered is pure storage: no XP, no progress,
+        no history a client can read. Sessions with answers are kept regardless of age —
+        deleting them would move the admin accuracy and activity figures after the fact.
+        Returns the number of rows deleted, so the worker can loop until a short batch.
+        """
+        ...
+
 
 @runtime_checkable
 class QuizAnswerRepositoryPort(Protocol):

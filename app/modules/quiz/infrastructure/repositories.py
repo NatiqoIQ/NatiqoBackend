@@ -17,7 +17,7 @@ import uuid
 from collections.abc import Sequence
 from datetime import datetime
 
-from sqlalchemy import and_, case, func, or_, select
+from sqlalchemy import and_, case, delete, exists, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
@@ -63,6 +63,7 @@ from app.modules.quiz.infrastructure.models import (
 )
 
 _COMPLETED = SessionStatus.COMPLETED.value
+_ACTIVE = SessionStatus.ACTIVE.value
 
 
 def _completed_keyset_predicate(after: TimeCursor) -> ColumnElement[bool]:
@@ -154,6 +155,30 @@ class SqlAlchemyQuizSessionRepository(QuizSessionRepositoryPort):
             )
         )
         return int((await self._session.execute(stmt)).scalar_one())
+
+    async def purge_abandoned(self, *, before: datetime, limit: int = 5000) -> int:
+        """Delete old, unanswered, unfinished sessions in one statement.
+
+        ``NOT EXISTS`` rather than a join: a session with even one answer must survive, and
+        an anti-join states that as the deletion condition instead of a second query whose
+        result could go stale between the read and the delete.
+        """
+        answered = exists().where(QuizAnswerModel.session_id == QuizSessionModel.id)
+        #: Bounded by id so a huge backlog is deleted in batches rather than in one
+        #: long-running statement; the worker calls this until it returns a short batch.
+        doomed = (
+            select(QuizSessionModel.id)
+            .where(
+                QuizSessionModel.status == _ACTIVE,
+                QuizSessionModel.started_at < before,
+                ~answered,
+            )
+            .order_by(QuizSessionModel.started_at)
+            .limit(limit)
+        )
+        stmt = delete(QuizSessionModel).where(QuizSessionModel.id.in_(doomed))
+        result = await self._session.execute(stmt.execution_options(synchronize_session=False))
+        return int(result.rowcount or 0)
 
 
 class SqlAlchemyQuizAnswerRepository(QuizAnswerRepositoryPort):

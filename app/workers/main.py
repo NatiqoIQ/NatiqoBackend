@@ -190,7 +190,11 @@ async def schedule_daily_cleanup(
         today = clock()
         #: Two independent daily jobs. Both carry the date in their dedupe key, so a
         #: restart re-presents the same key instead of enqueueing the work twice.
-        for name in (JobName.CLEANUP_EXPIRED_TOKENS, JobName.PURGE_AI_USAGE):
+        for name in (
+            JobName.CLEANUP_EXPIRED_TOKENS,
+            JobName.PURGE_AI_USAGE,
+            JobName.PURGE_ABANDONED_SESSIONS,
+        ):
             if stop.is_set():
                 break
             job = Job(name=name, dedupe_key=f"{name}:{today.date().isoformat()}")
@@ -248,6 +252,7 @@ async def main() -> None:
             WorkerContext(
                 uow_factory=make_uow,
                 ai_usage_retention_days=settings.ai_usage_retention_days,
+                abandoned_session_retention_days=settings.abandoned_session_retention_days,
             )
         ),
     )

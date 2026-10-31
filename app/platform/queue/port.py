@@ -23,6 +23,7 @@ class JobName(StrEnum):
     PROCESS_ANALYTICS = "process_analytics"
     CLEANUP_EXPIRED_TOKENS = "cleanup_expired_tokens"
     PURGE_AI_USAGE = "purge_ai_usage"
+    PURGE_ABANDONED_SESSIONS = "purge_abandoned_sessions"
     PROCESS_AUDIO = "process_audio"
     AI_TASK = "ai_task"
     EVALUATE_ACHIEVEMENTS = "evaluate_achievements"

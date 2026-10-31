@@ -37,6 +37,8 @@ class WorkerContext:
     now: Callable[[], datetime] = utc_now
     #: How long AI usage rows are kept. Zero disables the purge.
     ai_usage_retention_days: int = 180
+    #: How long an unanswered, unfinished quiz session is kept. Zero disables the purge.
+    abandoned_session_retention_days: int = 7
 
 
 def build_handlers(ctx: WorkerContext) -> dict[JobName, JobHandler]:
@@ -49,6 +51,7 @@ def build_handlers(ctx: WorkerContext) -> dict[JobName, JobHandler]:
     return {
         JobName.CLEANUP_EXPIRED_TOKENS: _cleanup_expired_tokens(ctx),
         JobName.PURGE_AI_USAGE: _purge_ai_usage(ctx),
+        JobName.PURGE_ABANDONED_SESSIONS: _purge_abandoned_sessions(ctx),
     }
 
 
@@ -136,6 +139,48 @@ def _purge_ai_usage(ctx: WorkerContext) -> JobHandler:
             removed=total,
             older_than_days=ctx.ai_usage_retention_days,
             job_id=str(job.job_id),
+        )
+
+    return handle
+
+
+def _purge_abandoned_sessions(ctx: WorkerContext) -> JobHandler:
+    """Delete quiz sessions nobody answered and nobody finished.
+
+    An abandoned session is the row a learner leaves behind by tapping a lesson and
+    closing the app. It earns nothing and appears in no feed, but at a hundred thousand
+    learners it is a large share of ``quiz_sessions``. Sessions with answers are never
+    touched: their rows are the source of the activity and accuracy figures, and deleting
+    them later would rewrite history rather than reclaim space.
+    """
+
+    async def handle(job: Job) -> None:
+        days = ctx.abandoned_session_retention_days
+        if days <= 0:
+            logger.info("worker.abandoned_session_purge_disabled", job_id=str(job.job_id))
+            return
+        cutoff = ctx.now() - timedelta(days=days)
+        batch_size = 5000
+        max_batches = 200
+        total = 0
+        async with ctx.uow_factory() as uow:
+            for _ in range(max_batches):
+                removed = await uow.quiz_sessions.purge_abandoned(before=cutoff, limit=batch_size)
+                await uow.commit()
+                total += removed
+                if removed < batch_size:
+                    break
+            else:
+                logger.warning(
+                    "worker.abandoned_session_purge_truncated",
+                    job_id=str(job.job_id),
+                    removed=total,
+                )
+        logger.info(
+            "worker.abandoned_sessions_purged",
+            job_id=str(job.job_id),
+            removed=total,
+            retention_days=days,
         )
 
     return handle

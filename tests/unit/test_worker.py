@@ -20,6 +20,7 @@ import pytest
 
 from app.platform.queue.memory import InMemoryQueue
 from app.platform.queue.port import Job, JobName
+from app.workers.handlers import WorkerContext, build_handlers
 from app.workers.main import Worker, schedule_daily_cleanup
 
 pytestmark = pytest.mark.unit
@@ -210,3 +211,94 @@ async def test_a_poison_job_is_acknowledged_too() -> None:
     assert job is not None
     assert len(queue.acked) == 1
     assert handler.calls == 2
+
+
+class _ThreeJobQueue(InMemoryQueue):
+    """Records jobs and stops the scheduler once the whole daily trio is enqueued."""
+
+    def __init__(self, stop: asyncio.Event) -> None:
+        super().__init__()
+        self._stop = stop
+        self.jobs: list[Job] = []
+
+    async def enqueue(self, job: Job) -> bool:
+        accepted = await super().enqueue(job)
+        self.jobs.append(job)
+        if len(self.jobs) == 3:
+            self._stop.set()
+        return accepted
+
+
+@pytest.mark.asyncio
+async def test_the_scheduler_enqueues_every_daily_job() -> None:
+    stop = asyncio.Event()
+    queue = _ThreeJobQueue(stop)
+
+    await asyncio.wait_for(schedule_daily_cleanup(queue, stop=stop, clock=lambda: _NOW), timeout=2)
+
+    assert {job.name for job in queue.jobs} == {
+        JobName.CLEANUP_EXPIRED_TOKENS,
+        JobName.PURGE_AI_USAGE,
+        JobName.PURGE_ABANDONED_SESSIONS,
+    }
+    for job in queue.jobs:
+        assert job.dedupe_key == f"{job.name}:2026-10-19"
+
+
+class _FakeSessionRepo:
+    def __init__(self, removed: int) -> None:
+        self.calls: list[tuple[datetime, int]] = []
+        self._removed = removed
+
+    async def purge_abandoned(self, *, before: datetime, limit: int = 5000) -> int:
+        self.calls.append((before, limit))
+        return self._removed
+
+
+class _FakeUow:
+    def __init__(self, repo: _FakeSessionRepo) -> None:
+        self.quiz_sessions = repo
+        self.commits = 0
+
+    async def __aenter__(self) -> _FakeUow:
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        return None
+
+    async def commit(self) -> None:
+        self.commits += 1
+
+
+@pytest.mark.asyncio
+async def test_the_abandoned_session_handler_uses_the_configured_retention() -> None:
+    repo = _FakeSessionRepo(removed=3)
+    uow = _FakeUow(repo)
+    ctx = WorkerContext(
+        uow_factory=lambda: uow,
+        now=lambda: _NOW,
+        abandoned_session_retention_days=7,
+    )
+
+    await build_handlers(ctx)[JobName.PURGE_ABANDONED_SESSIONS](
+        Job(name=JobName.PURGE_ABANDONED_SESSIONS)
+    )
+
+    assert repo.calls == [(datetime(2026, 10, 12, 3, 0, 0), 5000)]
+    assert uow.commits == 1
+
+
+@pytest.mark.asyncio
+async def test_zero_retention_disables_the_purge() -> None:
+    repo = _FakeSessionRepo(removed=3)
+    ctx = WorkerContext(
+        uow_factory=lambda: _FakeUow(repo),
+        now=lambda: _NOW,
+        abandoned_session_retention_days=0,
+    )
+
+    await build_handlers(ctx)[JobName.PURGE_ABANDONED_SESSIONS](
+        Job(name=JobName.PURGE_ABANDONED_SESSIONS)
+    )
+
+    assert repo.calls == []

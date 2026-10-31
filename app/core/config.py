@@ -261,6 +261,7 @@ class Settings(BaseSettings):
     ai_daily_user_budget_usd: float = 0.50
     #: Days of AI usage kept for cost attribution. Zero disables the purge job.
     ai_usage_retention_days: int = 180
+    abandoned_session_retention_days: int = 7
     #: Bulkhead: the most upstream model calls one process will run at once. Beyond this
     #: the service falls back immediately instead of queueing behind a slow provider.
     ai_max_concurrent_requests: int = 20
