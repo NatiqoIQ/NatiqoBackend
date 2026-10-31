@@ -435,8 +435,14 @@ def get_admin_user_service(uow: UowDep) -> AdminUserService:
 AdminUserServiceDep = Annotated[AdminUserService, Depends(get_admin_user_service)]
 
 
-def get_admin_stats_service(uow: UowDep) -> AdminStatsService:
-    """Build a request-scoped :class:`AdminStatsService` on the request's unit of work."""
+def get_admin_stats_service(uow: ReadUowDep) -> AdminStatsService:
+    """Build a request-scoped :class:`AdminStatsService` on the replica when configured.
+
+    The dashboard is the heaviest read surface in the product — nineteen aggregates over
+    history — and it tolerates a second of lag by definition: nobody acts on a figure that
+    updates once a minute. Routing it here keeps that scan off the primary, where a learner
+    writing an answer is waiting.
+    """
     return AdminStatsService(uow)
 
 
