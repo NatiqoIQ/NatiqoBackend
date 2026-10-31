@@ -33,6 +33,11 @@ cluster)، وكل رقم فيها يجب أن يُتحقق منه في staging �
    ```
    الأفضل: External Secrets Operator أو CSI driver يزامن من Vault/AWS Secrets Manager،
    فيبقى السر خارج Git وخارج `kubectl` history.
+   يدعم التطبيق أيضاً السحب المباشر عند الإقلاع: `SECRETS_BACKEND=aws` +
+   `AWS_SECRET_ID` + `AWS_REGION` (متغيرات بيئة حقيقية لا `.env`)، وقيمة السر JSON
+   بأسماء متغيرات مثل `DATABASE_URL`/`REDIS_URL`/`JWT_SECRET`. تحتاج الـServiceAccount
+   صلاحية `secretsmanager:GetSecretValue` على ذلك السر فقط، وفشل السحب يمنع الإقلاع
+   عمداً بدل التشغيل بأسرار ناقصة.
 3. **PgBouncer**: اضبط `DATABASE_MAX_OVERFLOW` و`replicas` بحيث
    `replicas × (pool_size + max_overflow) ≤ max_db_connections × 0.8`. مع 24 نسخة و
    `10 + 5` هذا 360 اتصالاً — أكبر من غالبية قواعد البيانات المُدارة الصغيرة.
@@ -67,7 +72,8 @@ kubectl argo rollouts undo natiqo-api         # للـrevision السابق
 ## الحدود المعروفة
 
 - لا NetworkPolicy هنا؛ أضفها لتقييد الـegress إلى PostgreSQL/Redis/S3 فقط (P2-8).
-- لا WAF/DDoS؛ يبقى عند مزوّد الحافة (P1-1).
+- لا WAF/DDoS في هذه الملفات؛ القواعد والحدود المقترحة في `deploy/edge/README.ar.md`
+  وتُنفَّذ عند مزوّد الحافة (P1-1).
 - `readOnlyRootFilesystem` يحتاج `PYTHONDONTWRITEBYTECODE=1` وإلا ستحاول Python كتابة
   `__pycache__`؛ أضِفه إلى `env` إن لم يكن في الصورة.
 - التحليل يفترض أن Prometheus يعرف الـnamespace وأن `/metrics` محمي من الإنترنت.

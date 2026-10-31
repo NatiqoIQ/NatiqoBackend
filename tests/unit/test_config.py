@@ -176,3 +176,13 @@ class TestDevLoginCors:
         assert regex is not None
         assert re.fullmatch(regex, "https://pr-42.preview.natiqo.app")
         assert re.fullmatch(regex, "http://localhost:5173") is None
+
+
+class TestAccessTokenLifetime:
+    """F12: the default is a deliberate load decision, not an accident of a constant."""
+
+    def test_the_default_is_thirty_minutes(self) -> None:
+        assert build().access_token_ttl_seconds == 1800
+
+    def test_an_operator_can_still_choose_fifteen(self) -> None:
+        assert build(access_token_ttl_seconds=900).access_token_ttl_seconds == 900

@@ -287,7 +287,7 @@ is not optional.
 
 ### 4.3 Single-flight refresh — the non-negotiable rule
 
-Access tokens live **15 minutes** (`900` s). Several requests can fail with `401` at the
+Access tokens live **30 minutes** (`1800` s). Several requests can fail with `401` at the
 same moment (app resume, parallel screen loads). If each fires its own
 `POST /auth/refresh`:
 

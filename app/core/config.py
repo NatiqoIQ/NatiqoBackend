@@ -134,7 +134,11 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     jwt_issuer: str = "natiqo"
     jwt_audience: str = "natiqo-clients"
-    access_token_ttl_seconds: int = 900
+    #: Thirty minutes, not fifteen. Every refresh is a read-modify-write on
+    #: ``refresh_tokens``; halving the refresh rate halves that table's write load without
+    #: making a stolen token usable for longer than the revocation window the product
+    #: already accepts. Clients that want the old ceiling can still set it (F12).
+    access_token_ttl_seconds: int = 1800
     refresh_token_ttl_seconds: int = 2_592_000
 
     # ------------------------------------------------------- social sign-in
@@ -543,7 +547,14 @@ class Settings(BaseSettings):
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
-    """Cached settings accessor. Use this everywhere instead of module constants."""
+    """Cached settings accessor. Use this everywhere instead of module constants.
+
+    Secrets are bootstrapped here rather than in each entry point: a script that forgets
+    to call the loader would otherwise read an empty DSN and fail somewhere unrelated.
+    """
+    from app.core.secrets import bootstrap_secrets
+
+    bootstrap_secrets()
     return Settings()
 
 
