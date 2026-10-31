@@ -166,6 +166,9 @@ class QuizAnswerModel(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         # Question quality groups answers by question; without this the report scans every
         # graded answer ever written to count one question's history.
         Index("ix_quiz_answers_question", "question_id"),
+        # The daily rollup filters one day's answers; without a plain date index that
+        # recompute is a full scan of the largest append-only table in the schema.
+        Index("ix_quiz_answers_answered_at", "answered_at"),
     )
 
 

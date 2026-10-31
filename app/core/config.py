@@ -273,6 +273,9 @@ class Settings(BaseSettings):
     #: Days of AI usage kept for cost attribution. Zero disables the purge job.
     ai_usage_retention_days: int = 180
     abandoned_session_retention_days: int = 7
+    #: How many complete days the daily rollup recomputes. A re-answer can land after
+    #: midnight, so yesterday alone would leave a one-day hole in the dashboard.
+    metrics_rollup_lookback_days: int = 3
     #: Bulkhead: the most upstream model calls one process will run at once. Beyond this
     #: the service falls back immediately instead of queueing behind a slow provider.
     ai_max_concurrent_requests: int = 20

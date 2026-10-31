@@ -43,6 +43,7 @@ MODEL_MODULES: tuple[str, ...] = (
     #: ``admin`` last: its ``audit_logs`` table points at ``users.id``, which is registered
     #: above, and it owns no other table.
     "app.modules.admin.infrastructure.models",
+    "app.modules.admin.infrastructure.metrics_models",
 )
 
 

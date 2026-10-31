@@ -39,6 +39,8 @@ class WorkerContext:
     ai_usage_retention_days: int = 180
     #: How long an unanswered, unfinished quiz session is kept. Zero disables the purge.
     abandoned_session_retention_days: int = 7
+    #: How many complete days the dashboard rollup recomputes on each run. Zero disables it.
+    metrics_rollup_lookback_days: int = 3
 
 
 def build_handlers(ctx: WorkerContext) -> dict[JobName, JobHandler]:
@@ -52,6 +54,7 @@ def build_handlers(ctx: WorkerContext) -> dict[JobName, JobHandler]:
         JobName.CLEANUP_EXPIRED_TOKENS: _cleanup_expired_tokens(ctx),
         JobName.PURGE_AI_USAGE: _purge_ai_usage(ctx),
         JobName.PURGE_ABANDONED_SESSIONS: _purge_abandoned_sessions(ctx),
+        JobName.ROLLUP_DAILY_METRICS: _rollup_daily_metrics(ctx),
     }
 
 
@@ -95,9 +98,6 @@ def _cleanup_expired_tokens(ctx: WorkerContext) -> JobHandler:
         )
 
     return handle
-
-
-__all__ = ["UowFactory", "WorkerContext", "build_handlers"]
 
 
 def _purge_ai_usage(ctx: WorkerContext) -> JobHandler:
@@ -184,3 +184,48 @@ def _purge_abandoned_sessions(ctx: WorkerContext) -> JobHandler:
         )
 
     return handle
+
+
+def _rollup_daily_metrics(ctx: WorkerContext) -> JobHandler:
+    """Rebuild the dashboard's daily rollup for the last few complete days.
+
+    The rollup is what lets the overview stop scanning ``quiz_answers`` and
+    ``ai_usage_records`` end to end. Recomputing instead of incrementing is deliberate: a
+    late answer or a retried job can only make a day more correct, never double it.
+
+    Today is not rolled up; the dashboard reads it live, so a row that is one day behind is
+    never shown as the current day's total.
+    """
+
+    async def handle(job: Job) -> None:
+        lookback = max(ctx.metrics_rollup_lookback_days, 0)
+        if lookback == 0:
+            logger.info("metrics.rollup_disabled", job_id=str(job.job_id))
+            return
+        end = ctx.now().date() - timedelta(days=1)
+        start = end - timedelta(days=lookback - 1)
+        async with ctx.uow_factory() as uow:
+            # If the backfill has run, its marker also tells this job where the last
+            # complete day ends. A worker that was down for a week therefore recomputes
+            # the gap rather than the usual three days; without this, a long outage would
+            # leave a hole the marker then claims is covered.
+            coverage = await uow.daily_metrics.coverage()
+            backfilled_through = coverage[1]
+            if backfilled_through is not None:
+                start = min(start, backfilled_through + timedelta(days=1))
+            written = await uow.daily_metrics.recompute(start, end)
+            if backfilled_through is not None:
+                await uow.daily_metrics.advance(end)
+            await uow.commit()
+        logger.info(
+            "metrics.rollup_written",
+            start=start.isoformat(),
+            end=end.isoformat(),
+            days=written,
+            job_id=str(job.job_id),
+        )
+
+    return handle
+
+
+__all__ = ["UowFactory", "WorkerContext", "build_handlers"]

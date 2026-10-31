@@ -194,6 +194,7 @@ async def schedule_daily_cleanup(
             JobName.CLEANUP_EXPIRED_TOKENS,
             JobName.PURGE_AI_USAGE,
             JobName.PURGE_ABANDONED_SESSIONS,
+            JobName.ROLLUP_DAILY_METRICS,
         ):
             if stop.is_set():
                 break
@@ -253,6 +254,7 @@ async def main() -> None:
                 uow_factory=make_uow,
                 ai_usage_retention_days=settings.ai_usage_retention_days,
                 abandoned_session_retention_days=settings.abandoned_session_retention_days,
+                metrics_rollup_lookback_days=settings.metrics_rollup_lookback_days,
             )
         ),
     )

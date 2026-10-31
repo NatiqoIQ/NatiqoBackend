@@ -43,6 +43,14 @@ cluster)، وكل رقم فيها يجب أن يُتحقق منه في staging �
    kubectl apply -f deploy/k8s/migrate-job.yaml
    kubectl wait --for=condition=complete job/natiqo-migrate --timeout=10m
    ```
+   **بعد الترحيل، مرة واحدة فقط:** شغّل Backfill لجدول `daily_metrics` بنفس صورة
+   التطبيق ونفس env (يمكن pod مؤقت أو `kubectl exec` في pod API):
+   ```bash
+   python -m scripts.backfill_daily_metrics --dry-run   # يطبع النطاق فقط
+   python -m scripts.backfill_daily_metrics             # يكتب ثم يفعّل الـRollup
+   ```
+   قبل انتهائه تبقى لوحة الإدارة على الاستعلامات القديمة (صحيحة لكن أبطأ). إن أردت
+   تأجيل التفعيل: `--no-mark`. أعد تشغيل نفس الأمر بعد أي انقطاع؛ كل دفعة idempotent.
 5. **النشر**: `kubectl argo rollouts get rollout natiqo-api --watch`، ثم
    `kubectl argo rollouts promote natiqo-api` بعد كل خطوة إن لم تُضبط الخطوات الآلية.
 

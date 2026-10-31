@@ -25,13 +25,14 @@ in SQL keeps a year of history from ever becoming a year of rows in the service.
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
 from typing import Any, cast
 
 from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.time import utc_now
 from app.core.types import ContentState, QuestionKind, SkillKind, UserStatus
 from app.modules.admin.domain.stats import (
     AdminOverview,
@@ -41,6 +42,7 @@ from app.modules.admin.domain.stats import (
     PerformanceTotals,
     QuestionCounts,
 )
+from app.modules.admin.infrastructure.daily_metrics import DailyMetricsRepository, RollupTotals
 from app.modules.ai.infrastructure.models import AiConversationModel, AiUsageRecord
 from app.modules.content.infrastructure.models import (
     LessonModel,
@@ -99,8 +101,16 @@ def _day(value: Any) -> date:
 class SqlAlchemyAdminStatsRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
+        self._daily = DailyMetricsRepository(session)
 
     async def overview(self, *, since: datetime) -> AdminOverview:
+        #: The rollup is used only once an operator has backfilled it. Until then every
+        #: figure below comes from the live queries, so a half-written rollup can never
+        #: silently under-report history.
+        today = utc_now().date()
+        today_start = datetime.combine(today, time.min, tzinfo=UTC)
+        rolled = await self._daily.totals_before(today) if await self._daily.ready() else None
+
         users = (
             await self._session.execute(
                 select(
@@ -117,25 +127,46 @@ class SqlAlchemyAdminStatsRepository:
             )
         )
 
-        sessions = (
-            await self._session.execute(
-                select(
-                    func.sum(
-                        case(
-                            (QuizSessionModel.status == SessionStatus.COMPLETED.value, 1),
-                            else_=0,
-                        )
-                    ),
-                    func.sum(
-                        case(
-                            (QuizSessionModel.status == SessionStatus.ACTIVE.value, 1),
-                            else_=0,
-                        )
-                    ),
-                    func.sum(QuizSessionModel.xp_awarded),
+        if rolled is None:
+            sessions = (
+                await self._session.execute(
+                    select(
+                        func.sum(
+                            case(
+                                (QuizSessionModel.status == SessionStatus.COMPLETED.value, 1),
+                                else_=0,
+                            )
+                        ),
+                        func.sum(
+                            case(
+                                (QuizSessionModel.status == SessionStatus.ACTIVE.value, 1),
+                                else_=0,
+                            )
+                        ),
+                        func.sum(QuizSessionModel.xp_awarded),
+                    )
                 )
+            ).one()
+        else:
+            active_sessions = await self._session.scalar(
+                select(func.count()).where(QuizSessionModel.status == SessionStatus.ACTIVE.value)
             )
-        ).one()
+            today_sessions = (
+                await self._session.execute(
+                    select(
+                        func.count(),
+                        func.sum(QuizSessionModel.xp_awarded),
+                    ).where(
+                        QuizSessionModel.status == SessionStatus.COMPLETED.value,
+                        QuizSessionModel.completed_at >= today_start,
+                    )
+                )
+            ).one()
+            sessions = (
+                rolled.sessions_completed + _int(today_sessions[0]),
+                _int(active_sessions),
+                rolled.xp_awarded + _int(today_sessions[1]),
+            )
 
         completed_lessons = await self._session.scalar(
             select(func.count(LessonProgressModel.id)).where(
@@ -143,14 +174,28 @@ class SqlAlchemyAdminStatsRepository:
             )
         )
 
-        answers = (
-            await self._session.execute(
-                select(
-                    func.count(QuizAnswerModel.id),
-                    func.sum(case((QuizAnswerModel.is_correct, 1), else_=0)),
+        if rolled is None:
+            answers = (
+                await self._session.execute(
+                    select(
+                        func.count(QuizAnswerModel.id),
+                        func.sum(case((QuizAnswerModel.is_correct, 1), else_=0)),
+                    )
                 )
+            ).one()
+        else:
+            today_answers = (
+                await self._session.execute(
+                    select(
+                        func.count(QuizAnswerModel.id),
+                        func.sum(case((QuizAnswerModel.is_correct, 1), else_=0)),
+                    ).where(QuizAnswerModel.answered_at >= today_start)
+                )
+            ).one()
+            answers = (
+                rolled.answers_graded + _int(today_answers[0]),
+                rolled.correct_answers + _int(today_answers[1]),
             )
-        ).one()
 
         levels, level_drafts, level_review, _ = await self._content_counts(LevelModel)
         units, unit_drafts, unit_review, _ = await self._content_counts(UnitModel)
@@ -158,10 +203,10 @@ class SqlAlchemyAdminStatsRepository:
             LessonModel
         )
         questions = await self._question_counts()
-        performance = await self._performance_totals()
+        performance = await self._performance_totals(rolled=rolled, today_start=today_start)
         gamification = await self._gamification_totals()
-        ai = await self._ai_totals()
-        activity = await self._activity(since=since)
+        ai = await self._ai_totals(rolled=rolled, today_start=today_start)
+        activity = await self._activity(since=since, rolled=rolled, today_start=today_start)
 
         return AdminOverview(
             users_total=_int(users[0]),
@@ -244,7 +289,9 @@ class SqlAlchemyAdminStatsRepository:
             by_skill=by_skill,
         )
 
-    async def _performance_totals(self) -> PerformanceTotals:
+    async def _performance_totals(
+        self, *, rolled: RollupTotals | None, today_start: datetime
+    ) -> PerformanceTotals:
         """Grades and review quality, as the sums the service divides."""
         progress = (
             await self._session.execute(
@@ -255,22 +302,39 @@ class SqlAlchemyAdminStatsRepository:
             )
         ).one()
 
-        reviews = (
-            await self._session.execute(
-                select(
-                    func.count(ReviewLogModel.id),
-                    func.sum(case((ReviewLogModel.quality >= PASSING_QUALITY, 1), else_=0)),
-                    func.sum(ReviewLogModel.quality),
+        if rolled is None:
+            reviews = (
+                await self._session.execute(
+                    select(
+                        func.count(ReviewLogModel.id),
+                        func.sum(case((ReviewLogModel.quality >= PASSING_QUALITY, 1), else_=0)),
+                        func.sum(ReviewLogModel.quality),
+                    )
                 )
-            )
-        ).one()
+            ).one()
+            reviews_total = _int(reviews[0])
+            reviews_passed = _int(reviews[1])
+            quality_total = _int(reviews[2])
+        else:
+            today_reviews = (
+                await self._session.execute(
+                    select(
+                        func.count(ReviewLogModel.id),
+                        func.sum(case((ReviewLogModel.quality >= PASSING_QUALITY, 1), else_=0)),
+                        func.sum(ReviewLogModel.quality),
+                    ).where(ReviewLogModel.reviewed_at >= today_start)
+                )
+            ).one()
+            reviews_total = rolled.reviews_total + _int(today_reviews[0])
+            reviews_passed = rolled.reviews_passed + _int(today_reviews[1])
+            quality_total = rolled.quality_total + _int(today_reviews[2])
 
         return PerformanceTotals(
             rated_lessons=_int(progress[0]),
             score_total=_int(progress[1]),
-            reviews_total=_int(reviews[0]),
-            reviews_passed=_int(reviews[1]),
-            quality_total=_int(reviews[2]),
+            reviews_total=reviews_total,
+            reviews_passed=reviews_passed,
+            quality_total=quality_total,
         )
 
     async def _gamification_totals(self) -> GamificationTotals:
@@ -293,36 +357,65 @@ class SqlAlchemyAdminStatsRepository:
             achievements_unlocked=_int(unlocks),
         )
 
-    async def _ai_totals(self) -> AiTotals:
+    async def _ai_totals(self, *, rolled: RollupTotals | None, today_start: datetime) -> AiTotals:
         """Lifetime metering: what the AI features have cost, and how often they failed."""
-        usage = (
-            await self._session.execute(
-                select(
-                    func.count(AiUsageRecord.id),
-                    func.sum(case((AiUsageRecord.status != _AI_OK, 1), else_=0)),
-                    func.sum(AiUsageRecord.input_tokens + AiUsageRecord.output_tokens),
-                    func.sum(AiUsageRecord.cost_usd),
+        if rolled is None:
+            usage = (
+                await self._session.execute(
+                    select(
+                        func.count(AiUsageRecord.id),
+                        func.sum(case((AiUsageRecord.status != _AI_OK, 1), else_=0)),
+                        func.sum(AiUsageRecord.input_tokens + AiUsageRecord.output_tokens),
+                        func.sum(AiUsageRecord.cost_usd),
+                    )
                 )
-            )
-        ).one()
-        conversations = await self._session.scalar(select(func.count(AiConversationModel.id)))
+            ).one()
+            requests = _int(usage[0])
+            errors = _int(usage[1])
+            tokens = _int(usage[2])
+            cost = usage[3]
+        else:
+            today_usage = (
+                await self._session.execute(
+                    select(
+                        func.count(AiUsageRecord.id),
+                        func.sum(case((AiUsageRecord.status != _AI_OK, 1), else_=0)),
+                        func.sum(AiUsageRecord.input_tokens + AiUsageRecord.output_tokens),
+                        func.sum(AiUsageRecord.cost_usd),
+                    ).where(AiUsageRecord.created_at >= today_start)
+                )
+            ).one()
+            requests = rolled.ai_requests + _int(today_usage[0])
+            errors = rolled.ai_errors + _int(today_usage[1])
+            tokens = rolled.ai_tokens + _int(today_usage[2])
+            cost = rolled.ai_cost_usd + (today_usage[3] or Decimal("0"))
 
-        cost = usage[3]
+        conversations = await self._session.scalar(select(func.count(AiConversationModel.id)))
         return AiTotals(
-            requests=_int(usage[0]),
-            errors=_int(usage[1]),
-            tokens=_int(usage[2]),
+            requests=requests,
+            errors=errors,
+            tokens=tokens,
             cost_usd=float(cost) if isinstance(cost, Decimal) else _float(cost),
             conversations=_int(conversations),
         )
 
-    async def _activity(self, *, since: datetime) -> tuple[DailyActivity, ...]:
+    async def _activity(
+        self,
+        *,
+        since: datetime,
+        rolled: RollupTotals | None,
+        today_start: datetime,
+    ) -> tuple[DailyActivity, ...]:
         """Days inside the window that saw *something*, ascending.
 
-        Three grouped reads — accounts, completed sessions, metered AI calls — folded into
-        one row per day that has data. Days with no data at all are absent here on purpose:
+        Three sources — accounts, completed sessions, metered AI calls — folded into one
+        row per day that has data. Days with no data at all are absent here on purpose:
         filling them is the use case's job, because only it knows where the window starts
         and ends.
+
+        Accounts stay live even with the rollup: a deleted account must stop counting, and
+        the rollup cannot know that. Sessions and AI calls are immutable, so they come from
+        the daily rows, with today (still running) read live and added on top.
         """
         user_days = await self._grouped_day_counts(
             select(func.date(UserModel.created_at), func.count())
@@ -330,27 +423,54 @@ class SqlAlchemyAdminStatsRepository:
             .group_by(func.date(UserModel.created_at))
         )
 
-        session_rows = (
-            await self._session.execute(
-                select(
-                    func.date(QuizSessionModel.completed_at),
-                    func.count(),
-                    func.sum(QuizSessionModel.xp_awarded),
+        today = today_start.date()
+        if rolled is None:
+            session_rows = (
+                await self._session.execute(
+                    select(
+                        func.date(QuizSessionModel.completed_at),
+                        func.count(),
+                        func.sum(QuizSessionModel.xp_awarded),
+                    )
+                    .where(
+                        QuizSessionModel.status == SessionStatus.COMPLETED.value,
+                        QuizSessionModel.completed_at >= since,
+                    )
+                    .group_by(func.date(QuizSessionModel.completed_at))
                 )
-                .where(
-                    QuizSessionModel.status == SessionStatus.COMPLETED.value,
-                    QuizSessionModel.completed_at >= since,
-                )
-                .group_by(func.date(QuizSessionModel.completed_at))
+            ).all()
+            session_days = {_day(day): (_int(count), _int(xp)) for day, count, xp in session_rows}
+            ai_days = await self._grouped_day_counts(
+                select(func.date(AiUsageRecord.created_at), func.count())
+                .where(AiUsageRecord.created_at >= since)
+                .group_by(func.date(AiUsageRecord.created_at))
             )
-        ).all()
-        session_days = {_day(day): (_int(count), _int(xp)) for day, count, xp in session_rows}
+        else:
+            history = await self._daily.days(since.date(), today - timedelta(days=1))
+            session_days = {
+                day: (values.sessions_completed, values.xp_awarded)
+                for day, values in history.items()
+            }
+            ai_days = {day: values.ai_requests for day, values in history.items()}
 
-        ai_days = await self._grouped_day_counts(
-            select(func.date(AiUsageRecord.created_at), func.count())
-            .where(AiUsageRecord.created_at >= since)
-            .group_by(func.date(AiUsageRecord.created_at))
-        )
+            today_sessions = (
+                await self._session.execute(
+                    select(
+                        func.count(),
+                        func.sum(QuizSessionModel.xp_awarded),
+                    ).where(
+                        QuizSessionModel.status == SessionStatus.COMPLETED.value,
+                        QuizSessionModel.completed_at >= today_start,
+                    )
+                )
+            ).one()
+            if today_sessions[0]:
+                session_days[today] = (_int(today_sessions[0]), _int(today_sessions[1]))
+            today_ai = await self._session.scalar(
+                select(func.count()).where(AiUsageRecord.created_at >= today_start)
+            )
+            if today_ai:
+                ai_days[today] = _int(today_ai)
 
         days = sorted(user_days.keys() | session_days.keys() | ai_days.keys())
         return tuple(
