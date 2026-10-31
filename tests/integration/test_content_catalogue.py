@@ -33,7 +33,12 @@ from app.core.pagination import (
 from app.core.registry import import_all_models
 from app.core.types import CEFRLevel, ContentId, ContentState, QuestionKind, SkillKind
 from app.core.uow_sqlalchemy import SqlAlchemyUnitOfWork
-from app.modules.content.application.catalogue_service import CatalogueService
+from app.modules.content.application.catalogue_service import (
+    CatalogueService,
+    invalidate_tree,
+    tree_cache_key,
+    tree_generation_key,
+)
 from app.modules.content.infrastructure.models import (
     LessonModel,
     LevelModel,
@@ -811,6 +816,76 @@ async def test_concurrent_misses_rebuild_the_tree_once(
     assert len(statements) == 4, "only the first caller may touch the database"
     assert all(tree == trees[0] for tree in trees)
     assert trees[0][0].units[0].lessons[0].title == "Greetings"
+
+
+@pytest.mark.asyncio
+async def test_an_admin_invalidation_forces_the_next_read_to_rebuild(
+    uow: SqlAlchemyUnitOfWork, session: AsyncSession
+) -> None:
+    """Publishing must be visible on the next request, not after the TTL.
+
+    The admin router calls ``invalidate_tree`` after a successful write. Deleting the
+    document is the visible half; bumping the generation is the half that protects it
+    from an in-flight builder writing the old tree back.
+    """
+    from app.platform.cache.memory import InMemoryCache
+
+    level = _level_row(session, code="A1", position=1)
+    unit = _unit_row(session, level.id, position=1)
+    lesson = _lesson_row(session, unit.id, position=1)
+    await session.commit()
+
+    cache = InMemoryCache()
+    service = CatalogueService(uow, cache, ttl_seconds=60)
+    first = await service.tree()
+    assert first[0].units[0].lessons[0].title == "Greetings"
+
+    lesson.title = "Goodbyes"
+    await session.commit()
+    assert (await service.tree())[0].units[0].lessons[0].title == "Greetings"
+
+    await invalidate_tree(cache)
+    assert await cache.get(tree_cache_key(cache)) is None
+    assert int(await cache.get(tree_generation_key(cache)) or 0) == 1
+
+    fresh = await service.tree()
+    assert fresh[0].units[0].lessons[0].title == "Goodbyes"
+
+
+@pytest.mark.asyncio
+async def test_a_build_that_finishes_after_an_invalidation_is_not_stored(
+    uow: SqlAlchemyUnitOfWork, session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The delete-then-store race must not resurrect the pre-edit tree.
+
+    A request that began building before an editor published can finish afterwards. It
+    may return its (possibly stale) result to its own caller, but storing it would make
+    every later request stale for a full TTL. The generation check makes the builder
+    drop its write instead.
+    """
+    from app.platform.cache.memory import InMemoryCache
+
+    level = _level_row(session, code="A1", position=1)
+    unit = _unit_row(session, level.id, position=1)
+    lesson = _lesson_row(session, unit.id, position=1)
+    _question_row(session, lesson.id)
+    await session.commit()
+
+    cache = InMemoryCache()
+    service = CatalogueService(uow, cache, ttl_seconds=60)
+    original_build = service._build_tree
+
+    async def build_then_publish() -> object:
+        tree = await original_build()
+        await invalidate_tree(cache)
+        return tree
+
+    monkeypatch.setattr(service, "_build_tree", build_then_publish)
+
+    tree = await service.tree()
+
+    assert tree[0].units[0].lessons[0].title == "Greetings"
+    assert await cache.get(tree_cache_key(cache)) is None, "a stale build must not be stored"
 
 
 @pytest.mark.asyncio

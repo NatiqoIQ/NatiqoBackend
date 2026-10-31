@@ -35,7 +35,7 @@ from app.modules.admin.application.flags_service import FeatureFlagService
 from app.modules.admin.application.stats_service import AdminStatsService
 from app.modules.admin.application.users_service import AdminUserService
 from app.modules.ai.application.tutor_service import AiTutorService
-from app.modules.content.application.catalogue_service import CatalogueService, tree_cache_key
+from app.modules.content.application.catalogue_service import CatalogueService, invalidate_tree
 from app.modules.gamification.application.handlers import build_gamification_bus
 from app.modules.gamification.application.service import GamificationService
 from app.modules.media.application.service import MediaService
@@ -391,7 +391,7 @@ async def invalidate_catalogue_tree(request: Request, cache: CacheDep) -> AsyncI
     if not request.url.path.startswith("/api/v1/admin/content"):
         return
     try:
-        await cache.delete(tree_cache_key(cache))
+        await invalidate_tree(cache)
     except Exception as exc:  # noqa: BLE001 - TTL is the backstop
         logger.warning("catalogue.cache_invalidate_failed", error=str(exc)[:200])
 

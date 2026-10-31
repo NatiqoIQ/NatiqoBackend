@@ -70,6 +70,29 @@ def tree_cache_key(cache: CachePort) -> str:
     return cache.build_key("catalogue", "tree", _TREE_CACHE_VERSION)
 
 
+def tree_generation_key(cache: CachePort) -> str:
+    """Monotonic counter bumped by every admin write that invalidates the tree.
+
+    Deleting the key alone leaves a race: a request that started rebuilding just before
+    the delete can finish afterwards and write the pre-edit tree back, which then lives
+    for the whole TTL. A builder captures this counter before reading and checks it
+    again before storing; if an editor bumped it in between, the builder returns its
+    result to its own caller but does not cache it. The next request rebuilds from the
+    committed state.
+    """
+    return cache.build_key("catalogue", "tree", "generation")
+
+
+async def invalidate_tree(cache: CachePort) -> None:
+    """Drop the cached tree and bump the generation that guards against stale writes.
+
+    Order matters: delete first so readers stop seeing the old document immediately,
+    then bump so an in-flight builder knows not to put it back.
+    """
+    await cache.delete(tree_cache_key(cache))
+    await cache.increment(tree_generation_key(cache))
+
+
 def _key(row: Level | Unit | Lesson) -> tuple[int, uuid.UUID]:
     return (row.position, row.id)
 
@@ -86,6 +109,7 @@ class CatalogueService:
         self._cache = cache
         self._ttl_seconds = ttl_seconds
         self._tree_key = tree_cache_key(cache) if cache is not None else ""
+        self._generation_key = tree_generation_key(cache) if cache is not None else ""
 
     # ------------------------------------------------------------------ levels
     async def list_levels(self, *, limit: int, cursor: str | None = None) -> PageResult[LevelView]:
@@ -237,7 +261,16 @@ class CatalogueService:
             cached = await self._cached_tree()
             if cached is not None:
                 return cached
+            generation = await self._tree_generation()
             tree = await self._build_tree()
+            if generation is None:
+                # The generation key could not be read, so there is no way to prove this
+                # build is still current. Serving it is fine; caching it is not.
+                logger.warning("catalogue.tree_store_skipped", reason="generation_unreadable")
+                return tree
+            if await self._tree_generation() != generation:
+                logger.info("catalogue.tree_store_skipped", reason="invalidated_during_build")
+                return tree
             await self._store_tree(tree)
             return tree
 
@@ -322,6 +355,20 @@ class CatalogueService:
             # A payload written by an older shape, or a truncated value. Rebuilding is
             # cheap and correct; serving half a tree is neither.
             logger.warning("catalogue.cache_payload_invalid")
+            return None
+
+    async def _tree_generation(self) -> int | None:
+        """The current invalidation counter, or ``None`` when the cache cannot tell us."""
+        try:
+            raw = await self._cache.get(self._generation_key) if self._cache else None
+            return int(raw or 0)
+        except (TypeError, ValueError):
+            # A payload written by something else. Treat it as generation zero rather
+            # than refusing to cache forever; the next invalidation rewrites it.
+            logger.warning("catalogue.generation_payload_invalid")
+            return 0
+        except Exception as exc:  # noqa: BLE001 - the cache is optional
+            logger.warning("catalogue.generation_read_failed", error=str(exc)[:200])
             return None
 
     async def _store_tree(self, tree: tuple[LevelNodeView, ...]) -> None:
