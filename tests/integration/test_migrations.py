@@ -48,6 +48,7 @@ EXPECTED_TABLES = {
     "ai_messages",
     "ai_usage_records",
     "audit_logs",
+    "feature_flags",
     "lesson_progress",
     "lessons",
     "levels",

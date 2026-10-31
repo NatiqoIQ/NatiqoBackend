@@ -111,6 +111,7 @@ class Settings(BaseSettings):
     #: purpose: publishing is rare but an editor expects to see it, and 30s of staleness
     #: costs one rebuild while a longer TTL would make "I published it" look broken.
     catalogue_cache_ttl_seconds: int = 30
+    flags_cache_ttl_seconds: int = 30
     queue_enabled: bool = False
 
     # ----------------------------------------------------------- security

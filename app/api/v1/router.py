@@ -11,6 +11,10 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
+from app.modules.admin.presentation.flags_routes import (
+    admin_router as admin_flags_router,
+    public_router as flags_router,
+)
 from app.modules.admin.presentation.routes import router as admin_router
 from app.modules.ai.presentation.routes import router as ai_router
 from app.modules.content.presentation.routes import router as content_router
@@ -64,6 +68,11 @@ api_router.include_router(gamification_router, tags=["gamification"])
 #: ``/content/...`` and ``/users`` paths beneath that prefix, and writes an audit row for
 #: every mutation.
 api_router.include_router(admin_router, prefix="/admin", tags=["admin"])
+
+#: Feature flags. The public read is authenticated and returns only flags marked public,
+#: already evaluated for the caller; the admin surface under ``/admin/flags`` owns writes.
+api_router.include_router(flags_router, prefix="/flags", tags=["flags"])
+api_router.include_router(admin_flags_router, prefix="/admin/flags", tags=["admin"])
 
 #: The media surface. Authenticated and mounted under its own ``/media`` prefix: presign
 #: mints a write grant, confirm verifies the upload landed and records its metadata, and the

@@ -20,12 +20,13 @@ from typing import Annotated
 from fastapi import Depends, Request
 
 from app.core.config import Settings, get_settings
-from app.core.database import make_read_uow, make_uow
+from app.core.database import get_session_factory, make_read_uow, make_uow
 from app.core.errors import RateLimitedError
 from app.core.events import InProcessEventBus
 from app.core.logging import get_logger
 from app.core.uow_sqlalchemy import SqlAlchemyUnitOfWork
 from app.modules.admin.application.content_service import AdminContentService
+from app.modules.admin.application.flags_service import FeatureFlagService
 from app.modules.admin.application.stats_service import AdminStatsService
 from app.modules.admin.application.users_service import AdminUserService
 from app.modules.ai.application.tutor_service import AiTutorService
@@ -336,6 +337,24 @@ def get_catalogue_service(
 
 
 CatalogueServiceDep = Annotated[CatalogueService, Depends(get_catalogue_service)]
+
+
+# ------------------------------------------------------------------- feature flags
+def get_feature_flag_service(cache: CacheDep, settings: SettingsDep) -> FeatureFlagService:
+    """Flags use their own short session: they are configuration, not request data.
+
+    Sharing the request's unit of work would tie a cached, cross-request read to one
+    learner's transaction, and a flag write happens from the admin surface where there
+    may be no learner at all.
+    """
+    return FeatureFlagService(
+        get_session_factory(),
+        cache,
+        ttl_seconds=settings.flags_cache_ttl_seconds,
+    )
+
+
+FeatureFlagServiceDep = Annotated[FeatureFlagService, Depends(get_feature_flag_service)]
 
 
 async def invalidate_catalogue_tree(request: Request, cache: CacheDep) -> AsyncIterator[None]:
