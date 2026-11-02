@@ -38,6 +38,34 @@ class RedisCache:
         logger.info("cache.redis_initialised")
         return cls(client, namespace)
 
+    @classmethod
+    def from_sentinel(
+        cls,
+        urls: list[str],
+        *,
+        master: str,
+        socket_timeout: float = 0.5,
+        namespace: str = "natiqo",
+    ) -> RedisCache:
+        """Build against a Sentinel-managed master.
+
+        The sentinels are where the master's *address* lives, not the data: every
+        connection resolves the current master at connect time, so a failover costs a
+        reconnect on the next health-check interval rather than a redeploy. Stale
+        reads right after a promotion raise internally and the caller already treats a
+        cache error as a miss, so no extra state survives the failover.
+        """
+        from redis.asyncio.sentinel import Sentinel
+
+        sentinel = Sentinel(
+            urls,
+            socket_timeout=socket_timeout,
+            socket_connect_timeout=socket_timeout,
+        )
+        client = sentinel.master_for(master, socket_timeout=socket_timeout)
+        logger.info("cache.redis_sentinel_initialised", master=master, nodes=len(urls))
+        return cls(client, namespace)
+
     def build_key(self, *parts: str) -> str:
         return ":".join([self._namespace, *(p for p in parts if p)])
 

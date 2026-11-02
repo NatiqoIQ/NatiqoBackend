@@ -4,8 +4,8 @@
 # (app/core/metrics.py). That constraint is deliberate: an alert on a metric nobody
 # emits is worse than no alert, because it looks like coverage.
 #
-# Tune the thresholds against the Phase 0 baseline (docs/system-design-scaling-plan-ar.md
-# §10). They are set for the 2,000 RPS design target, not for today's traffic.
+# Tune the thresholds against a measured baseline. They are set for the 2,000 RPS design
+# target, not for today's traffic.
 
 groups:
   - name: natiqo-availability

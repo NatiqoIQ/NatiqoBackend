@@ -300,11 +300,8 @@ route is added without one.
 
 Client-facing documentation:
 
-- **[System design and scaling plan (Arabic)](docs/system-design-scaling-plan-ar.md)** —
-  the capacity model, the phased backlog, and the evidence for every item already shipped.
 - **[Mobile app architecture](docs/mobile-app-architecture.md)** — how the client is
   organised around this API.
-- **[Runbooks](docs/runbooks/)** — backup/restore and operational procedures.
 - `GET /openapi.json` — machine-readable schema for client generation. Every versioned
   operation publishes the real `{ "error": { code, message, details, requestId } }`
   envelope for 400/401/403/404/409/422/429/500, so generated clients match the wire.

@@ -25,7 +25,7 @@
 | `NatiqoTooManyRateLimits` | نسبة 429 > 5% لعشر دقائق | warning |
 | `NatiqoTrafficAboveDesign` | > 2,000 RPS مستمرة | warning |
 
-العتبات مضبوطة على هدف التصميم (2,000 RPS)، لا على حمل اليوم. راجعها بعد أول Baseline في `docs/system-design-scaling-plan-ar.md` §10.
+العتبات مضبوطة على هدف التصميم (2,000 RPS)، لا على حمل اليوم. راجعها بعد أول Baseline حقيقي.
 
 ## تشغيل محلي سريع
 

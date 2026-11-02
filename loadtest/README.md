@@ -55,8 +55,7 @@ k6 run loadtest/k6/natiqo-mixed.js \
   -e DURATION=30m
 ```
 
-Pass criteria are in the script's `thresholds` and in
-[`docs/system-design-scaling-plan-ar.md`](../docs/system-design-scaling-plan-ar.md) §10.
+Pass criteria are the `thresholds` block inside `loadtest/k6/natiqo-mixed.js`.
 
 ## 4. What to watch while it runs
 

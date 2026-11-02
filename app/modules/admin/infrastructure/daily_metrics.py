@@ -71,16 +71,21 @@ class DailyMetricsRepository:
         self._session = session
 
     # ------------------------------------------------------------------ rollout gate
-    async def ready(self) -> bool:
+    async def ready(self, *, today: date | None = None) -> bool:
         """Whether the rollup covers every complete day up to yesterday.
 
         A missing marker means the backfill has not been run. Until it has, callers must
         use the live queries: a partial rollup under-reports history without failing.
+
+        ``today`` is injectable because "yesterday" is a property of the caller's clock,
+        not of the process's: a worker replays with ``ctx.now()`` and a test with a frozen
+        date, and an answer that read the wall clock instead would make the question
+        unanswerable in both.
         """
         meta = await self._session.get(MetricsMetaModel, 1)
         if meta is None or meta.backfilled_through is None:
             return False
-        return meta.backfilled_through >= utc_now().date() - timedelta(days=1)
+        return meta.backfilled_through >= (today or utc_now().date()) - timedelta(days=1)
 
     async def coverage(self) -> tuple[date | None, date | None]:
         meta = await self._session.get(MetricsMetaModel, 1)

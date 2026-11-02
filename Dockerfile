@@ -62,4 +62,11 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=25s --retries=3 \
 # it every request appears to come from the proxy's address, and the rate limiter — and
 # every audit log — sees one client. ``--forwarded-allow-ips`` is limited to the private
 # ranges a load balancer lives in, not '*', so a direct client cannot forge the header.
-CMD ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips '10.0.0.0/8,172.16.0.0/12,192.168.0.0/16' --workers ${WEB_CONCURRENCY:-2} --timeout-keep-alive 75 --timeout-graceful-shutdown 20"]
+#
+# ``--limit-concurrency`` is the load shedder the database timeouts cannot provide: past
+# 400 in-flight requests uvicorn answers 503 immediately instead of queueing work that
+# would only wait for a pooled connection. ``--backlog`` is the kernel-side half of the
+# same decision — a burst that cannot be served is refused at the socket rather than
+# accepted and timed out. Both are above the p99 of a healthy instance by design; lower
+# them only against a measured baseline.
+CMD ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips '10.0.0.0/8,172.16.0.0/12,192.168.0.0/16' --workers ${WEB_CONCURRENCY:-2} --limit-concurrency 400 --backlog 2048 --timeout-keep-alive 75 --timeout-graceful-shutdown 20"]

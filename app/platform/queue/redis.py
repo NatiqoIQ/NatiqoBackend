@@ -83,6 +83,34 @@ class RedisQueue:
         logger.info("queue.redis_initialised")
         return cls(client, visibility_seconds=visibility_seconds)
 
+    @classmethod
+    def from_sentinel(
+        cls,
+        urls: list[str],
+        *,
+        master: str,
+        visibility_seconds: int = DEFAULT_VISIBILITY_SECONDS,
+        socket_timeout: float = 5.0,
+    ) -> RedisQueue:
+        """Build against a Sentinel-managed master.
+
+        The queue is the one consumer that cannot degrade past a cache: a job that
+        cannot be enqueued is lost the moment the process exits, which is why the queue
+        supports Sentinel even though the optional cache does not strictly need it.
+        During the failover window clients raise internally; at-least-once recovery
+        re-runs whatever a dead worker held.
+        """
+        from redis.asyncio.sentinel import Sentinel
+
+        sentinel = Sentinel(
+            urls,
+            socket_timeout=socket_timeout,
+            socket_connect_timeout=min(socket_timeout, 1.0),
+        )
+        client = sentinel.master_for(master, socket_timeout=socket_timeout)
+        logger.info("queue.redis_sentinel_initialised", master=master, nodes=len(urls))
+        return cls(client, visibility_seconds=visibility_seconds)
+
     async def enqueue(self, job: Job) -> bool:
         if job.dedupe_key:
             # SET NX gives us an atomic "claim this dedupe key" primitive.

@@ -121,6 +121,16 @@ class Settings(BaseSettings):
     #: Must exceed the worker's blocking ``BLMOVE`` (1 s) or every idle poll would
     #: time out. Five seconds still bounds a hung queue server.
     redis_queue_timeout_seconds: float = 5.0
+    #: Optional Redis Sentinel addresses (``host:port``, comma-separated). Together with
+    #: ``REDIS_SENTINEL_MASTER`` they *replace* ``REDIS_URL``: the client discovers the
+    #: current master from the sentinels, so a failover redirects new connections without
+    #: a redeploy. The direct ``REDIS_URL`` stays the simpler contract and the default;
+    #: the cache already falls open to the database, while the queue needs this to keep
+    #: enqueueing across a failover.
+    redis_sentinel_urls: Annotated[list[str], NoDecode] = Field(default_factory=list)
+    #: Master name monitored by the sentinels (``mymaster`` in a stock setup). Only
+    #: read when ``REDIS_SENTINEL_URLS`` is set.
+    redis_sentinel_master: str | None = None
     cache_ttl_seconds: int = 300
     #: How long the assembled catalogue tree may be served from the cache. Short on
     #: purpose: publishing is rare but an editor expects to see it, and 30s of staleness
@@ -129,6 +139,10 @@ class Settings(BaseSettings):
     #: invisible while it saves two lifetime scans per open. Mutations invalidate the key
     #: immediately, so a learner never sees an old number after finishing something.
     progress_summary_cache_ttl_seconds: int = 60
+    #: The review screen's figures (cards plus the lifetime log aggregate) repeat on
+    #: every open; answering a card invalidates the key right after the commit, so
+    #: this TTL only bounds *reads*.
+    review_stats_cache_ttl_seconds: int = 30
     catalogue_cache_ttl_seconds: int = 30
     flags_cache_ttl_seconds: int = 30
     #: The dashboard runs nineteen aggregates per load; a dashboard that is 30 seconds
@@ -355,7 +369,13 @@ class Settings(BaseSettings):
     allow_sqlite_tests: bool = False
 
     # ------------------------------------------------------- validators
-    @field_validator("cors_origins", "google_client_ids", "apple_client_ids", mode="before")
+    @field_validator(
+        "cors_origins",
+        "redis_sentinel_urls",
+        "google_client_ids",
+        "apple_client_ids",
+        mode="before",
+    )
     @classmethod
     def _split_list(cls, value: object) -> object:
         """Accept both ``a,b`` and ``["a","b"]`` for every comma-separated setting.
@@ -474,7 +494,9 @@ class Settings(BaseSettings):
     @computed_field  # type: ignore[prop-decorator]
     @property
     def uses_redis(self) -> bool:
-        return bool(self.redis_url)
+        return bool(self.redis_url) or (
+            bool(self.redis_sentinel_urls) and bool(self.redis_sentinel_master)
+        )
 
     @computed_field  # type: ignore[prop-decorator]
     @property
@@ -503,6 +525,9 @@ class Settings(BaseSettings):
 
         if self.cors_origins and "*" in self.cors_origins and self.cors_allow_credentials:
             problems.append("CORS_ORIGINS must not contain '*' when CORS_ALLOW_CREDENTIALS is true")
+
+        if bool(self.redis_sentinel_urls) != bool(self.redis_sentinel_master):
+            problems.append("REDIS_SENTINEL_URLS and REDIS_SENTINEL_MASTER must be set together")
 
         if not _KEY_ID_PATTERN.fullmatch(self.jwt_key_id):
             problems.append("JWT_KEY_ID must be 1-32 characters of letters, digits, '_' or '-'")

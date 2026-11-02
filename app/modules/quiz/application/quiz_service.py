@@ -52,6 +52,7 @@ from app.modules.quiz.application.dto import (
     SessionView,
 )
 from app.modules.quiz.application.progress_cache import invalidate_progress_summary
+from app.modules.quiz.application.review_cache import invalidate_review_stats
 from app.modules.quiz.domain.entities import (
     LessonProgress,
     ProgressState,
@@ -316,6 +317,10 @@ class QuizService:
         await self._uow.quiz_sessions.save(session)
         await self._uow.commit()
         await self._invalidate_progress(user_id)
+        if graded.is_correct and (prior is None or not prior.is_correct):
+            # A new review card changes the review screen's figures; the answer above may
+            # have been read into the cache seconds ago.
+            await self._invalidate_review_stats(user_id)
 
         answered_count = await self._uow.quiz_answers.count_for_session(session.id)
         return GradedAnswerView(
@@ -493,6 +498,16 @@ class QuizService:
         """
         if self._cache is not None:
             await invalidate_progress_summary(self._cache, user_id)
+
+    async def _invalidate_review_stats(self, user_id: UserId) -> None:
+        """Drop the cached review stats after a command seeds or advances a card.
+
+        The review service invalidates its own key after an answer commits; this covers
+        the *other* writer — a first correct lesson answer seeding the very first card,
+        which would otherwise stay invisible until the TTL lapses.
+        """
+        if self._cache is not None:
+            await invalidate_review_stats(self._cache, user_id)
 
     async def _assert_unit_open(self, user_id: UserId, unit_id: uuid.UUID) -> None:
         """Refuse a sitting in a unit the sequential-unlock rule has not reached.

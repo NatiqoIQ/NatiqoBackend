@@ -1,0 +1,109 @@
+# The background worker: the process that drains the job queue (P2-2).
+#
+# docker-compose runs the same image as its `worker` service with QUEUE_ENABLED=true;
+# without this Deployment a k8s cluster runs the API *without its background jobs* —
+# token cleanup, the daily metrics rollup and the retention purges silently never run,
+# and everything on the API's dashboards still looks healthy. Like the compose worker,
+# this process never opens a port.
+#
+# Probes are deliberately absent, and the absence is documented, not accidental: a hung
+# event loop has no external signal to check, and a TCP probe has nothing to connect to.
+# Losing a worker costs capacity, not data — its in-flight job is re-scheduled by the
+# queue's visibility deadline to a live worker, and the daily scheduler dedupes. A real
+# liveness probe needs a heartbeat file the main loop touches; add one before relying on
+# this for scale-critical jobs.
+#
+# Migrations are not run at boot (see Dockerfile): the migrate-job runs before any
+# rollout, so the worker must come up after the schema is current.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: natiqo-worker
+  labels:
+    app.kubernetes.io/name: natiqo-worker
+spec:
+  replicas: 2
+  revisionHistoryLimit: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: natiqo-worker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: natiqo-worker
+    spec:
+      serviceAccountName: natiqo-api
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: natiqo-worker
+      containers:
+        - name: worker
+          image: ghcr.io/natiqo/natiqo-backend:REPLACE_WITH_DIGEST
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            # Same secret payload as the API: the worker validates configuration
+            # *before* its first dequeue and refuses to start on placeholder secrets.
+            - secretRef:
+                name: natiqo-api-secrets
+          env:
+            # Dequeueing is the job; without this the composition root hands the
+            # worker an in-process queue and it consumes nothing.
+            - name: QUEUE_ENABLED
+              value: "true"
+            # Handlers run short bounded batches, so at most a handful of concurrent
+            # statements per pod. A small pool here keeps the PgBouncer/PostgreSQL
+            # backend budget for the API, which is the path that scales.
+            - name: DATABASE_POOL_SIZE
+              value: "5"
+            - name: DATABASE_MAX_OVERFLOW
+              value: "2"
+            # The read-only root filesystem; without this Python fails writing
+            # __pycache__ next to the source at import time.
+            - name: PYTHONDONTWRITEBYTECODE
+              value: "1"
+          command: ["python", "-m", "app.workers.main"]
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: natiqo-worker
+spec:
+  # One worker must survive a voluntary disruption so queued jobs keep draining.
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: natiqo-worker

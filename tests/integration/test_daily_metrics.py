@@ -97,19 +97,23 @@ async def test_a_day_is_recomputed_not_incremented(uow: SqlAlchemyUnitOfWork) ->
 @pytest.mark.asyncio
 async def test_the_rollout_gate_requires_yesterday(uow: SqlAlchemyUnitOfWork) -> None:
     repository = DailyMetricsRepository(uow.session)
-    assert await repository.ready() is False, "an unmarked rollup must never be trusted"
+    assert await repository.ready(today=_NOW.date()) is False, (
+        "an unmarked rollup must never be trusted"
+    )
 
     yesterday = _NOW.date() - timedelta(days=1)
     await repository.mark_backfilled(start=yesterday - timedelta(days=30), through=yesterday)
     await uow.commit()
 
-    assert await repository.ready() is True
+    assert await repository.ready(today=_NOW.date()) is True
 
     await repository.mark_backfilled(
         start=yesterday - timedelta(days=30), through=yesterday - timedelta(days=1)
     )
     await uow.commit()
-    assert await repository.ready() is False, "a marker that stops before yesterday is stale"
+    assert await repository.ready(today=_NOW.date()) is False, (
+        "a marker that stops before yesterday is stale"
+    )
 
 
 @pytest.mark.asyncio
@@ -180,7 +184,7 @@ async def test_the_worker_recomputes_the_lookback_window(uow: SqlAlchemyUnitOfWo
             row.day: row.ai_requests
             for row in (await check.session.execute(select(DailyMetricModel))).scalars()
         }
-        assert await DailyMetricsRepository(check.session).ready() is True
+        assert await DailyMetricsRepository(check.session).ready(today=_NOW.date()) is True
     assert rows == {
         (_NOW.date() - timedelta(days=1)): 1,
         (_NOW.date() - timedelta(days=2)): 1,

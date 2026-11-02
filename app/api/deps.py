@@ -71,6 +71,13 @@ def _build_cache() -> CachePort:
     if settings.uses_redis:
         from app.platform.cache.redis import RedisCache
 
+        if settings.redis_sentinel_urls and settings.redis_sentinel_master:
+            logger.info("deps.cache_adapter", adapter="redis-sentinel")
+            return RedisCache.from_sentinel(
+                settings.redis_sentinel_urls,
+                master=settings.redis_sentinel_master,
+                socket_timeout=settings.redis_cache_timeout_seconds,
+            )
         logger.info("deps.cache_adapter", adapter="redis")
         return RedisCache.from_url(
             settings.redis_url or "",
@@ -109,6 +116,15 @@ def _build_queue() -> QueuePort:
     if settings.uses_redis and settings.queue_enabled:
         from app.platform.queue.redis import RedisQueue
 
+        if settings.redis_sentinel_urls and settings.redis_sentinel_master:
+            logger.info("deps.queue_adapter", adapter="redis-sentinel")
+            #: The queue resolves the master per operation, so a failover reschedules
+            #: jobs into the *next* master rather than into a dead instance.
+            return RedisQueue.from_sentinel(
+                settings.redis_sentinel_urls,
+                master=settings.redis_sentinel_master,
+                socket_timeout=settings.redis_queue_timeout_seconds,
+            )
         logger.info("deps.queue_adapter", adapter="redis")
         #: Jobs live in their own instance when one is configured: the cache can evict
         #: under memory pressure, a queued job must not be evicted with it.
@@ -503,13 +519,18 @@ ProgressServiceDep = Annotated[ProgressService, Depends(get_progress_service)]
 
 
 # --------------------------------------------------------------------- review
-def get_review_service(uow: UowDep) -> ReviewService:
+def get_review_service(uow: UowDep, cache: CacheDep, settings: SettingsDep) -> ReviewService:
     """Build a request-scoped :class:`ReviewService`.
 
     Bound to the request's unit of work like every other service, so answering a card
-    advances the schedule, appends the log and commits as one transaction.
+    advances the schedule, appends the log and commits as one transaction. The cache
+    follows the progress summary and the shared composition-root adapters.
     """
-    return ReviewService(uow)
+    return ReviewService(
+        uow,
+        cache=cache,
+        stats_cache_ttl_seconds=settings.review_stats_cache_ttl_seconds,
+    )
 
 
 ReviewServiceDep = Annotated[ReviewService, Depends(get_review_service)]

@@ -21,6 +21,7 @@ from __future__ import annotations
 import uuid
 
 from app.core.errors import ErrorCode, NotFoundError
+from app.core.logging import get_logger
 from app.core.time import ensure_aware, utc_now
 from app.core.types import ContentId, QuestionKind, UserId
 from app.core.uow import UnitOfWorkProtocol
@@ -30,6 +31,12 @@ from app.modules.content.domain.policy import (
     pre_attempt_prompts,
 )
 from app.modules.quiz.application.dto import QuestionView
+from app.modules.quiz.application.review_cache import (
+    decode_stats,
+    encode_stats,
+    invalidate_review_stats,
+    review_stats_key,
+)
 from app.modules.quiz.application.review_dto import (
     DueCardsView,
     DueCardView,
@@ -50,13 +57,24 @@ from app.modules.quiz.domain.presentation import (
     question_seed,
 )
 from app.modules.quiz.domain.review import ReviewCard, ReviewLog, quality_for
+from app.platform.cache.port import CachePort
 
 __all__ = ["ReviewService"]
 
+logger = get_logger("quiz.review")
+
 
 class ReviewService:
-    def __init__(self, uow: UnitOfWorkProtocol) -> None:
+    def __init__(
+        self,
+        uow: UnitOfWorkProtocol,
+        *,
+        cache: CachePort | None = None,
+        stats_cache_ttl_seconds: int = 30,
+    ) -> None:
         self._uow = uow
+        self._cache = cache
+        self._stats_cache_ttl_seconds = stats_cache_ttl_seconds
 
     # ================================================================ queue
     async def due_cards(self, user_id: UserId, *, limit: int, strict: bool = False) -> DueCardsView:
@@ -138,6 +156,8 @@ class ReviewService:
             )
         )
         await self._uow.commit()
+        if self._cache is not None:
+            await invalidate_review_stats(self._cache, user_id)
 
         return ReviewedCardView(
             is_correct=graded.is_correct,
@@ -160,18 +180,53 @@ class ReviewService:
         ``COUNT`` per bucket: a learner has at most one card per published question, so the
         set is small and the split is cheaper than three round trips. Retention comes from
         the log aggregate, which spans every review ever taken.
+
+        The result is cached per learner for a short TTL (``review_stats_cache_ttl_seconds``).
+        Answering a card invalidates the key immediately after its commit, so the TTL only
+        bounds how often a *read-only* screen re-scans; a cache outage falls through and
+        rebuilds, never errors.
         """
+        cached = await self._cached_stats(user_id)
+        if cached is not None:
+            return cached
         now = utc_now()
         cards = await self._uow.review_cards.list_for_user(user_id)
         log_stats = await self._uow.review_logs.stats_for_user(user_id)
         due_today = sum(1 for card in cards if ensure_aware(card.due_at) <= now)
-        return ReviewStatsView(
+        view = ReviewStatsView(
             total_cards=len(cards),
             due_today=due_today,
             future=len(cards) - due_today,
             reviewed_total=log_stats.total,
             retention_percent=log_stats.retention_percent,
         )
+        if self._cache is not None and self._stats_cache_ttl_seconds > 0:
+            try:
+                await self._cache.set(
+                    review_stats_key(self._cache, user_id),
+                    encode_stats(view),
+                    ttl_seconds=self._stats_cache_ttl_seconds,
+                )
+            except Exception as exc:  # noqa: BLE001 - a cache outage must not fail the read
+                logger.warning("quiz.review_stats_cache_write_failed", error=str(exc)[:200])
+        return view
+
+    async def _cached_stats(self, user_id: UserId) -> ReviewStatsView | None:
+        """Fail-open read of the cached figures; ``None`` means "rebuild"."""
+        if self._cache is None or self._stats_cache_ttl_seconds <= 0:
+            return None
+        try:
+            raw = await self._cache.get(review_stats_key(self._cache, user_id))
+        except Exception as exc:  # noqa: BLE001 - a cache outage must not fail the read
+            logger.warning("quiz.review_stats_cache_read_failed", error=str(exc)[:200])
+            return None
+        if raw is None:
+            return None
+        try:
+            return decode_stats(raw)
+        except (TypeError, ValueError, KeyError) as exc:
+            logger.warning("quiz.review_stats_cache_decode_failed", error=str(exc)[:200])
+            return None
 
 
 # ------------------------------------------------------------------ helpers

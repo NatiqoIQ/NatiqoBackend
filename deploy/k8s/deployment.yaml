@@ -66,6 +66,11 @@ spec:
               value: "5"
             - name: WEB_CONCURRENCY
               value: "2"
+            # Multi-worker aggregation for /metrics: every scrape merges every live
+            # worker's snapshot instead of reporting a random worker's partial counts
+            # (see app/core/metrics.py). The tmp volume below is the writable dir.
+            - name: PROMETHEUS_MULTIPROC_DIR
+              value: "/tmp/prom"
             # The container runs with a read-only root filesystem; without this Python
             # tries to write __pycache__ next to the source and fails at import time.
             - name: PYTHONDONTWRITEBYTECODE
